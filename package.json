@@ -1,0 +1,48 @@
+{
+  "name": "@mindstudio-ai/agent",
+  "version": "0.0.1",
+  "description": "TypeScript SDK for MindStudio direct step execution",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "npm run codegen && tsup",
+    "dev": "tsup --watch",
+    "codegen": "tsx scripts/codegen.ts",
+    "typecheck": "tsc --noEmit",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "mindstudio",
+    "ai",
+    "workflow",
+    "automation",
+    "sdk"
+  ],
+  "license": "MIT",
+  "sideEffects": false,
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.3.2",
+    "prettier": "^3.8.1",
+    "tsup": "^8",
+    "tsx": "^4",
+    "typescript": "^5.5"
+  }
+}
