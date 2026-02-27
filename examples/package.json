@@ -1,0 +1,14 @@
+{
+  "name": "mindstudio-agent-examples",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "tsx demo.ts"
+  },
+  "dependencies": {
+    "@mindstudio-ai/agent": "file:.."
+  },
+  "devDependencies": {
+    "tsx": "^4"
+  }
+}

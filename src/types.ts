@@ -36,20 +36,28 @@ export interface StepExecutionOptions {
   threadId?: string;
 }
 
-/** Result of a step execution call. */
-export interface StepExecutionResult<TOutput = unknown> {
-  /** The step's output data. */
-  output: TOutput;
-
-  /**
-   * Signed URL to fetch the output from S3.
-   * Present only when the output was too large to inline in the response body.
-   */
-  outputUrl?: string;
-
+/** Execution metadata returned alongside every step result. */
+export interface StepExecutionMeta {
   /** The app ID used for this execution. Pass to subsequent calls to reuse. */
-  appId: string;
+  $appId: string;
 
   /** The thread ID used for this execution. Pass to subsequent calls to maintain state. */
-  threadId: string;
+  $threadId: string;
 }
+
+/**
+ * Result of a step execution call.
+ *
+ * Output properties are spread at the top level for easy destructuring:
+ * ```ts
+ * const { content } = await agent.userMessage({ ... });
+ * ```
+ *
+ * Execution metadata (`$appId`, `$threadId`) is also available on the same object:
+ * ```ts
+ * const result = await agent.userMessage({ ... });
+ * console.log(result.content, result.$threadId);
+ * ```
+ */
+export type StepExecutionResult<TOutput = Record<string, unknown>> =
+  TOutput & StepExecutionMeta;

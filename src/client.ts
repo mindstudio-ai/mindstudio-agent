@@ -15,8 +15,8 @@ const DEFAULT_BASE_URL = 'https://v1.mindstudio-api.com';
  *
  * ```ts
  * const agent = new MindStudioAgent({ apiKey: "your-key" });
- * const result = await agent.generateImage({ prompt: "a sunset", mode: "background" });
- * console.log(result.output.imageUrl);
+ * const { imageUrl } = await agent.generateImage({ prompt: "a sunset", mode: "background" });
+ * console.log(imageUrl);
  * ```
  *
  * Authentication is resolved in order:
@@ -68,12 +68,29 @@ export class MindStudioAgent {
       ...(options?.threadId != null && { threadId: options.threadId }),
     });
 
+    let output: TOutput;
+    if (data.output != null) {
+      output = data.output;
+    } else if (data.outputUrl) {
+      const res = await fetch(data.outputUrl);
+      if (!res.ok) {
+        throw new MindStudioError(
+          `Failed to fetch output from S3: ${res.status} ${res.statusText}`,
+          'output_fetch_error',
+          res.status,
+        );
+      }
+      const envelope = (await res.json()) as { value: TOutput };
+      output = envelope.value;
+    } else {
+      output = undefined as TOutput;
+    }
+
     return {
-      output: data.output as TOutput,
-      outputUrl: data.outputUrl,
-      appId: headers.get('x-mindstudio-app-id') ?? '',
-      threadId: headers.get('x-mindstudio-thread-id') ?? '',
-    };
+      ...(output as object),
+      $appId: headers.get('x-mindstudio-app-id') ?? '',
+      $threadId: headers.get('x-mindstudio-thread-id') ?? '',
+    } as StepExecutionResult<TOutput>;
   }
 
   /** @internal Used by generated helper methods. */

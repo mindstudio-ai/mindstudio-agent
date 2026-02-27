@@ -20,25 +20,25 @@ import { MindStudioAgent } from '@mindstudio-ai/agent';
 const agent = new MindStudioAgent({ apiKey: 'your-api-key' });
 
 // Generate an image
-const { output } = await agent.generateImage({
+const { imageUrl } = await agent.generateImage({
   prompt: 'A mountain landscape at sunset',
   mode: 'background',
 });
-console.log(output.imageUrl);
+console.log(imageUrl);
 
 // Send a message to an AI model
-const { output: chat } = await agent.userMessage({
+const { content } = await agent.userMessage({
   message: 'Summarize this article: ...',
   source: 'user',
 });
-console.log(chat.content);
+console.log(content);
 
 // Search Google
-const { output: search } = await agent.searchGoogle({
+const { results } = await agent.searchGoogle({
   query: 'TypeScript best practices 2025',
   exportType: 'json',
 });
-console.log(search.results);
+console.log(results);
 ```
 
 Every method is fully typed — your editor will autocomplete available parameters, show enum options, and infer the output shape.
@@ -70,7 +70,7 @@ Resolution order: constructor `apiKey` > `MINDSTUDIO_API_KEY` env > `CALLBACK_TO
 
 ## Thread persistence
 
-Steps execute within threads. Pass `threadId` and `appId` from a previous call to maintain state across calls:
+Steps execute within threads. Pass `$threadId` and `$appId` from a previous call to maintain state across calls:
 
 ```typescript
 const r1 = await agent.userMessage({
@@ -81,7 +81,7 @@ const r1 = await agent.userMessage({
 // The model remembers the conversation
 const r2 = await agent.userMessage(
   { message: 'What is my name?', source: 'user' },
-  { threadId: r1.threadId, appId: r1.appId },
+  { threadId: r1.$threadId, appId: r1.$appId },
 );
 ```
 
