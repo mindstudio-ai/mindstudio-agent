@@ -773,7 +773,68 @@ function generateSnippets(steps: StepInfo[]): string {
   chunks.push('};');
   chunks.push('');
 
+  // --- Monaco snippets ---
+  chunks.push(
+    "export type MonacoSnippetFieldType = 'string' | 'number' | 'boolean' | 'array' | 'object' | string[];",
+  );
+  chunks.push('export type MonacoSnippetField = [name: string, type: MonacoSnippetFieldType];');
+  chunks.push('');
+
+  chunks.push(
+    'export const monacoSnippets: Record<string, MonacoSnippetField[]> = {',
+  );
+
+  for (const { method, useMethodName, schema } of allMethods) {
+    // Skip original names that point to aliases (avoid duplicate entries)
+    if (useMethodName) continue;
+
+    const required = new Set(schema.required ?? []);
+    const props = schema.properties ?? {};
+
+    const fields: string[] = [];
+    for (const [key, propSchema] of Object.entries(props)) {
+      if (!required.has(key)) continue;
+      fields.push(`[${JSON.stringify(key)}, ${monacoFieldType(propSchema)}]`);
+    }
+
+    chunks.push(
+      `  ${JSON.stringify(method)}: [${fields.join(', ')}],`,
+    );
+  }
+
+  chunks.push('};');
+  chunks.push('');
+
   return chunks.join('\n');
+}
+
+function monacoFieldType(schema: SchemaObject): string {
+  if (schema.enum) {
+    return `[${schema.enum.map((v) => JSON.stringify(v)).join(', ')}]`;
+  }
+
+  if (Array.isArray(schema.type)) {
+    const nonNull = schema.type.filter((t) => t !== 'null');
+    if (nonNull.length > 0) {
+      return monacoFieldType({ ...schema, type: nonNull[0] });
+    }
+  }
+
+  switch (schema.type) {
+    case 'string':
+      return "'string'";
+    case 'number':
+    case 'integer':
+      return "'number'";
+    case 'boolean':
+      return "'boolean'";
+    case 'array':
+      return "'array'";
+    case 'object':
+      return "'object'";
+    default:
+      return "'string'";
+  }
 }
 
 // ---------------------------------------------------------------------------
