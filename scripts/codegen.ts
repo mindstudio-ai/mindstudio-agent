@@ -66,6 +66,7 @@ interface OperationObject {
   operationId: string;
   summary: string;
   description?: string;
+  'x-usage-notes'?: string;
   parameters?: Array<{
     name: string;
     in: string;
@@ -249,20 +250,41 @@ function buildPropertyDoc(key: string, schema: SchemaObject): string | null {
   return `/**\n * ${text.split('\n').join('\n * ')}\n */`;
 }
 
-function buildMethodDoc(op: OperationObject): string {
+function buildMethodDoc(
+  op: OperationObject,
+  methodName: string,
+  snippet?: string,
+): string {
   const lines: string[] = ['/**'];
 
-  // Summary as the main line
-  if (op.summary) {
-    lines.push(` * ${op.summary}`);
+  // Description as the main line
+  if (op.description) {
+    lines.push(` * ${op.description}`);
   }
 
-  // Description as detail block
-  if (op.description) {
+  // Usage notes as @remarks
+  const usageNotes = op['x-usage-notes'];
+  if (usageNotes) {
     lines.push(` *`);
-    for (const line of op.description.split('\n')) {
-      lines.push(` * ${line}`);
+    lines.push(` * @remarks`);
+    for (const line of usageNotes.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith('#')) {
+        lines.push(` * ${trimmed}`);
+      }
     }
+  }
+
+  // Snippet as @example
+  if (snippet) {
+    lines.push(` *`);
+    lines.push(` * @example`);
+    lines.push(` * \`\`\`typescript`);
+    const call = `const result = await agent.${methodName}(${snippet});`;
+    for (const cl of call.split('\n')) {
+      lines.push(` * ${cl}`);
+    }
+    lines.push(` * \`\`\``);
   }
 
   lines.push(' */');
@@ -400,6 +422,24 @@ function generateTypes(
 }
 
 // ---------------------------------------------------------------------------
+// Snippet generation (shared by steps.ts JSDoc and snippets.ts)
+// ---------------------------------------------------------------------------
+
+function buildSnippet(schema: SchemaObject): string {
+  const required = new Set(schema.required ?? []);
+  const props = schema.properties ?? {};
+
+  const paramLines: string[] = [];
+  for (const [key, propSchema] of Object.entries(props)) {
+    if (!required.has(key)) continue;
+    paramLines.push(`  ${key}: ${schemaDefault(propSchema)},`);
+  }
+
+  if (paramLines.length === 0) return '{}';
+  return `{\n${paramLines.join('\n')}\n}`;
+}
+
+// ---------------------------------------------------------------------------
 // Generate src/generated/steps.ts
 // ---------------------------------------------------------------------------
 
@@ -433,15 +473,16 @@ function generateSteps(steps: StepInfo[]): string {
 
   for (const step of steps) {
     const aliases = reverseAliases.get(step.stepType);
-    const doc = buildMethodDoc(step.operation);
-    const indentedDoc = doc
-      .split('\n')
-      .map((l) => `  ${l}`)
-      .join('\n');
+    const snippet = buildSnippet(step.inputSchema);
 
     if (aliases) {
       // Renamed: only emit under the alias name(s)
       for (const alias of aliases) {
+        const doc = buildMethodDoc(step.operation, alias, snippet);
+        const indentedDoc = doc
+          .split('\n')
+          .map((l) => `  ${l}`)
+          .join('\n');
         chunks.push(indentedDoc);
         chunks.push(
           `  ${alias}(` +
@@ -453,6 +494,11 @@ function generateSteps(steps: StepInfo[]): string {
       }
     } else {
       // No alias: emit under the original name
+      const doc = buildMethodDoc(step.operation, step.methodName, snippet);
+      const indentedDoc = doc
+        .split('\n')
+        .map((l) => `  ${l}`)
+        .join('\n');
       chunks.push(indentedDoc);
       chunks.push(
         `  ${step.methodName}(` +
@@ -709,22 +755,7 @@ function generateSnippets(steps: StepInfo[]): string {
 
   for (const { method, useMethodName, schema, outputSchema } of allMethods) {
     const displayMethod = useMethodName ?? method;
-    const required = new Set(schema.required ?? []);
-    const props = schema.properties ?? {};
-
-    // Build the params: only required fields
-    const paramLines: string[] = [];
-    for (const [key, propSchema] of Object.entries(props)) {
-      if (!required.has(key)) continue;
-      paramLines.push(`  ${key}: ${schemaDefault(propSchema)},`);
-    }
-
-    let snippet: string;
-    if (paramLines.length === 0) {
-      snippet = '{}';
-    } else {
-      snippet = `{\n${paramLines.join('\n')}\n}`;
-    }
+    const snippet = buildSnippet(schema);
 
     // Required output keys
     const outputRequired = new Set(outputSchema?.required ?? []);
@@ -818,6 +849,79 @@ function schemaToInline(
   return 'unknown';
 }
 
+/**
+ * Renders a schema as a multi-line indented block for llms.txt.
+ * More readable than the single-line inline format for complex objects.
+ */
+function schemaToBlock(
+  schema: SchemaObject | undefined,
+  indent: string = '  ',
+  definitions?: Record<string, SchemaObject>,
+): string {
+  if (!schema) return `${indent}unknown`;
+
+  if (schema.$ref) {
+    const refName = schema.$ref.split('/').pop()!;
+    if (definitions?.[refName]) {
+      return schemaToBlock(definitions[refName], indent, definitions);
+    }
+    return `${indent}unknown`;
+  }
+
+  if (schema.anyOf) {
+    const members = schema.anyOf.map((s) => schemaToInline(s, definitions));
+    const unique = [...new Set(members)];
+    return unique.join(' | ');
+  }
+
+  if (schema.enum) {
+    return schema.enum.map((v) => JSON.stringify(v)).join(' | ');
+  }
+
+  if (Array.isArray(schema.type)) {
+    const types = schema.type.map((t) => {
+      if (t === 'null') return 'null';
+      return schemaToInline({ ...schema, type: t }, definitions);
+    });
+    const unique = [...new Set(types)];
+    return unique.join(' | ');
+  }
+
+  if (schema.type === 'array') {
+    const items = schemaToInline(schema.items, definitions);
+    const needsParens = items.includes(' | ');
+    return needsParens ? `(${items})[]` : `${items}[]`;
+  }
+
+  if (schema.type === 'object' && schema.properties) {
+    const required = new Set(schema.required ?? []);
+    const propLines: string[] = [];
+    for (const [key, prop] of Object.entries(schema.properties)) {
+      const opt = required.has(key) ? '' : '?';
+      const desc = prop.description ? `  // ${prop.description}` : '';
+
+      // Use inline for nested types to keep it compact
+      const type = schemaToInline(prop, definitions);
+      propLines.push(`${indent}${key}${opt}: ${type};${desc}`);
+    }
+    return `{\n${propLines.join('\n')}\n${indent.slice(2)}}`;
+  }
+
+  if (schema.type === 'object') return 'object';
+
+  const map: Record<string, string> = {
+    string: 'string',
+    number: 'number',
+    integer: 'number',
+    boolean: 'boolean',
+    null: 'null',
+  };
+  if (typeof schema.type === 'string' && map[schema.type])
+    return map[schema.type];
+
+  return 'unknown';
+}
+
 function generateLlmsTxt(steps: StepInfo[]): string {
   const reverseAliases = new Map<string, string[]>();
   for (const [alias, stepType] of Object.entries(METHOD_ALIASES)) {
@@ -833,6 +937,20 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     'TypeScript SDK for executing MindStudio workflow steps. Each method calls a specific AI/automation action and returns typed results.',
   );
   lines.push('');
+  lines.push(
+    'This file is the complete API reference. No other documentation is needed to use the SDK.',
+  );
+  lines.push('');
+
+  // --- Install ---
+  lines.push('## Install');
+  lines.push('');
+  lines.push('```bash');
+  lines.push('npm install @mindstudio-ai/agent');
+  lines.push('```');
+  lines.push('');
+  lines.push('Requires Node.js >= 18.');
+  lines.push('');
 
   // --- Setup ---
   lines.push('## Setup');
@@ -840,21 +958,47 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('```typescript');
   lines.push("import { MindStudioAgent } from '@mindstudio-ai/agent';");
   lines.push('');
-  lines.push('// With API key');
+  lines.push('// With API key (or set MINDSTUDIO_API_KEY env var)');
   lines.push("const agent = new MindStudioAgent({ apiKey: 'your-key' });");
   lines.push('');
   lines.push(
-    '// Or via environment variables (MINDSTUDIO_API_KEY or CALLBACK_TOKEN)',
+    '// Inside MindStudio custom functions, auth is automatic (CALLBACK_TOKEN + REMOTE_HOSTNAME)',
   );
   lines.push('const agent = new MindStudioAgent();');
   lines.push('```');
   lines.push('');
+  lines.push('Constructor options:');
+  lines.push('```typescript');
+  lines.push('new MindStudioAgent({');
+  lines.push(
+    '  apiKey?: string,     // Auth token. Falls back to MINDSTUDIO_API_KEY env, then CALLBACK_TOKEN env.',
+  );
+  lines.push(
+    '  baseUrl?: string,    // API base URL. Falls back to MINDSTUDIO_BASE_URL env, then REMOTE_HOSTNAME env, then "https://v1.mindstudio-api.com".',
+  );
+  lines.push(
+    '  maxRetries?: number, // Retries on 429 rate limit (default: 3). Uses Retry-After header for delay.',
+  );
+  lines.push('})');
+  lines.push('```');
+  lines.push('');
 
-  // --- Pattern ---
-  lines.push('## Usage pattern');
+  // --- Calling convention ---
+  lines.push('## Calling convention');
+  lines.push('');
+  lines.push('Every method has the signature:');
+  lines.push('```typescript');
+  lines.push(
+    'agent.methodName(input: InputType, options?: { appId?: string, threadId?: string }): Promise<OutputType & StepExecutionMeta>',
+  );
+  lines.push('```');
   lines.push('');
   lines.push(
-    'Every method returns the output fields directly, plus `$appId`, `$threadId`, and `$rateLimitRemaining` metadata:',
+    'The first argument is the step-specific input object. The optional second argument controls thread/app context.',
+  );
+  lines.push('');
+  lines.push(
+    '**Results are returned flat** — output fields are spread at the top level alongside metadata:',
   );
   lines.push('');
   lines.push('```typescript');
@@ -862,9 +1006,29 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     "const { content } = await agent.generateText({ message: 'Hello' });",
   );
   lines.push('');
+  lines.push('// Full result shape for any method:');
+  lines.push('const result = await agent.generateText({ message: `Hello` });');
+  lines.push('result.content;              // step-specific output field');
   lines.push(
-    '// Thread persistence — pass $appId/$threadId to maintain state across calls:',
+    'result.$appId;               // string — app ID for this execution',
   );
+  lines.push(
+    'result.$threadId;            // string — thread ID for this execution',
+  );
+  lines.push(
+    'result.$rateLimitRemaining;  // number | undefined — API calls remaining in rate limit window',
+  );
+  lines.push('```');
+  lines.push('');
+
+  // --- Thread persistence ---
+  lines.push('## Thread persistence');
+  lines.push('');
+  lines.push(
+    'Pass `$appId`/`$threadId` from a previous result to maintain conversation state, variable state, or other context across calls:',
+  );
+  lines.push('');
+  lines.push('```typescript');
   lines.push(
     "const r1 = await agent.generateText({ message: 'My name is Alice' });",
   );
@@ -872,28 +1036,66 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push("  { message: 'What is my name?' },");
   lines.push('  { threadId: r1.$threadId, appId: r1.$appId },');
   lines.push(');');
+  lines.push('// r2.content => "Your name is Alice"');
   lines.push('```');
   lines.push('');
 
   // --- Error handling ---
   lines.push('## Error handling');
   lines.push('');
+  lines.push('All errors throw `MindStudioError`:');
   lines.push('```typescript');
   lines.push("import { MindStudioError } from '@mindstudio-ai/agent';");
-  lines.push('// Throws MindStudioError with .code, .status, .details');
-  lines.push('// 429 errors are retried automatically (3 retries by default)');
+  lines.push('');
+  lines.push('try {');
+  lines.push("  await agent.generateImage({ prompt: '...' });");
+  lines.push('} catch (err) {');
+  lines.push('  if (err instanceof MindStudioError) {');
+  lines.push('    err.message; // Human-readable error message');
+  lines.push(
+    '    err.code;    // Machine-readable code: "invalid_step_config", "api_error", "call_cap_exceeded", "output_fetch_error"',
+  );
+  lines.push('    err.status;  // HTTP status code (400, 401, 429, etc.)');
+  lines.push('    err.details; // Raw error body from the API');
+  lines.push('  }');
+  lines.push('}');
+  lines.push('```');
+  lines.push('');
+  lines.push(
+    '429 rate limit errors are retried automatically (configurable via `maxRetries`).',
+  );
+  lines.push(
+    'Internal tokens (CALLBACK_TOKEN) are capped at 500 calls — exceeding this throws `call_cap_exceeded`.',
+  );
+  lines.push('');
+
+  // --- Low-level access ---
+  lines.push('## Low-level access');
+  lines.push('');
+  lines.push('For step types not covered by generated methods:');
+  lines.push('```typescript');
+  lines.push(
+    "const result = await agent.executeStep('stepType', { ...params });",
+  );
   lines.push('```');
   lines.push('');
 
   // --- Method catalog ---
   lines.push('## Methods');
   lines.push('');
+  lines.push(
+    'All methods below are called on a `MindStudioAgent` instance (`agent.methodName(...)`).',
+  );
+  lines.push(
+    'Input shows the first argument object. Output shows the fields available on the returned result.',
+  );
+  lines.push('');
 
   // Group by category based on summary prefix
   interface MethodEntry {
     method: string;
-    summary: string;
     description?: string;
+    usageNotes?: string;
     inputSchema: SchemaObject;
     outputSchema: SchemaObject | null;
   }
@@ -904,20 +1106,16 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     const aliases = reverseAliases.get(step.stepType);
     const methodNames = aliases ?? [step.methodName];
     const summary = step.operation.summary ?? '';
-    const description = step.operation.description;
 
     const categoryMatch = summary.match(/^\[([^\]]+)\]\s*/);
     const category = categoryMatch ? categoryMatch[1] : 'General';
-    const cleanSummary = categoryMatch
-      ? summary.slice(categoryMatch[0].length)
-      : summary;
 
     for (const method of methodNames) {
       if (!categories.has(category)) categories.set(category, []);
       categories.get(category)!.push({
         method,
-        summary: cleanSummary,
-        description,
+        description: step.operation.description,
+        usageNotes: step.operation['x-usage-notes'],
         inputSchema: step.inputSchema,
         outputSchema: step.outputSchema,
       });
@@ -935,13 +1133,23 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     lines.push(`### ${category}`);
     lines.push('');
     for (const m of methods.sort((a, b) => a.method.localeCompare(b.method))) {
-      lines.push(`#### ${m.method}`);
-      lines.push(`${m.summary}.`);
-
       const inputInline = schemaToInline(m.inputSchema);
       const outputInline = m.outputSchema
         ? schemaToInline(m.outputSchema)
         : 'void';
+
+      lines.push(`#### ${m.method}`);
+
+      if (m.description) {
+        lines.push(m.description);
+      }
+
+      if (m.usageNotes) {
+        for (const line of m.usageNotes.split('\n')) {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith('#')) lines.push(trimmed);
+        }
+      }
 
       lines.push(`- Input: \`${inputInline}\``);
       lines.push(`- Output: \`${outputInline}\``);
@@ -952,29 +1160,51 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   // --- Helpers ---
   lines.push('### Helpers');
   lines.push('');
-  lines.push('#### listModels');
-  lines.push('List all available AI models.');
-  lines.push('- Input: none');
-  lines.push('- Output: `{ models: MindStudioModel[] }`');
+  lines.push('#### `listModels()`');
+  lines.push('List all available AI models across all categories.');
   lines.push('');
-  lines.push('#### listModelsByType');
+  lines.push('Output:');
+  lines.push('```typescript');
+  lines.push('{');
+  lines.push('  models: {');
+  lines.push('    id: string;');
+  lines.push('    name: string;            // Display name');
+  lines.push('    rawName: string;          // Full provider model identifier');
+  lines.push(
+    '    type: "llm_chat" | "image_generation" | "video_generation" | "video_analysis" | "text_to_speech" | "vision" | "transcription";',
+  );
+  lines.push('    publisher: string;');
+  lines.push('    maxTemperature: number;');
+  lines.push('    maxResponseSize: number;');
+  lines.push('    contextWindow: number;');
+  lines.push('  }[]');
+  lines.push('}');
+  lines.push('```');
+  lines.push('');
+  lines.push('#### `listModelsByType(modelType)`');
   lines.push('List AI models filtered by type.');
   lines.push(
-    '- Input: `modelType: "llm_chat" | "image_generation" | "video_generation" | "video_analysis" | "text_to_speech" | "vision" | "transcription"`',
+    '- `modelType`: `"llm_chat"` | `"image_generation"` | `"video_generation"` | `"video_analysis"` | `"text_to_speech"` | `"vision"` | `"transcription"`',
   );
-  lines.push('- Output: `{ models: MindStudioModel[] }`');
+  lines.push('- Output: same as `listModels()`');
   lines.push('');
-  lines.push('#### listConnectors');
-  lines.push('List available connector services.');
-  lines.push('- Input: none');
+  lines.push('#### `listConnectors()`');
   lines.push(
-    '- Output: `{ services: Array<{ service: object, actions: object[] }> }`',
+    'List available connector services (Slack, Google, HubSpot, etc.).',
   );
   lines.push('');
-  lines.push('#### getConnector');
-  lines.push('Get details for a single connector service.');
-  lines.push('- Input: `serviceId: string`');
-  lines.push('- Output: `{ service: object }`');
+  lines.push('Output:');
+  lines.push('```typescript');
+  lines.push('{ services: Array<{ service: object, actions: object[] }> }');
+  lines.push('```');
+  lines.push('');
+  lines.push('#### `getConnector(serviceId)`');
+  lines.push('Get details for a single connector service by ID.');
+  lines.push('');
+  lines.push('Output:');
+  lines.push('```typescript');
+  lines.push('{ service: object }');
+  lines.push('```');
   lines.push('');
 
   return lines.join('\n');

@@ -1,6 +1,6 @@
 {
   "name": "@mindstudio-ai/agent",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "TypeScript SDK for MindStudio direct step execution",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,6 +18,7 @@
   ],
   "scripts": {
     "build": "npm run codegen && tsup",
+    "build:local": "MINDSTUDIO_BASE_URL=http://localhost:3129 npm run build",
     "dev": "tsup --watch",
     "codegen": "tsx scripts/codegen.ts",
     "typecheck": "tsc --noEmit",
@@ -37,6 +38,15 @@
     "automation",
     "sdk"
   ],
+  "homepage": "https://github.com/mindstudio-ai/mindstudio-agent#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mindstudio-ai/mindstudio-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mindstudio-ai/mindstudio-agent/issues"
+  },
+  "author": "MindStudio <support@mindstudio.ai> (https://mindstudio.ai)",
   "license": "MIT",
   "sideEffects": false,
   "devDependencies": {

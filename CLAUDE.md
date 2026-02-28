@@ -20,16 +20,21 @@ src/
 scripts/
   codegen.ts            # Fetches OpenAPI spec → generates src/generated/* + llms.txt
 llms.txt                # Generated — compact LLM-friendly reference of all methods
+examples/
+  demo.ts               # Simple test script
+  package.json           # Uses file:.. dependency for local testing
 ```
 
 ## Key commands
 
-- `npm run build` — runs codegen (fetches OpenAPI spec) then builds with tsup (ESM only, outputs dist/)
+- `npm run build` — codegen (from prod API) + tsup build (ESM only, outputs dist/)
+- `npm run build:local` — same but codegen from `http://localhost:3129`
 - `npm run dev` — tsup watch mode (does NOT re-run codegen)
-- `npm run codegen` — regenerate types from the API (defaults to prod: https://v1.mindstudio-api.com)
-- `MINDSTUDIO_BASE_URL=http://localhost:3129 npm run codegen` — codegen against local API
+- `npm run codegen` — regenerate types only (defaults to prod)
 - `npm run codegen -- --file path/to/openapi.json` — codegen from a local file
 - `npm run typecheck` — tsc --noEmit
+
+`prepare` and `prepublishOnly` both run `build:local`.
 
 ## Architecture notes
 
@@ -64,15 +69,23 @@ When a step has a rename, the original name is removed from `StepMethods` and th
 
 ## Codegen details
 
-`scripts/codegen.ts` is a custom generator (~900 lines). It produces:
+`scripts/codegen.ts` is a custom generator. It produces:
 
-1. **src/generated/types.ts** — input/output interfaces from JSON Schema, `StepName` union, `StepInputMap`/`StepOutputMap`
-2. **src/generated/steps.ts** — `StepMethods` interface with JSDoc from operation descriptions, `applyStepMethods()` for runtime
+1. **src/generated/types.ts** — input/output interfaces from JSON Schema, `StepName` union, `StepInputMap`/`StepOutputMap`, type aliases for renamed steps
+2. **src/generated/steps.ts** — `StepMethods` interface with JSDoc (`description` as main line, `x-usage-notes` as `@remarks`, snippet as `@example`), `applyStepMethods()` for runtime
 3. **src/generated/helpers.ts** — `HelperMethods` interface + `applyHelperMethods()` for models/connectors endpoints
-4. **src/generated/snippets.ts** — `stepSnippets` object with method name, input snippet (required params only), and output keys
-5. **llms.txt** — compact LLM reference, categorized by integration
+4. **src/generated/snippets.ts** — `stepSnippets` object with method name, input snippet (required params only, backticks for strings, quoted for enums), and output keys
+5. **llms.txt** — compact LLM reference with full typed input/output shapes, categorized by integration
 
-Generated files are gitignored. `npm run build` runs codegen then tsup. `prepare` script runs build, so `npm install` from git auto-generates everything.
+The OpenAPI spec provides `description` (one-line summary) and `x-usage-notes` (bullet-pointed usage details) separately per operation. Both are used for IntelliSense and llms.txt.
+
+Generated files + llms.txt are gitignored. `npm run build` runs codegen then tsup. `prepare` runs `build:local`, so `npm install` from git auto-generates everything against the local API.
+
+## Testing
+
+- `examples/` directory has a simple test project using `file:..` dependency
+- Run `cd examples && npm run demo` to test against the API
+- No re-install needed after building — `file:..` links directly to parent dist/
 
 ## Code style
 
