@@ -25,6 +25,18 @@ export interface AgentOptions {
    * @default 3
    */
   maxRetries?: number;
+
+  /**
+   * When true, the thread ID from the first API response is automatically
+   * reused for all subsequent calls (unless an explicit `threadId` is passed).
+   * Useful for local debugging to simulate custom function sandbox behavior.
+   *
+   * If omitted, the SDK checks `MINDSTUDIO_REUSE_THREAD_ID` in the environment.
+   * Any truthy value (`"true"`, `"1"`) enables reuse.
+   *
+   * @default false
+   */
+  reuseThreadId?: boolean;
 }
 
 /** Options for a single step execution call. */

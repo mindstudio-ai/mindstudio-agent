@@ -40,6 +40,10 @@ const DEFAULT_MAX_RETRIES = 3;
 export class MindStudioAgent {
   /** @internal */
   readonly _httpConfig: HttpClientConfig;
+  /** @internal */
+  private _reuseThreadId: boolean;
+  /** @internal */
+  private _threadId: string | undefined;
 
   constructor(options: AgentOptions = {}) {
     const { token, authType } = resolveToken(options.apiKey);
@@ -48,6 +52,10 @@ export class MindStudioAgent {
       process.env.MINDSTUDIO_BASE_URL ??
       process.env.REMOTE_HOSTNAME ??
       DEFAULT_BASE_URL;
+
+    this._reuseThreadId =
+      options.reuseThreadId ??
+      /^(true|1)$/i.test(process.env.MINDSTUDIO_REUSE_THREAD_ID ?? '');
 
     this._httpConfig = {
       baseUrl,
@@ -71,13 +79,16 @@ export class MindStudioAgent {
     step: Record<string, unknown>,
     options?: StepExecutionOptions,
   ): Promise<StepExecutionResult<TOutput>> {
+    const threadId =
+      options?.threadId ?? (this._reuseThreadId ? this._threadId : undefined);
+
     const { data, headers } = await request<{
       output?: TOutput;
       outputUrl?: string;
     }>(this._httpConfig, 'POST', `/steps/${stepType}/execute`, {
       step,
       ...(options?.appId != null && { appId: options.appId }),
-      ...(options?.threadId != null && { threadId: options.threadId }),
+      ...(threadId != null && { threadId }),
     });
 
     let output: TOutput;
@@ -98,12 +109,17 @@ export class MindStudioAgent {
       output = undefined as TOutput;
     }
 
+    const returnedThreadId = headers.get('x-mindstudio-thread-id') ?? '';
+    if (this._reuseThreadId && returnedThreadId) {
+      this._threadId = returnedThreadId;
+    }
+
     const remaining = headers.get('x-ratelimit-remaining');
 
     return {
       ...(output as object),
       $appId: headers.get('x-mindstudio-app-id') ?? '',
-      $threadId: headers.get('x-mindstudio-thread-id') ?? '',
+      $threadId: returnedThreadId,
       $rateLimitRemaining:
         remaining != null ? parseInt(remaining, 10) : undefined,
     } as StepExecutionResult<TOutput>;

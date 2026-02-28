@@ -82,6 +82,22 @@ const r2 = await agent.generateText(
 );
 ```
 
+### Automatic thread reuse
+
+For local debugging or scripts where you want all calls to share a single thread (similar to how MindStudio custom function sandboxes work), enable `reuseThreadId`:
+
+```typescript
+const agent = new MindStudioAgent({ reuseThreadId: true });
+
+// Or set the environment variable
+// MINDSTUDIO_REUSE_THREAD_ID=true
+
+await agent.generateText({ message: 'My name is Alice' }); // creates a thread
+await agent.generateText({ message: 'What is my name?' }); // reuses the same thread automatically
+```
+
+The thread ID from the first response is captured and sent with all subsequent calls. You can still override it per-call by passing an explicit `threadId` in the options.
+
 ## Rate limiting
 
 Rate limiting is handled automatically:
@@ -147,6 +163,10 @@ const agent = new MindStudioAgent({
 
   // Max retries on 429 rate limit responses (default: 3)
   maxRetries: 5,
+
+  // Auto-reuse the first returned thread ID for all subsequent calls (default: false)
+  // Or set MINDSTUDIO_REUSE_THREAD_ID=true env var
+  reuseThreadId: true,
 });
 ```
 

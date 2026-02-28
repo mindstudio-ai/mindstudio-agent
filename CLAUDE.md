@@ -45,6 +45,7 @@ examples/
 - **S3 output resolution.** When the API returns `outputUrl` instead of inline `output`, the SDK auto-fetches the S3 JSON (`{ value: ... }`) and unwraps it transparently.
 - **Auth resolution order:** constructor `apiKey` → `MINDSTUDIO_API_KEY` env → `CALLBACK_TOKEN` env (managed mode).
 - **Base URL resolution order:** constructor `baseUrl` → `MINDSTUDIO_BASE_URL` env → `REMOTE_HOSTNAME` env (managed mode) → `https://v1.mindstudio-api.com`.
+- **Thread reuse:** constructor `reuseThreadId` → `MINDSTUDIO_REUSE_THREAD_ID` env (`"true"` / `"1"`). When enabled, the thread ID from the first API response is stored on the instance and automatically sent with all subsequent `executeStep` calls (unless an explicit `threadId` is passed in options).
 - All step endpoints follow the pattern: `POST /developer/v2/steps/{stepType}/execute` with `{ step, appId?, threadId? }` body.
 - `appId` and `threadId` are returned in response headers (`x-mindstudio-app-id`, `x-mindstudio-thread-id`).
 
