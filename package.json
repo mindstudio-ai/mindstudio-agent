@@ -22,8 +22,8 @@
     "dev": "tsup --watch",
     "codegen": "tsx scripts/codegen.ts",
     "typecheck": "tsc --noEmit",
-    "prepare": "npm run build:local",
-    "prepublishOnly": "npm run build:local"
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=18.0.0"
