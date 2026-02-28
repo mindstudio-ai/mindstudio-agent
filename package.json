@@ -41,7 +41,7 @@
   "homepage": "https://github.com/mindstudio-ai/mindstudio-agent#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mindstudio-ai/mindstudio-agent.git"
+    "url": "git+https://github.com/mindstudio-ai/mindstudio-agent.git"
   },
   "bugs": {
     "url": "https://github.com/mindstudio-ai/mindstudio-agent/issues"
