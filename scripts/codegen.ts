@@ -13,12 +13,13 @@
  *   npm run codegen -- --file /path/to/openapi.json         # from file
  */
 
-import { writeFileSync, readFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GENERATED_DIR = resolve(__dirname, '../src/generated');
+mkdirSync(GENERATED_DIR, { recursive: true });
 
 const HEADER = `// AUTO-GENERATED — DO NOT EDIT
 // Run \`npm run codegen\` to regenerate from the OpenAPI spec.
