@@ -749,6 +749,75 @@ function generateSnippets(steps: StepInfo[]): string {
 // Generate llms.txt
 // ---------------------------------------------------------------------------
 
+/**
+ * Compact inline type string for llms.txt.
+ * Produces things like: `{ query: string, exportType: "text" | "json", limit?: number }`
+ */
+function schemaToInline(
+  schema: SchemaObject | undefined,
+  definitions?: Record<string, SchemaObject>,
+): string {
+  if (!schema) return 'unknown';
+
+  if (schema.$ref) {
+    const refName = schema.$ref.split('/').pop()!;
+    if (definitions?.[refName]) {
+      return schemaToInline(definitions[refName], definitions);
+    }
+    return 'unknown';
+  }
+
+  if (schema.anyOf) {
+    const members = schema.anyOf.map((s) => schemaToInline(s, definitions));
+    const unique = [...new Set(members)];
+    return unique.join(' | ');
+  }
+
+  if (schema.enum) {
+    return schema.enum.map((v) => JSON.stringify(v)).join(' | ');
+  }
+
+  if (Array.isArray(schema.type)) {
+    const types = schema.type.map((t) => {
+      if (t === 'null') return 'null';
+      return schemaToInline({ ...schema, type: t }, definitions);
+    });
+    const unique = [...new Set(types)];
+    return unique.join(' | ');
+  }
+
+  if (schema.type === 'array') {
+    const items = schemaToInline(schema.items, definitions);
+    const needsParens = items.includes(' | ');
+    return needsParens ? `(${items})[]` : `${items}[]`;
+  }
+
+  if (schema.type === 'object' && schema.properties) {
+    const required = new Set(schema.required ?? []);
+    const parts: string[] = [];
+    for (const [key, prop] of Object.entries(schema.properties)) {
+      const opt = required.has(key) ? '' : '?';
+      const type = schemaToInline(prop, definitions);
+      parts.push(`${key}${opt}: ${type}`);
+    }
+    return `{ ${parts.join(', ')} }`;
+  }
+
+  if (schema.type === 'object') return 'object';
+
+  const map: Record<string, string> = {
+    string: 'string',
+    number: 'number',
+    integer: 'number',
+    boolean: 'boolean',
+    null: 'null',
+  };
+  if (typeof schema.type === 'string' && map[schema.type])
+    return map[schema.type];
+
+  return 'unknown';
+}
+
 function generateLlmsTxt(steps: StepInfo[]): string {
   const reverseAliases = new Map<string, string[]>();
   for (const [alias, stepType] of Object.entries(METHOD_ALIASES)) {
@@ -817,53 +886,40 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
 
   // --- Method catalog ---
-  lines.push('## Available methods');
-  lines.push('');
-  lines.push(
-    'Each entry: `method(requiredParams) -> outputKeys` — description',
-  );
+  lines.push('## Methods');
   lines.push('');
 
   // Group by category based on summary prefix
-  const categories = new Map<
-    string,
-    Array<{
-      method: string;
-      summary: string;
-      requiredParams: string[];
-      outputKeys: string[];
-    }>
-  >();
+  interface MethodEntry {
+    method: string;
+    summary: string;
+    description?: string;
+    inputSchema: SchemaObject;
+    outputSchema: SchemaObject | null;
+  }
+
+  const categories = new Map<string, MethodEntry[]>();
 
   for (const step of steps) {
     const aliases = reverseAliases.get(step.stepType);
     const methodNames = aliases ?? [step.methodName];
     const summary = step.operation.summary ?? '';
+    const description = step.operation.description;
 
-    // Determine category from summary prefix like "[Google]", "[Slack]" etc
     const categoryMatch = summary.match(/^\[([^\]]+)\]\s*/);
     const category = categoryMatch ? categoryMatch[1] : 'General';
     const cleanSummary = categoryMatch
       ? summary.slice(categoryMatch[0].length)
       : summary;
 
-    const requiredSet = new Set(step.inputSchema.required ?? []);
-    const requiredParams = Object.keys(
-      step.inputSchema.properties ?? {},
-    ).filter((k) => requiredSet.has(k));
-
-    const outputRequiredSet = new Set(step.outputSchema?.required ?? []);
-    const outputKeys = Object.keys(step.outputSchema?.properties ?? {}).filter(
-      (k) => outputRequiredSet.has(k),
-    );
-
     for (const method of methodNames) {
       if (!categories.has(category)) categories.set(category, []);
       categories.get(category)!.push({
         method,
         summary: cleanSummary,
-        requiredParams,
-        outputKeys,
+        description,
+        inputSchema: step.inputSchema,
+        outputSchema: step.outputSchema,
       });
     }
   }
@@ -879,28 +935,46 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     lines.push(`### ${category}`);
     lines.push('');
     for (const m of methods.sort((a, b) => a.method.localeCompare(b.method))) {
-      const params =
-        m.requiredParams.length > 0 ? m.requiredParams.join(', ') : '';
-      const output =
-        m.outputKeys.length > 0 ? ` -> { ${m.outputKeys.join(', ')} }` : '';
-      lines.push(`- \`${m.method}(${params})\`${output} — ${m.summary}`);
+      lines.push(`#### ${m.method}`);
+      lines.push(`${m.summary}.`);
+
+      const inputInline = schemaToInline(m.inputSchema);
+      const outputInline = m.outputSchema
+        ? schemaToInline(m.outputSchema)
+        : 'void';
+
+      lines.push(`- Input: \`${inputInline}\``);
+      lines.push(`- Output: \`${outputInline}\``);
+      lines.push('');
     }
-    lines.push('');
   }
 
   // --- Helpers ---
   lines.push('### Helpers');
   lines.push('');
-  lines.push('- `listModels()` -> { models } — List all available AI models');
+  lines.push('#### listModels');
+  lines.push('List all available AI models.');
+  lines.push('- Input: none');
+  lines.push('- Output: `{ models: MindStudioModel[] }`');
+  lines.push('');
+  lines.push('#### listModelsByType');
+  lines.push('List AI models filtered by type.');
   lines.push(
-    '- `listModelsByType(modelType)` -> { models } — Filter by type: "llm_chat", "image_generation", "video_generation", "video_analysis", "text_to_speech", "vision", "transcription"',
+    '- Input: `modelType: "llm_chat" | "image_generation" | "video_generation" | "video_analysis" | "text_to_speech" | "vision" | "transcription"`',
   );
+  lines.push('- Output: `{ models: MindStudioModel[] }`');
+  lines.push('');
+  lines.push('#### listConnectors');
+  lines.push('List available connector services.');
+  lines.push('- Input: none');
   lines.push(
-    '- `listConnectors()` -> { services } — List available connector services',
+    '- Output: `{ services: Array<{ service: object, actions: object[] }> }`',
   );
-  lines.push(
-    '- `getConnector(serviceId)` -> { service } — Get connector details',
-  );
+  lines.push('');
+  lines.push('#### getConnector');
+  lines.push('Get details for a single connector service.');
+  lines.push('- Input: `serviceId: string`');
+  lines.push('- Output: `{ service: object }`');
   lines.push('');
 
   return lines.join('\n');

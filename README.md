@@ -19,29 +19,27 @@ import { MindStudioAgent } from '@mindstudio-ai/agent';
 
 const agent = new MindStudioAgent({ apiKey: 'your-api-key' });
 
-// Generate an image
-const { imageUrl } = await agent.generateImage({
-  prompt: 'A mountain landscape at sunset',
-  mode: 'background',
-});
-console.log(imageUrl);
-
-// Send a message to an AI model
-const { content } = await agent.userMessage({
+// Generate text with an AI model
+const { content } = await agent.generateText({
   message: 'Summarize this article: ...',
-  source: 'user',
 });
 console.log(content);
 
+// Generate an image
+const { imageUrl } = await agent.generateImage({
+  prompt: 'A mountain landscape at sunset',
+});
+console.log(imageUrl);
+
 // Search Google
 const { results } = await agent.searchGoogle({
-  query: 'TypeScript best practices 2025',
+  query: 'TypeScript best practices',
   exportType: 'json',
 });
 console.log(results);
 ```
 
-Every method is fully typed — your editor will autocomplete available parameters, show enum options, and infer the output shape.
+Every method is fully typed — your editor will autocomplete available parameters, show enum options, and infer the output shape. Results are returned flat for easy destructuring.
 
 ## Authentication
 
@@ -73,16 +71,30 @@ Resolution order: constructor `apiKey` > `MINDSTUDIO_API_KEY` env > `CALLBACK_TO
 Steps execute within threads. Pass `$threadId` and `$appId` from a previous call to maintain state across calls:
 
 ```typescript
-const r1 = await agent.userMessage({
+const r1 = await agent.generateText({
   message: 'My name is Alice',
-  source: 'user',
 });
 
 // The model remembers the conversation
-const r2 = await agent.userMessage(
-  { message: 'What is my name?', source: 'user' },
+const r2 = await agent.generateText(
+  { message: 'What is my name?' },
   { threadId: r1.$threadId, appId: r1.$appId },
 );
+```
+
+## Rate limiting
+
+Rate limiting is handled automatically:
+
+- **Concurrency queue** — requests beyond the server's concurrent limit are queued and proceed as slots open up (10 for internal tokens, 20 for API keys)
+- **Auto-retry on 429** — rate-limited responses are retried automatically using the `Retry-After` header (default: 3 retries, configurable via `maxRetries`)
+- **Call cap** — internal tokens are capped at 500 calls per execution; the SDK throws `MindStudioError` with code `call_cap_exceeded` rather than sending requests that will fail
+
+Every result includes `$rateLimitRemaining` so you can throttle proactively:
+
+```typescript
+const result = await agent.generateText({ message: 'Hello' });
+console.log(result.$rateLimitRemaining); // calls remaining in window
 ```
 
 ## Available steps
@@ -91,9 +103,10 @@ Every step has a dedicated typed method. A few highlights:
 
 | Method | Description |
 | --- | --- |
-| `userMessage()` | Send a message to an AI model |
+| `generateText()` | Send a message to an AI model |
 | `generateImage()` | Generate an image from a text prompt |
 | `generateVideo()` | Generate a video from a text prompt |
+| `generateAsset()` | Generate an HTML/PDF/PNG/video asset |
 | `analyzeImage()` | Analyze an image with a vision model |
 | `textToSpeech()` | Convert text to speech |
 | `transcribeAudio()` | Transcribe audio to text |
@@ -131,6 +144,9 @@ const agent = new MindStudioAgent({
   // Base URL (or set MINDSTUDIO_BASE_URL env var)
   // Defaults to https://v1.mindstudio-api.com
   baseUrl: 'http://localhost:3129',
+
+  // Max retries on 429 rate limit responses (default: 3)
+  maxRetries: 5,
 });
 ```
 
@@ -152,14 +168,39 @@ All input/output types are exported for use in your own code:
 import type {
   GenerateImageStepInput,
   GenerateImageStepOutput,
-  UserMessageStepInput,
+  GenerateTextStepInput,
   StepName,
   StepInputMap,
   StepOutputMap,
 } from '@mindstudio-ai/agent';
 ```
 
-`StepName` is a union of all available step type names. `StepInputMap` and `StepOutputMap` map step names to their input/output types, which is useful for building generic utilities.
+`StepName` is a union of all available step type names. `StepInputMap` and `StepOutputMap` map step names to their input/output types, useful for building generic utilities.
+
+## Snippets
+
+A `stepSnippets` object is exported for building UI menus or code generators:
+
+```typescript
+import { stepSnippets } from '@mindstudio-ai/agent';
+
+stepSnippets.generateText;
+// {
+//   method: "generateText",
+//   snippet: "{\n  message: ``,\n}",
+//   outputKeys: ["content"]
+// }
+```
+
+## LLM documentation
+
+An `llms.txt` file ships with the package for AI agent consumption:
+
+```
+node_modules/@mindstudio-ai/agent/llms.txt
+```
+
+It contains a compact, complete reference of all methods with their required parameters and output keys — optimized for LLM context windows.
 
 ## Error handling
 
@@ -167,7 +208,7 @@ import type {
 import { MindStudioAgent, MindStudioError } from '@mindstudio-ai/agent';
 
 try {
-  await agent.generateImage({ prompt: '...', mode: 'background' });
+  await agent.generateImage({ prompt: '...' });
 } catch (err) {
   if (err instanceof MindStudioError) {
     console.error(err.message); // Human-readable message
