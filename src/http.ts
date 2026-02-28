@@ -1,8 +1,11 @@
 import { MindStudioError } from './errors.js';
+import type { RateLimiter } from './rate-limit.js';
 
 export interface HttpClientConfig {
   baseUrl: string;
   token: string;
+  rateLimiter: RateLimiter;
+  maxRetries: number;
 }
 
 export async function request<T>(
@@ -13,6 +16,22 @@ export async function request<T>(
 ): Promise<{ data: T; headers: Headers }> {
   const url = `${config.baseUrl}/developer/v2${path}`;
 
+  await config.rateLimiter.acquire();
+
+  try {
+    return await requestWithRetry<T>(config, method, url, body, 0);
+  } finally {
+    config.rateLimiter.release();
+  }
+}
+
+async function requestWithRetry<T>(
+  config: HttpClientConfig,
+  method: string,
+  url: string,
+  body: unknown,
+  attempt: number,
+): Promise<{ data: T; headers: Headers }> {
   const res = await fetch(url, {
     method,
     headers: {
@@ -22,6 +41,16 @@ export async function request<T>(
     },
     body: body != null ? JSON.stringify(body) : undefined,
   });
+
+  // Update rate limiter with latest server-reported limits
+  config.rateLimiter.updateFromHeaders(res.headers);
+
+  if (res.status === 429 && attempt < config.maxRetries) {
+    const retryAfter = res.headers.get('retry-after');
+    const waitMs = retryAfter ? parseFloat(retryAfter) * 1000 : 1000;
+    await sleep(waitMs);
+    return requestWithRetry<T>(config, method, url, body, attempt + 1);
+  }
 
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({}));
@@ -36,4 +65,8 @@ export async function request<T>(
 
   const data = (await res.json()) as T;
   return { data, headers: res.headers };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

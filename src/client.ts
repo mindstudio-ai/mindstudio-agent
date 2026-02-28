@@ -1,5 +1,6 @@
 import { request, type HttpClientConfig } from './http.js';
 import { MindStudioError } from './errors.js';
+import { RateLimiter, type AuthType } from './rate-limit.js';
 import type {
   AgentOptions,
   StepExecutionOptions,
@@ -7,6 +8,7 @@ import type {
 } from './types.js';
 
 const DEFAULT_BASE_URL = 'https://v1.mindstudio-api.com';
+const DEFAULT_MAX_RETRIES = 3;
 
 /**
  * Client for the MindStudio direct step execution API.
@@ -29,20 +31,30 @@ const DEFAULT_BASE_URL = 'https://v1.mindstudio-api.com';
  * 2. `MINDSTUDIO_BASE_URL` environment variable
  * 3. `REMOTE_HOSTNAME` environment variable (auto-set inside MindStudio custom functions)
  * 4. `https://v1.mindstudio-api.com` (production default)
+ *
+ * Rate limiting is handled automatically:
+ * - Concurrent requests are queued to stay within server limits
+ * - 429 responses are retried automatically using the `Retry-After` header
+ * - Internal (hook) tokens are capped at 500 calls per execution
  */
 export class MindStudioAgent {
   /** @internal */
   readonly _httpConfig: HttpClientConfig;
 
   constructor(options: AgentOptions = {}) {
-    const token = resolveToken(options.apiKey);
+    const { token, authType } = resolveToken(options.apiKey);
     const baseUrl =
       options.baseUrl ??
       process.env.MINDSTUDIO_BASE_URL ??
       process.env.REMOTE_HOSTNAME ??
       DEFAULT_BASE_URL;
 
-    this._httpConfig = { baseUrl, token };
+    this._httpConfig = {
+      baseUrl,
+      token,
+      rateLimiter: new RateLimiter(authType),
+      maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
+    };
   }
 
   /**
@@ -86,10 +98,14 @@ export class MindStudioAgent {
       output = undefined as TOutput;
     }
 
+    const remaining = headers.get('x-ratelimit-remaining');
+
     return {
       ...(output as object),
       $appId: headers.get('x-mindstudio-app-id') ?? '',
       $threadId: headers.get('x-mindstudio-thread-id') ?? '',
+      $rateLimitRemaining:
+        remaining != null ? parseInt(remaining, 10) : undefined,
     } as StepExecutionResult<TOutput>;
   }
 
@@ -105,10 +121,15 @@ import { applyHelperMethods } from './generated/helpers.js';
 applyStepMethods(MindStudioAgent);
 applyHelperMethods(MindStudioAgent);
 
-function resolveToken(provided?: string): string {
-  if (provided) return provided;
-  if (process.env.MINDSTUDIO_API_KEY) return process.env.MINDSTUDIO_API_KEY;
-  if (process.env.CALLBACK_TOKEN) return process.env.CALLBACK_TOKEN;
+function resolveToken(provided?: string): {
+  token: string;
+  authType: AuthType;
+} {
+  if (provided) return { token: provided, authType: 'apiKey' };
+  if (process.env.MINDSTUDIO_API_KEY)
+    return { token: process.env.MINDSTUDIO_API_KEY, authType: 'apiKey' };
+  if (process.env.CALLBACK_TOKEN)
+    return { token: process.env.CALLBACK_TOKEN, authType: 'internal' };
   throw new MindStudioError(
     'No API key provided. Pass `apiKey` to the MindStudioAgent constructor, ' +
       'or set the MINDSTUDIO_API_KEY environment variable.',

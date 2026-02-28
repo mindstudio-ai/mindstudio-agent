@@ -23,3 +23,4 @@ export type {
 export * from './generated/types.js';
 export type { StepMethods } from './generated/steps.js';
 export type { HelperMethods, MindStudioModel, ModelType } from './generated/helpers.js';
+export { stepSnippets, type StepSnippet } from './generated/snippets.js';

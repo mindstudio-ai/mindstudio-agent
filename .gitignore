@@ -1,5 +1,6 @@
 node_modules
 dist
 src/generated
+llms.txt
 .env
 examples/node_modules

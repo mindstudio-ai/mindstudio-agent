@@ -17,6 +17,14 @@ export interface AgentOptions {
    * custom functions), then falls back to `https://v1.mindstudio-api.com`.
    */
   baseUrl?: string;
+
+  /**
+   * Maximum number of automatic retries on 429 (rate limited) responses.
+   * Each retry waits for the duration specified by the `Retry-After` header.
+   *
+   * @default 3
+   */
+  maxRetries?: number;
 }
 
 /** Options for a single step execution call. */
@@ -43,6 +51,12 @@ export interface StepExecutionMeta {
 
   /** The thread ID used for this execution. Pass to subsequent calls to maintain state. */
   $threadId: string;
+
+  /**
+   * Number of API calls remaining in the current rate limit window.
+   * Useful for throttling proactively before hitting the limit.
+   */
+  $rateLimitRemaining?: number;
 }
 
 /**
@@ -50,13 +64,13 @@ export interface StepExecutionMeta {
  *
  * Output properties are spread at the top level for easy destructuring:
  * ```ts
- * const { content } = await agent.userMessage({ ... });
+ * const { content } = await agent.generateText({ ... });
  * ```
  *
- * Execution metadata (`$appId`, `$threadId`) is also available on the same object:
+ * Execution metadata (`$appId`, `$threadId`, `$rateLimitRemaining`) is also available:
  * ```ts
- * const result = await agent.userMessage({ ... });
- * console.log(result.content, result.$threadId);
+ * const result = await agent.generateText({ ... });
+ * console.log(result.content, result.$threadId, result.$rateLimitRemaining);
  * ```
  */
 export type StepExecutionResult<TOutput = Record<string, unknown>> =

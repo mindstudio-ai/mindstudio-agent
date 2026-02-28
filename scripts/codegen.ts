@@ -26,6 +26,17 @@ const HEADER = `// AUTO-GENERATED — DO NOT EDIT
 `;
 
 // ---------------------------------------------------------------------------
+// Method aliases — maps a public alias to the internal step type name.
+// When a step has an alias, only the alias is exposed; the original name
+// is hidden from the public API (StepMethods, stepSnippets).
+// ---------------------------------------------------------------------------
+
+const METHOD_ALIASES: Record<string, string> = {
+  generateText: 'userMessage',
+  generateAsset: 'generatePdf',
+};
+
+// ---------------------------------------------------------------------------
 // CLI args
 // ---------------------------------------------------------------------------
 
@@ -100,7 +111,6 @@ async function fetchSpec(
     specUrl ??
     process.env.MINDSTUDIO_BASE_URL ??
     'https://v1.mindstudio-api.com';
-  // const baseUrl = 'http://localhost:3129';
 
   const url = `${baseUrl}/developer/v2/steps/openapi.json`;
   console.log(`Fetching spec from: ${url}`);
@@ -341,6 +351,27 @@ function generateTypes(
     chunks.push('');
   }
 
+  // Type aliases
+  const reverseAliases = new Map<string, string[]>();
+  for (const [alias, stepType] of Object.entries(METHOD_ALIASES)) {
+    if (!reverseAliases.has(stepType)) reverseAliases.set(stepType, []);
+    reverseAliases.get(stepType)!.push(alias);
+  }
+  for (const step of steps) {
+    const aliases = reverseAliases.get(step.stepType);
+    if (!aliases) continue;
+    for (const alias of aliases) {
+      const aliasPascal = toPascalCase(alias);
+      chunks.push(
+        `export type ${aliasPascal}StepInput = ${step.inputTypeName};`,
+      );
+      chunks.push(
+        `export type ${aliasPascal}StepOutput = ${step.outputTypeName};`,
+      );
+      chunks.push('');
+    }
+  }
+
   // StepName union type for discoverability
   chunks.push('/** Union of all available step type names. */');
   chunks.push(
@@ -387,24 +418,50 @@ function generateSteps(steps: StepInfo[]): string {
   );
   chunks.push('');
 
+  // Build reverse alias map: stepType -> alias names
+  const reverseAliases = new Map<string, string[]>();
+  for (const [alias, stepType] of Object.entries(METHOD_ALIASES)) {
+    if (!reverseAliases.has(stepType)) reverseAliases.set(stepType, []);
+    reverseAliases.get(stepType)!.push(alias);
+  }
+
+  // Set of step types that have been renamed — skip original names
+  const renamedStepTypes = new Set(Object.values(METHOD_ALIASES));
+
   // Interface with all typed step methods
   chunks.push('export interface StepMethods {');
 
   for (const step of steps) {
+    const aliases = reverseAliases.get(step.stepType);
     const doc = buildMethodDoc(step.operation);
-    // Indent the doc
     const indentedDoc = doc
       .split('\n')
       .map((l) => `  ${l}`)
       .join('\n');
-    chunks.push(indentedDoc);
-    chunks.push(
-      `  ${step.methodName}(` +
-        `step: ${step.inputTypeName}, ` +
-        `options?: StepExecutionOptions` +
-        `): Promise<StepExecutionResult<${step.outputTypeName}>>;`,
-    );
-    chunks.push('');
+
+    if (aliases) {
+      // Renamed: only emit under the alias name(s)
+      for (const alias of aliases) {
+        chunks.push(indentedDoc);
+        chunks.push(
+          `  ${alias}(` +
+            `step: ${step.inputTypeName}, ` +
+            `options?: StepExecutionOptions` +
+            `): Promise<StepExecutionResult<${step.outputTypeName}>>;`,
+        );
+        chunks.push('');
+      }
+    } else {
+      // No alias: emit under the original name
+      chunks.push(indentedDoc);
+      chunks.push(
+        `  ${step.methodName}(` +
+          `step: ${step.inputTypeName}, ` +
+          `options?: StepExecutionOptions` +
+          `): Promise<StepExecutionResult<${step.outputTypeName}>>;`,
+      );
+      chunks.push('');
+    }
   }
 
   chunks.push('}');
@@ -421,17 +478,23 @@ function generateSteps(steps: StepInfo[]): string {
   chunks.push('');
 
   for (const step of steps) {
-    chunks.push(
-      `  proto.${step.methodName} = function (` +
-        `step: ${step.inputTypeName}, ` +
-        `options?: StepExecutionOptions` +
-        `) {`,
-    );
-    chunks.push(
-      `    return this.executeStep("${step.stepType}", step as unknown as Record<string, unknown>, options);`,
-    );
-    chunks.push('  };');
-    chunks.push('');
+    const aliases = reverseAliases.get(step.stepType);
+    // Use alias name(s) if renamed, otherwise original name
+    const methodNames = aliases ?? [step.methodName];
+
+    for (const name of methodNames) {
+      chunks.push(
+        `  proto.${name} = function (` +
+          `step: ${step.inputTypeName}, ` +
+          `options?: StepExecutionOptions` +
+          `) {`,
+      );
+      chunks.push(
+        `    return this.executeStep("${step.stepType}", step as unknown as Record<string, unknown>, options);`,
+      );
+      chunks.push('  };');
+      chunks.push('');
+    }
   }
 
   chunks.push('}');
@@ -552,6 +615,298 @@ function generateHelpers(spec: OpenAPISpec): string {
 }
 
 // ---------------------------------------------------------------------------
+// Generate src/generated/snippets.ts
+// ---------------------------------------------------------------------------
+
+function schemaDefault(schema: SchemaObject | undefined): string {
+  if (!schema) return '``';
+
+  if (schema.enum) return JSON.stringify(schema.enum[0]);
+
+  if (Array.isArray(schema.type)) {
+    const nonNull = schema.type.filter((t) => t !== 'null');
+    if (nonNull.length > 0) {
+      return schemaDefault({ ...schema, type: nonNull[0] });
+    }
+    return '``';
+  }
+
+  switch (schema.type) {
+    case 'string':
+      return '``';
+    case 'number':
+    case 'integer':
+      return '0';
+    case 'boolean':
+      return 'false';
+    case 'array':
+      return '[]';
+    case 'object':
+      return '{}';
+    default:
+      return '``';
+  }
+}
+
+function generateSnippets(steps: StepInfo[]): string {
+  const chunks: string[] = [HEADER, ''];
+
+  chunks.push('export interface StepSnippet {');
+  chunks.push('  method: string;');
+  chunks.push('  snippet: string;');
+  chunks.push('  outputKeys: string[];');
+  chunks.push('}');
+  chunks.push('');
+
+  chunks.push('export const stepSnippets: Record<string, StepSnippet> = {');
+
+  const renamedStepTypes = new Set(Object.values(METHOD_ALIASES));
+  const reverseAliases = new Map<string, string[]>();
+  for (const [alias, stepType] of Object.entries(METHOD_ALIASES)) {
+    if (!reverseAliases.has(stepType)) reverseAliases.set(stepType, []);
+    reverseAliases.get(stepType)!.push(alias);
+  }
+
+  const allMethods: Array<{
+    method: string;
+    useMethodName?: string;
+    stepType: string;
+    schema: SchemaObject;
+    outputSchema: SchemaObject | null;
+  }> = [];
+
+  for (const step of steps) {
+    const aliases = reverseAliases.get(step.stepType);
+    if (aliases) {
+      // Renamed: emit alias entries + original pointing to the alias
+      for (const alias of aliases) {
+        allMethods.push({
+          method: alias,
+          stepType: step.stepType,
+          schema: step.inputSchema,
+          outputSchema: step.outputSchema,
+        });
+        // Original name points to the renamed method
+        allMethods.push({
+          method: step.methodName,
+          useMethodName: alias,
+          stepType: step.stepType,
+          schema: step.inputSchema,
+          outputSchema: step.outputSchema,
+        });
+      }
+    } else {
+      allMethods.push({
+        method: step.methodName,
+        stepType: step.stepType,
+        schema: step.inputSchema,
+        outputSchema: step.outputSchema,
+      });
+    }
+  }
+
+  allMethods.sort((a, b) => a.method.localeCompare(b.method));
+
+  for (const { method, useMethodName, schema, outputSchema } of allMethods) {
+    const displayMethod = useMethodName ?? method;
+    const required = new Set(schema.required ?? []);
+    const props = schema.properties ?? {};
+
+    // Build the params: only required fields
+    const paramLines: string[] = [];
+    for (const [key, propSchema] of Object.entries(props)) {
+      if (!required.has(key)) continue;
+      paramLines.push(`  ${key}: ${schemaDefault(propSchema)},`);
+    }
+
+    let snippet: string;
+    if (paramLines.length === 0) {
+      snippet = '{}';
+    } else {
+      snippet = `{\n${paramLines.join('\n')}\n}`;
+    }
+
+    // Required output keys
+    const outputRequired = new Set(outputSchema?.required ?? []);
+    const outputKeys = Object.keys(outputSchema?.properties ?? {}).filter((k) =>
+      outputRequired.has(k),
+    );
+
+    chunks.push(`  ${JSON.stringify(method)}: {`);
+    chunks.push(`    method: ${JSON.stringify(displayMethod)},`);
+    chunks.push(`    snippet: ${JSON.stringify(snippet)},`);
+    chunks.push(`    outputKeys: ${JSON.stringify(outputKeys)},`);
+    chunks.push('  },');
+  }
+
+  chunks.push('};');
+  chunks.push('');
+
+  return chunks.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Generate llms.txt
+// ---------------------------------------------------------------------------
+
+function generateLlmsTxt(steps: StepInfo[]): string {
+  const reverseAliases = new Map<string, string[]>();
+  for (const [alias, stepType] of Object.entries(METHOD_ALIASES)) {
+    if (!reverseAliases.has(stepType)) reverseAliases.set(stepType, []);
+    reverseAliases.get(stepType)!.push(alias);
+  }
+
+  const lines: string[] = [];
+
+  lines.push('# @mindstudio-ai/agent');
+  lines.push('');
+  lines.push(
+    'TypeScript SDK for executing MindStudio workflow steps. Each method calls a specific AI/automation action and returns typed results.',
+  );
+  lines.push('');
+
+  // --- Setup ---
+  lines.push('## Setup');
+  lines.push('');
+  lines.push('```typescript');
+  lines.push("import { MindStudioAgent } from '@mindstudio-ai/agent';");
+  lines.push('');
+  lines.push('// With API key');
+  lines.push("const agent = new MindStudioAgent({ apiKey: 'your-key' });");
+  lines.push('');
+  lines.push(
+    '// Or via environment variables (MINDSTUDIO_API_KEY or CALLBACK_TOKEN)',
+  );
+  lines.push('const agent = new MindStudioAgent();');
+  lines.push('```');
+  lines.push('');
+
+  // --- Pattern ---
+  lines.push('## Usage pattern');
+  lines.push('');
+  lines.push(
+    'Every method returns the output fields directly, plus `$appId`, `$threadId`, and `$rateLimitRemaining` metadata:',
+  );
+  lines.push('');
+  lines.push('```typescript');
+  lines.push(
+    "const { content } = await agent.generateText({ message: 'Hello' });",
+  );
+  lines.push('');
+  lines.push(
+    '// Thread persistence — pass $appId/$threadId to maintain state across calls:',
+  );
+  lines.push(
+    "const r1 = await agent.generateText({ message: 'My name is Alice' });",
+  );
+  lines.push('const r2 = await agent.generateText(');
+  lines.push("  { message: 'What is my name?' },");
+  lines.push('  { threadId: r1.$threadId, appId: r1.$appId },');
+  lines.push(');');
+  lines.push('```');
+  lines.push('');
+
+  // --- Error handling ---
+  lines.push('## Error handling');
+  lines.push('');
+  lines.push('```typescript');
+  lines.push("import { MindStudioError } from '@mindstudio-ai/agent';");
+  lines.push('// Throws MindStudioError with .code, .status, .details');
+  lines.push('// 429 errors are retried automatically (3 retries by default)');
+  lines.push('```');
+  lines.push('');
+
+  // --- Method catalog ---
+  lines.push('## Available methods');
+  lines.push('');
+  lines.push(
+    'Each entry: `method(requiredParams) -> outputKeys` — description',
+  );
+  lines.push('');
+
+  // Group by category based on summary prefix
+  const categories = new Map<
+    string,
+    Array<{
+      method: string;
+      summary: string;
+      requiredParams: string[];
+      outputKeys: string[];
+    }>
+  >();
+
+  for (const step of steps) {
+    const aliases = reverseAliases.get(step.stepType);
+    const methodNames = aliases ?? [step.methodName];
+    const summary = step.operation.summary ?? '';
+
+    // Determine category from summary prefix like "[Google]", "[Slack]" etc
+    const categoryMatch = summary.match(/^\[([^\]]+)\]\s*/);
+    const category = categoryMatch ? categoryMatch[1] : 'General';
+    const cleanSummary = categoryMatch
+      ? summary.slice(categoryMatch[0].length)
+      : summary;
+
+    const requiredSet = new Set(step.inputSchema.required ?? []);
+    const requiredParams = Object.keys(
+      step.inputSchema.properties ?? {},
+    ).filter((k) => requiredSet.has(k));
+
+    const outputRequiredSet = new Set(step.outputSchema?.required ?? []);
+    const outputKeys = Object.keys(step.outputSchema?.properties ?? {}).filter(
+      (k) => outputRequiredSet.has(k),
+    );
+
+    for (const method of methodNames) {
+      if (!categories.has(category)) categories.set(category, []);
+      categories.get(category)!.push({
+        method,
+        summary: cleanSummary,
+        requiredParams,
+        outputKeys,
+      });
+    }
+  }
+
+  // Sort categories: General first, then alphabetical
+  const sortedCategories = [...categories.entries()].sort((a, b) => {
+    if (a[0] === 'General') return -1;
+    if (b[0] === 'General') return 1;
+    return a[0].localeCompare(b[0]);
+  });
+
+  for (const [category, methods] of sortedCategories) {
+    lines.push(`### ${category}`);
+    lines.push('');
+    for (const m of methods.sort((a, b) => a.method.localeCompare(b.method))) {
+      const params =
+        m.requiredParams.length > 0 ? m.requiredParams.join(', ') : '';
+      const output =
+        m.outputKeys.length > 0 ? ` -> { ${m.outputKeys.join(', ')} }` : '';
+      lines.push(`- \`${m.method}(${params})\`${output} — ${m.summary}`);
+    }
+    lines.push('');
+  }
+
+  // --- Helpers ---
+  lines.push('### Helpers');
+  lines.push('');
+  lines.push('- `listModels()` -> { models } — List all available AI models');
+  lines.push(
+    '- `listModelsByType(modelType)` -> { models } — Filter by type: "llm_chat", "image_generation", "video_generation", "video_analysis", "text_to_speech", "vision", "transcription"',
+  );
+  lines.push(
+    '- `listConnectors()` -> { services } — List available connector services',
+  );
+  lines.push(
+    '- `getConnector(serviceId)` -> { service } — Get connector details',
+  );
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -566,6 +921,8 @@ async function main() {
   const typesContent = generateTypes(steps, spec.definitions);
   const stepsContent = generateSteps(steps);
   const helpersContent = generateHelpers(spec);
+  const snippetsContent = generateSnippets(steps);
+  const llmsTxtContent = generateLlmsTxt(steps);
 
   writeFileSync(resolve(GENERATED_DIR, 'types.ts'), typesContent);
   console.log(`Wrote src/generated/types.ts`);
@@ -575,6 +932,12 @@ async function main() {
 
   writeFileSync(resolve(GENERATED_DIR, 'helpers.ts'), helpersContent);
   console.log(`Wrote src/generated/helpers.ts`);
+
+  writeFileSync(resolve(GENERATED_DIR, 'snippets.ts'), snippetsContent);
+  console.log(`Wrote src/generated/snippets.ts`);
+
+  writeFileSync(resolve(__dirname, '../llms.txt'), llmsTxtContent);
+  console.log(`Wrote llms.txt`);
 
   console.log('Done!');
 }
