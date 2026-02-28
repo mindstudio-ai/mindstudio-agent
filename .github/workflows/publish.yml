@@ -2,47 +2,29 @@ name: Publish to npm
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version bump type"
-        required: true
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
+
+permissions:
+  id-token: write
+  contents: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          registry-url: "https://registry.npmjs.org"
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
 
       - run: npm ci
       - run: npm run build
-        env:
-          MINDSTUDIO_BASE_URL: https://v1.mindstudio-api.com
 
-      - name: Configure git
+      - run: npm publish --access public
+
+      - name: Tag release
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Bump version
-        run: npm version ${{ inputs.version }}
-
-      - run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Push version commit and tag
-        run: |
-          git push
-          git push --tags
+          VERSION=$(node -p "require('./package.json').version")
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
