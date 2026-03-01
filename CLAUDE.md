@@ -8,15 +8,18 @@ TypeScript SDK for MindStudio's direct step execution API. Methods and types are
 src/
   index.ts              # Package entry — merges generated interfaces onto MindStudioAgent, re-exports
   client.ts             # MindStudioAgent class (hand-written, stable)
+  cli.ts                # CLI entry point (bin script) — exec, list, agents, run, mcp commands
+  mcp.ts                # Minimal MCP server (JSON-RPC 2.0 over stdio, zero deps)
   http.ts               # Fetch wrapper with concurrency queuing and 429 retry
   errors.ts             # MindStudioError class
-  types.ts              # AgentOptions, StepExecutionOptions, StepExecutionResult, StepExecutionMeta
+  types.ts              # AgentOptions, StepExecutionOptions, StepExecutionResult, StepExecutionMeta, agent run/list types
   rate-limit.ts         # Concurrency semaphore + call cap tracking
   generated/            # AUTO-GENERATED at build time — do not edit by hand
     types.ts            # Step input/output interfaces, StepName union, StepInputMap/StepOutputMap
     steps.ts            # StepMethods interface + applyStepMethods() runtime attachment
     helpers.ts          # HelperMethods interface + applyHelperMethods() runtime attachment
     snippets.ts         # monacoSnippets object (fields, output keys) + blockTypeAliases
+    metadata.ts         # stepMetadata — full JSON schemas + descriptions for CLI/MCP
 scripts/
   codegen.ts            # Fetches OpenAPI spec → generates src/generated/* + llms.txt
 llms.txt                # Generated — compact LLM-friendly reference of all methods
@@ -36,18 +39,35 @@ examples/
 
 `prepare` and `prepublishOnly` both run `build:local`.
 
+## CLI & MCP
+
+The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI agent consumption.
+
+- `mindstudio exec <method> '<json>'` — execute a step method, JSON output to stdout
+- `mindstudio list [--json]` — list available methods
+- `mindstudio agents [--json]` — list pre-built agents in the organization
+- `mindstudio run <appId> [json | --flags]` — run a pre-built agent (async poll, returns result)
+- `mindstudio mcp` — start MCP server (JSON-RPC 2.0 over stdio)
+- Auth via `--api-key` flag or `MINDSTUDIO_API_KEY` env var
+- MCP server creates one agent per session with `reuseThreadId: true`
+- CLI supports `--app-id` and `--thread-id` for thread persistence across calls
+- Both CLI and MCP consume `src/generated/metadata.ts` for method schemas and descriptions
+- MCP exposes `listAgents` and `runAgent` as tools alongside all step/helper methods
+- `tsup.config.ts` uses an array of two configs: library build (dts, sourcemap) + CLI build (shebang, no dts)
+
 ## Architecture notes
 
 - **Zero runtime dependencies.** Uses built-in `fetch` (Node >= 18).
 - **ESM only.** `"type": "module"` in package.json.
 - **Type merging pattern.** Generated code exports `StepMethods` and `HelperMethods` interfaces. `index.ts` merges them onto `MindStudioAgent` via `export type MindStudioAgent = _MindStudioAgent & StepMethods & HelperMethods` + constructor retyping. Runtime methods are attached to the prototype via `applyStepMethods()` / `applyHelperMethods()`.
-- **Flat results.** `StepExecutionResult<T> = T & StepExecutionMeta`. Output properties are spread at the top level. Metadata uses `$` prefix (`$appId`, `$threadId`, `$rateLimitRemaining`).
+- **Flat results.** `StepExecutionResult<T> = T & StepExecutionMeta`. Output properties are spread at the top level. Metadata uses `$` prefix (`$appId`, `$threadId`, `$rateLimitRemaining`, `$billingCost`, `$billingEvents`).
 - **S3 output resolution.** When the API returns `outputUrl` instead of inline `output`, the SDK auto-fetches the S3 JSON (`{ value: ... }`) and unwraps it transparently.
 - **Auth resolution order:** constructor `apiKey` → `MINDSTUDIO_API_KEY` env → `CALLBACK_TOKEN` env (managed mode).
 - **Base URL resolution order:** constructor `baseUrl` → `MINDSTUDIO_BASE_URL` env → `REMOTE_HOSTNAME` env (managed mode) → `https://v1.mindstudio-api.com`.
 - **Thread reuse:** constructor `reuseThreadId` → `MINDSTUDIO_REUSE_THREAD_ID` env (`"true"` / `"1"`). When enabled, the thread ID from the first API response is stored on the instance and automatically sent with all subsequent `executeStep` calls (unless an explicit `threadId` is passed in options).
 - All step endpoints follow the pattern: `POST /developer/v2/steps/{stepType}/execute` with `{ step, appId?, threadId? }` body.
 - `appId` and `threadId` are returned in response headers (`x-mindstudio-app-id`, `x-mindstudio-thread-id`).
+- **Agent methods** (`listAgents`, `runAgent`) are hand-written on `MindStudioAgent` (not generated). `listAgents()` calls `GET /developer/v2/agents/load`. `runAgent()` posts to `POST /developer/v2/agents/run` with `async: true`, then polls `GET /developer/v2/agents/run/poll/:callbackToken` until complete/error. Poll requests bypass the rate limiter (no auth needed, token is the secret). Default poll interval is 1s, configurable via `pollIntervalMs`.
 
 ## Rate limiting
 

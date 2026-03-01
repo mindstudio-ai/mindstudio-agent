@@ -69,6 +69,12 @@ export interface StepExecutionMeta {
    * Useful for throttling proactively before hitting the limit.
    */
   $rateLimitRemaining?: number;
+
+  /** Cost in credits for this step execution. */
+  $billingCost?: number;
+
+  /** Itemized billing events for this step execution. */
+  $billingEvents?: Array<Record<string, unknown>>;
 }
 
 /**
@@ -79,7 +85,7 @@ export interface StepExecutionMeta {
  * const { content } = await agent.generateText({ ... });
  * ```
  *
- * Execution metadata (`$appId`, `$threadId`, `$rateLimitRemaining`) is also available:
+ * Execution metadata (`$appId`, `$threadId`, `$rateLimitRemaining`, `$billingCost`, `$billingEvents`) is also available:
  * ```ts
  * const result = await agent.generateText({ ... });
  * console.log(result.content, result.$threadId, result.$rateLimitRemaining);
@@ -87,3 +93,69 @@ export interface StepExecutionMeta {
  */
 export type StepExecutionResult<TOutput = Record<string, unknown>> =
   TOutput & StepExecutionMeta;
+
+// ---------------------------------------------------------------------------
+// Agent (pre-built app) types
+// ---------------------------------------------------------------------------
+
+/** Information about a pre-built agent in the organization. */
+export interface AgentInfo {
+  /** Agent UUID. Pass as `appId` to {@link RunAgentOptions}. */
+  id: string;
+  /** Display name. */
+  name: string;
+  /** Short description. */
+  description: string;
+  /** URL-friendly identifier. */
+  slug: string;
+  /** Agent icon URL. */
+  iconUrl: string;
+  /** Links: run, edit, details, logs. */
+  refs: Record<string, string>;
+  /** ISO timestamp. */
+  dateCreated: string;
+  /** ISO timestamp. */
+  dateLastEdited: string;
+}
+
+/** Result of {@link MindStudioAgent.listAgents}. */
+export interface ListAgentsResult {
+  /** Organization UUID. */
+  orgId: string;
+  /** Organization display name. */
+  orgName: string;
+  /** Agents in the organization. */
+  apps: AgentInfo[];
+}
+
+/** Options for {@link MindStudioAgent.runAgent}. */
+export interface RunAgentOptions {
+  /** App/agent ID to run (required). */
+  appId: string;
+  /** Input variables as key-value pairs. */
+  variables?: Record<string, unknown>;
+  /** Workflow name to execute. Omit for the app's default. */
+  workflow?: string;
+  /** App version override (e.g. "draft"). Defaults to "live". */
+  version?: string;
+  /** Include billing cost in the response. */
+  includeBillingCost?: boolean;
+  /** Arbitrary metadata stored with the API request log. */
+  metadata?: Record<string, unknown>;
+  /** Polling interval in milliseconds. @default 1000 */
+  pollIntervalMs?: number;
+}
+
+/** Result of a successful agent run. */
+export interface RunAgentResult {
+  /** Whether the run succeeded. */
+  success: boolean;
+  /** Thread ID for the run. */
+  threadId: string;
+  /** The result content (last system message). */
+  result: string;
+  /** Thread messages, if returned. */
+  thread?: unknown;
+  /** Cost in credits, if `includeBillingCost` was set. */
+  billingCost?: number;
+}

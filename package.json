@@ -1,6 +1,6 @@
 {
   "name": "@mindstudio-ai/agent",
-  "version": "0.0.15",
+  "version": "0.0.16",
   "description": "TypeScript SDK for MindStudio direct step execution",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,6 +11,9 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     }
+  },
+  "bin": {
+    "mindstudio": "./dist/cli.js"
   },
   "files": [
     "dist",

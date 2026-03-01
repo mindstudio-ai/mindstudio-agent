@@ -17,6 +17,10 @@ export type {
   StepExecutionOptions,
   StepExecutionResult,
   StepExecutionMeta,
+  AgentInfo,
+  ListAgentsResult,
+  RunAgentOptions,
+  RunAgentResult,
 } from './types.js';
 
 // Re-export all generated types
@@ -30,3 +34,7 @@ export {
   type MonacoSnippetField,
   type MonacoSnippetFieldType,
 } from './generated/snippets.js';
+export {
+  stepMetadata,
+  type StepMetadata,
+} from './generated/metadata.js';
