@@ -24,9 +24,9 @@ export * from './generated/types.js';
 export type { StepMethods } from './generated/steps.js';
 export type { HelperMethods, MindStudioModel, ModelType } from './generated/helpers.js';
 export {
-  stepSnippets,
   monacoSnippets,
-  type StepSnippet,
+  blockTypeAliases,
+  type MonacoSnippet,
   type MonacoSnippetField,
   type MonacoSnippetFieldType,
 } from './generated/snippets.js';

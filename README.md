@@ -199,17 +199,23 @@ import type {
 
 ## Snippets
 
-A `stepSnippets` object is exported for building UI menus or code generators:
+A `monacoSnippets` object is exported with field metadata and output keys for every method:
 
 ```typescript
-import { stepSnippets } from '@mindstudio-ai/agent';
+import { monacoSnippets } from '@mindstudio-ai/agent';
 
-stepSnippets.generateText;
+monacoSnippets.generateText;
 // {
-//   method: "generateText",
-//   snippet: "{\n  message: ``,\n}",
+//   fields: [["message", "string"]],
 //   outputKeys: ["content"]
 // }
+```
+
+For the 2 renamed step types, both the alias and original name appear as keys. A `blockTypeAliases` map is also exported for reverse-mapping:
+
+```typescript
+import { blockTypeAliases } from '@mindstudio-ai/agent';
+// { userMessage: "generateText", generatePdf: "generateAsset" }
 ```
 
 ## LLM documentation

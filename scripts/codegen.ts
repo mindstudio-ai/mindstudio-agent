@@ -698,16 +698,17 @@ function schemaDefault(schema: SchemaObject | undefined): string {
 function generateSnippets(steps: StepInfo[]): string {
   const chunks: string[] = [HEADER, ''];
 
-  chunks.push('export interface StepSnippet {');
-  chunks.push('  method: string;');
-  chunks.push('  snippet: string;');
+  chunks.push(
+    "export type MonacoSnippetFieldType = 'string' | 'number' | 'boolean' | 'array' | 'object' | string[];",
+  );
+  chunks.push('export type MonacoSnippetField = [name: string, type: MonacoSnippetFieldType];');
+  chunks.push('');
+  chunks.push('export interface MonacoSnippet {');
+  chunks.push('  fields: MonacoSnippetField[];');
   chunks.push('  outputKeys: string[];');
   chunks.push('}');
   chunks.push('');
 
-  chunks.push('export const stepSnippets: Record<string, StepSnippet> = {');
-
-  const renamedStepTypes = new Set(Object.values(METHOD_ALIASES));
   const reverseAliases = new Map<string, string[]>();
   for (const [alias, stepType] of Object.entries(METHOD_ALIASES)) {
     if (!reverseAliases.has(stepType)) reverseAliases.set(stepType, []);
@@ -716,7 +717,6 @@ function generateSnippets(steps: StepInfo[]): string {
 
   const allMethods: Array<{
     method: string;
-    useMethodName?: string;
     stepType: string;
     schema: SchemaObject;
     outputSchema: SchemaObject | null;
@@ -725,18 +725,17 @@ function generateSnippets(steps: StepInfo[]): string {
   for (const step of steps) {
     const aliases = reverseAliases.get(step.stepType);
     if (aliases) {
-      // Renamed: emit alias entries + original pointing to the alias
       for (const alias of aliases) {
+        // Alias entry (the public method name)
         allMethods.push({
           method: alias,
           stepType: step.stepType,
           schema: step.inputSchema,
           outputSchema: step.outputSchema,
         });
-        // Original name points to the renamed method
+        // Original step type name as duplicate entry
         allMethods.push({
           method: step.methodName,
-          useMethodName: alias,
           stepType: step.stepType,
           schema: step.inputSchema,
           outputSchema: step.outputSchema,
@@ -754,41 +753,11 @@ function generateSnippets(steps: StepInfo[]): string {
 
   allMethods.sort((a, b) => a.method.localeCompare(b.method));
 
-  for (const { method, useMethodName, schema, outputSchema } of allMethods) {
-    const displayMethod = useMethodName ?? method;
-    const snippet = buildSnippet(schema);
-
-    // Required output keys
-    const outputRequired = new Set(outputSchema?.required ?? []);
-    const outputKeys = Object.keys(outputSchema?.properties ?? {}).filter((k) =>
-      outputRequired.has(k),
-    );
-
-    chunks.push(`  ${JSON.stringify(method)}: {`);
-    chunks.push(`    method: ${JSON.stringify(displayMethod)},`);
-    chunks.push(`    snippet: ${JSON.stringify(snippet)},`);
-    chunks.push(`    outputKeys: ${JSON.stringify(outputKeys)},`);
-    chunks.push('  },');
-  }
-
-  chunks.push('};');
-  chunks.push('');
-
-  // --- Monaco snippets ---
   chunks.push(
-    "export type MonacoSnippetFieldType = 'string' | 'number' | 'boolean' | 'array' | 'object' | string[];",
-  );
-  chunks.push('export type MonacoSnippetField = [name: string, type: MonacoSnippetFieldType];');
-  chunks.push('');
-
-  chunks.push(
-    'export const monacoSnippets: Record<string, MonacoSnippetField[]> = {',
+    'export const monacoSnippets: Record<string, MonacoSnippet> = {',
   );
 
-  for (const { method, useMethodName, schema } of allMethods) {
-    // Skip original names that point to aliases (avoid duplicate entries)
-    if (useMethodName) continue;
-
+  for (const { method, schema, outputSchema } of allMethods) {
     const required = new Set(schema.required ?? []);
     const props = schema.properties ?? {};
 
@@ -798,11 +767,30 @@ function generateSnippets(steps: StepInfo[]): string {
       fields.push(`[${JSON.stringify(key)}, ${monacoFieldType(propSchema)}]`);
     }
 
+    const outputRequired = new Set(outputSchema?.required ?? []);
+    const outputKeys = Object.keys(outputSchema?.properties ?? {}).filter((k) =>
+      outputRequired.has(k),
+    );
+
     chunks.push(
-      `  ${JSON.stringify(method)}: [${fields.join(', ')}],`,
+      `  ${JSON.stringify(method)}: { fields: [${fields.join(', ')}], outputKeys: ${JSON.stringify(outputKeys)} },`,
     );
   }
 
+  chunks.push('};');
+  chunks.push('');
+
+  // Block-type aliases: maps public method name → original step type name.
+  // For the 2 renamed steps, consumers can use this to reverse-map.
+  const aliasEntries = Object.entries(METHOD_ALIASES).map(
+    ([stepType, alias]) => `  ${JSON.stringify(alias)}: ${JSON.stringify(stepType)},`,
+  );
+  chunks.push(
+    'export const blockTypeAliases: Record<string, string> = {',
+  );
+  for (const entry of aliasEntries) {
+    chunks.push(entry);
+  }
   chunks.push('};');
   chunks.push('');
 

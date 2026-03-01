@@ -16,7 +16,7 @@ src/
     types.ts            # Step input/output interfaces, StepName union, StepInputMap/StepOutputMap
     steps.ts            # StepMethods interface + applyStepMethods() runtime attachment
     helpers.ts          # HelperMethods interface + applyHelperMethods() runtime attachment
-    snippets.ts         # stepSnippets object (method name, input snippet, output keys)
+    snippets.ts         # monacoSnippets object (fields, output keys) + blockTypeAliases
 scripts/
   codegen.ts            # Fetches OpenAPI spec → generates src/generated/* + llms.txt
 llms.txt                # Generated — compact LLM-friendly reference of all methods
@@ -66,7 +66,7 @@ const METHOD_ALIASES: Record<string, string> = {
 };
 ```
 
-When a step has a rename, the original name is removed from `StepMethods` and the prototype. Only the renamed version is exposed. `stepSnippets` includes both keys (original and rename) but both point to the renamed method name.
+When a step has a rename, the original name is removed from `StepMethods` and the prototype. Only the renamed version is exposed. `monacoSnippets` includes both keys (alias and original) as duplicate entries. `blockTypeAliases` maps alias method name → original step type name for reverse-mapping.
 
 ## Codegen details
 
@@ -75,7 +75,7 @@ When a step has a rename, the original name is removed from `StepMethods` and th
 1. **src/generated/types.ts** — input/output interfaces from JSON Schema, `StepName` union, `StepInputMap`/`StepOutputMap`, type aliases for renamed steps
 2. **src/generated/steps.ts** — `StepMethods` interface with JSDoc (`description` as main line, `x-usage-notes` as `@remarks`, snippet as `@example`), `applyStepMethods()` for runtime
 3. **src/generated/helpers.ts** — `HelperMethods` interface + `applyHelperMethods()` for models/connectors endpoints
-4. **src/generated/snippets.ts** — `stepSnippets` object with method name, input snippet (required params only, backticks for strings, quoted for enums), and output keys
+4. **src/generated/snippets.ts** — `monacoSnippets` object with fields (required params + types) and output keys, plus `blockTypeAliases` for renamed steps
 5. **llms.txt** — compact LLM reference with full typed input/output shapes, categorized by integration
 
 The OpenAPI spec provides `description` (one-line summary) and `x-usage-notes` (bullet-pointed usage details) separately per operation. Both are used for IntelliSense and llms.txt.
