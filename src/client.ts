@@ -115,6 +115,8 @@ export class MindStudioAgent {
     }
 
     const remaining = headers.get('x-ratelimit-remaining');
+    const billingCost = headers.get('x-mindstudio-billing-cost');
+    const billingEvents = headers.get('x-mindstudio-billing-events');
 
     return {
       ...(output as object),
@@ -122,6 +124,12 @@ export class MindStudioAgent {
       $threadId: returnedThreadId,
       $rateLimitRemaining:
         remaining != null ? parseInt(remaining, 10) : undefined,
+      $billingCost:
+        billingCost != null ? parseFloat(billingCost) : undefined,
+      $billingEvents:
+        billingEvents != null
+          ? (JSON.parse(billingEvents) as Array<Record<string, unknown>>)
+          : undefined,
     } as StepExecutionResult<TOutput>;
   }
 

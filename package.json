@@ -12,6 +12,9 @@
       "default": "./dist/index.js"
     }
   },
+  "bin": {
+    "mindstudio": "./dist/cli.js"
+  },
   "files": [
     "dist",
     "llms.txt"

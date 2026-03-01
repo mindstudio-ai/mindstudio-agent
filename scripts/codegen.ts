@@ -827,6 +827,151 @@ function monacoFieldType(schema: SchemaObject): string {
 }
 
 // ---------------------------------------------------------------------------
+// Generate src/generated/metadata.ts
+// ---------------------------------------------------------------------------
+
+/**
+ * Converts an OpenAPI SchemaObject into a clean JSON Schema object
+ * suitable for MCP tool definitions and CLI validation.
+ */
+function schemaToJsonSchema(
+  schema: SchemaObject | undefined,
+  definitions?: Record<string, SchemaObject>,
+): Record<string, unknown> | null {
+  if (!schema) return null;
+
+  if (schema.$ref) {
+    const refName = schema.$ref.split('/').pop()!;
+    if (definitions?.[refName]) {
+      return schemaToJsonSchema(definitions[refName], definitions);
+    }
+    return { type: 'string' };
+  }
+
+  if (schema.anyOf) {
+    const resolved = schema.anyOf.map((s) => schemaToJsonSchema(s, definitions)).filter(Boolean);
+    if (resolved.length === 1) return resolved[0];
+    return { anyOf: resolved };
+  }
+
+  if (schema.enum) {
+    const base: Record<string, unknown> = { enum: schema.enum };
+    if (schema.type) base.type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
+    if (schema.description) base.description = schema.description;
+    return base;
+  }
+
+  if (Array.isArray(schema.type)) {
+    const nonNull = schema.type.filter((t) => t !== 'null');
+    if (nonNull.length === 1) {
+      return schemaToJsonSchema({ ...schema, type: nonNull[0] }, definitions);
+    }
+    return { type: schema.type };
+  }
+
+  if (schema.type === 'object' && schema.properties) {
+    const props: Record<string, unknown> = {};
+    for (const [key, prop] of Object.entries(schema.properties)) {
+      props[key] = schemaToJsonSchema(prop, definitions);
+    }
+    const result: Record<string, unknown> = {
+      type: 'object',
+      properties: props,
+    };
+    if (schema.required?.length) result.required = schema.required;
+    if (schema.description) result.description = schema.description;
+    return result;
+  }
+
+  if (schema.type === 'object') {
+    const result: Record<string, unknown> = { type: 'object' };
+    if (schema.description) result.description = schema.description;
+    return result;
+  }
+
+  if (schema.type === 'array') {
+    const result: Record<string, unknown> = { type: 'array' };
+    if (schema.items) result.items = schemaToJsonSchema(schema.items, definitions);
+    if (schema.description) result.description = schema.description;
+    return result;
+  }
+
+  // Primitive types
+  const result: Record<string, unknown> = {};
+  if (schema.type) result.type = schema.type === 'integer' ? 'number' : schema.type;
+  if (schema.description) result.description = schema.description;
+  return result;
+}
+
+function generateMetadata(
+  steps: StepInfo[],
+  definitions?: Record<string, SchemaObject>,
+): string {
+  const chunks: string[] = [HEADER, ''];
+
+  chunks.push('export interface StepMetadata {');
+  chunks.push('  stepType: string;');
+  chunks.push('  description: string;');
+  chunks.push('  usageNotes: string;');
+  chunks.push('  inputSchema: Record<string, unknown>;');
+  chunks.push('  outputSchema: Record<string, unknown> | null;');
+  chunks.push('}');
+  chunks.push('');
+
+  const reverseAliases = new Map<string, string[]>();
+  for (const [alias, stepType] of Object.entries(METHOD_ALIASES)) {
+    if (!reverseAliases.has(stepType)) reverseAliases.set(stepType, []);
+    reverseAliases.get(stepType)!.push(alias);
+  }
+
+  const entries: Array<{
+    methodName: string;
+    stepType: string;
+    step: StepInfo;
+  }> = [];
+
+  for (const step of steps) {
+    const aliases = reverseAliases.get(step.stepType);
+    if (aliases) {
+      for (const alias of aliases) {
+        entries.push({ methodName: alias, stepType: step.stepType, step });
+        entries.push({ methodName: step.methodName, stepType: step.stepType, step });
+      }
+    } else {
+      entries.push({ methodName: step.methodName, stepType: step.stepType, step });
+    }
+  }
+
+  entries.sort((a, b) => a.methodName.localeCompare(b.methodName));
+
+  chunks.push('export const stepMetadata: Record<string, StepMetadata> = {');
+
+  for (const { methodName, stepType, step } of entries) {
+    const description = step.operation.description ?? '';
+    const usageNotes = step.operation['x-usage-notes'] ?? '';
+
+    const inputJsonSchema = schemaToJsonSchema(step.inputSchema, definitions) ?? {
+      type: 'object',
+      properties: {},
+    };
+    const outputJsonSchema = schemaToJsonSchema(step.outputSchema ?? undefined, definitions);
+
+    chunks.push(`  ${JSON.stringify(methodName)}: {`);
+    chunks.push(`    stepType: ${JSON.stringify(stepType)},`);
+    chunks.push(`    description: ${JSON.stringify(description)},`);
+    chunks.push(`    usageNotes: ${JSON.stringify(usageNotes)},`);
+    chunks.push(`    inputSchema: ${JSON.stringify(inputJsonSchema)},`);
+    chunks.push(`    outputSchema: ${outputJsonSchema ? JSON.stringify(outputJsonSchema) : 'null'},`);
+    chunks.push('  },');
+  }
+
+  chunks.push('};');
+  chunks.push('');
+
+  return chunks.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Generate llms.txt
 // ---------------------------------------------------------------------------
 
@@ -984,7 +1129,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('# @mindstudio-ai/agent');
   lines.push('');
   lines.push(
-    'TypeScript SDK for executing MindStudio workflow steps. Each method calls a specific AI/automation action and returns typed results.',
+    'TypeScript SDK, CLI, and MCP server for executing MindStudio workflow steps. Each method calls a specific AI/automation action and returns typed results.',
   );
   lines.push('');
   lines.push(
@@ -1000,6 +1145,77 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('```');
   lines.push('');
   lines.push('Requires Node.js >= 18.');
+  lines.push('');
+
+  // --- CLI ---
+  lines.push('## CLI');
+  lines.push('');
+  lines.push(
+    'The package includes a CLI for executing steps from the command line or scripts:',
+  );
+  lines.push('');
+  lines.push('```bash');
+  lines.push('# Execute with named flags (kebab-case)');
+  lines.push(
+    'mindstudio generate-image --prompt "A mountain landscape"',
+  );
+  lines.push('');
+  lines.push('# Execute with JSON input (JSON5-tolerant)');
+  lines.push(
+    "mindstudio generate-image '{prompt: \"A mountain landscape\"}'",
+  );
+  lines.push('');
+  lines.push('# Extract a single output field');
+  lines.push(
+    'mindstudio generate-image --prompt "A sunset" --output-key imageUrl',
+  );
+  lines.push('');
+  lines.push('# List all available methods');
+  lines.push('mindstudio list');
+  lines.push('');
+  lines.push('# Show method details (params, types, output)');
+  lines.push('mindstudio info generate-image');
+  lines.push('');
+  lines.push('# Run via npx without installing');
+  lines.push(
+    'npx @mindstudio-ai/agent generate-text --message "Hello"',
+  );
+  lines.push('```');
+  lines.push('');
+  lines.push(
+    'Auth: set `MINDSTUDIO_API_KEY` env var or pass `--api-key <key>`.',
+  );
+  lines.push(
+    'Method names are kebab-case on the CLI (camelCase also accepted). Flags are kebab-case (`--video-url` for `videoUrl`).',
+  );
+  lines.push(
+    'Use `--output-key <key>` to extract a single field, `--no-meta` to strip $-prefixed metadata.',
+  );
+  lines.push('');
+
+  // --- MCP ---
+  lines.push('## MCP server');
+  lines.push('');
+  lines.push(
+    'The package includes an MCP server exposing all methods as tools:',
+  );
+  lines.push('');
+  lines.push('```bash');
+  lines.push('mindstudio mcp');
+  lines.push('```');
+  lines.push('');
+  lines.push('MCP client config:');
+  lines.push('```json');
+  lines.push('{');
+  lines.push('  "mcpServers": {');
+  lines.push('    "mindstudio": {');
+  lines.push('      "command": "npx",');
+  lines.push('      "args": ["-y", "@mindstudio-ai/agent", "mcp"],');
+  lines.push('      "env": { "MINDSTUDIO_API_KEY": "your-api-key" }');
+  lines.push('    }');
+  lines.push('  }');
+  lines.push('}');
+  lines.push('```');
   lines.push('');
 
   // --- Setup ---
@@ -1067,6 +1283,12 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push(
     'result.$rateLimitRemaining;  // number | undefined — API calls remaining in rate limit window',
+  );
+  lines.push(
+    'result.$billingCost;         // number | undefined — cost in credits for this call',
+  );
+  lines.push(
+    'result.$billingEvents;       // object[] | undefined — itemized billing events',
   );
   lines.push('```');
   lines.push('');
@@ -1276,6 +1498,7 @@ async function main() {
   const stepsContent = generateSteps(steps);
   const helpersContent = generateHelpers(spec);
   const snippetsContent = generateSnippets(steps);
+  const metadataContent = generateMetadata(steps, spec.definitions);
   const llmsTxtContent = generateLlmsTxt(steps);
 
   writeFileSync(resolve(GENERATED_DIR, 'types.ts'), typesContent);
@@ -1289,6 +1512,9 @@ async function main() {
 
   writeFileSync(resolve(GENERATED_DIR, 'snippets.ts'), snippetsContent);
   console.log(`Wrote src/generated/snippets.ts`);
+
+  writeFileSync(resolve(GENERATED_DIR, 'metadata.ts'), metadataContent);
+  console.log(`Wrote src/generated/metadata.ts`);
 
   writeFileSync(resolve(__dirname, '../llms.txt'), llmsTxtContent);
   console.log(`Wrote llms.txt`);

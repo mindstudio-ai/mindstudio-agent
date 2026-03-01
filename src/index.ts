@@ -30,3 +30,7 @@ export {
   type MonacoSnippetField,
   type MonacoSnippetFieldType,
 } from './generated/snippets.js';
+export {
+  stepMetadata,
+  type StepMetadata,
+} from './generated/metadata.js';

@@ -69,6 +69,12 @@ export interface StepExecutionMeta {
    * Useful for throttling proactively before hitting the limit.
    */
   $rateLimitRemaining?: number;
+
+  /** Cost in credits for this step execution. */
+  $billingCost?: number;
+
+  /** Itemized billing events for this step execution. */
+  $billingEvents?: Array<Record<string, unknown>>;
 }
 
 /**
@@ -79,7 +85,7 @@ export interface StepExecutionMeta {
  * const { content } = await agent.generateText({ ... });
  * ```
  *
- * Execution metadata (`$appId`, `$threadId`, `$rateLimitRemaining`) is also available:
+ * Execution metadata (`$appId`, `$threadId`, `$rateLimitRemaining`, `$billingCost`, `$billingEvents`) is also available:
  * ```ts
  * const result = await agent.generateText({ ... });
  * console.log(result.content, result.$threadId, result.$rateLimitRemaining);

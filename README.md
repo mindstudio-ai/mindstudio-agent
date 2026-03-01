@@ -1,8 +1,8 @@
 # @mindstudio-ai/agent
 
-TypeScript SDK for executing [MindStudio](https://mindstudio.ai) workflow steps directly.
+TypeScript SDK, CLI, and MCP server for executing [MindStudio](https://mindstudio.ai) workflow steps directly.
 
-Call any of MindStudio's 120+ built-in actions — AI models, image/video generation, web scraping, integrations, and more — with fully typed inputs and outputs.
+Call any of MindStudio's 120+ built-in actions — AI models, image/video generation, web scraping, integrations, and more — with fully typed inputs and outputs. Use from TypeScript, the command line, or any MCP-compatible AI agent.
 
 ## Install
 
@@ -13,6 +13,8 @@ npm install @mindstudio-ai/agent
 Requires Node.js 18+.
 
 ## Quick start
+
+### TypeScript
 
 ```typescript
 import { MindStudioAgent } from '@mindstudio-ai/agent';
@@ -40,6 +42,57 @@ console.log(results);
 ```
 
 Every method is fully typed — your editor will autocomplete available parameters, show enum options, and infer the output shape. Results are returned flat for easy destructuring.
+
+### CLI
+
+```bash
+# Set your API key
+export MINDSTUDIO_API_KEY=your-api-key
+
+# Execute a step with named flags
+mindstudio generate-image --prompt "A mountain landscape at sunset"
+
+# Or with JSON input (JSON5-tolerant: unquoted keys, single quotes, trailing commas)
+mindstudio generate-image '{prompt: "A mountain landscape at sunset"}'
+
+# Just the image URL, no metadata
+mindstudio generate-image --prompt "A sunset" --output-key imageUrl
+
+# List all available methods
+mindstudio list
+
+# Show details about a method
+mindstudio info generate-image
+
+# Pipe input from another command
+echo '{"query": "TypeScript best practices"}' | mindstudio search-google
+```
+
+Run via `npx` without installing globally:
+
+```bash
+npx @mindstudio-ai/agent generate-text --message "Hello"
+```
+
+### MCP server
+
+Add to your MCP client config (Claude Code, Cursor, VS Code, etc.):
+
+```json
+{
+  "mcpServers": {
+    "mindstudio": {
+      "command": "npx",
+      "args": ["-y", "@mindstudio-ai/agent", "mcp"],
+      "env": {
+        "MINDSTUDIO_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+All 120+ step methods are exposed as MCP tools with full JSON Schema input definitions, so your AI agent can discover and call them directly.
 
 ## Authentication
 
@@ -112,6 +165,18 @@ Every result includes `$rateLimitRemaining` so you can throttle proactively:
 const result = await agent.generateText({ message: 'Hello' });
 console.log(result.$rateLimitRemaining); // calls remaining in window
 ```
+
+## Billing
+
+Every result includes optional billing metadata:
+
+```typescript
+const result = await agent.generateImage({ prompt: 'A sunset' });
+console.log(result.$billingCost);   // cost in credits for this call
+console.log(result.$billingEvents); // itemized billing events
+```
+
+These fields are `undefined` when the server does not return billing headers.
 
 ## Available steps
 
@@ -218,6 +283,92 @@ import { blockTypeAliases } from '@mindstudio-ai/agent';
 // { userMessage: "generateText", generatePdf: "generateAsset" }
 ```
 
+## CLI reference
+
+```
+Usage: mindstudio <command | method> [options]
+
+Commands:
+  <method> [json | --flags]        Execute a step method
+  exec <method> [json | --flags]   Execute a step method (same as above)
+  list [--json]                    List available methods
+  info <method>                    Show method details (params, types, output)
+  mcp                              Start MCP server (JSON-RPC over stdio)
+
+Options:
+  --api-key <key>          API key (or set MINDSTUDIO_API_KEY env)
+  --base-url <url>         API base URL
+  --app-id <id>            App ID for thread context
+  --thread-id <id>         Thread ID for state persistence
+  --output-key <key>       Extract a single field from the result
+  --no-meta                Strip $-prefixed metadata from output
+  --json                   Output as JSON (list only)
+  --help                   Show help
+```
+
+Method names use kebab-case on the CLI (`generate-image`), though camelCase (`generateImage`) is also accepted. Typos get a "did you mean?" suggestion. Parameter flags are also kebab-case (`--video-url` for `videoUrl`).
+
+Input can be provided as:
+- **Named flags**: `--prompt "a sunset" --mode "background"`
+- **JSON argument**: `'{"prompt": "a sunset"}'` (JSON5-tolerant: unquoted keys, single quotes, trailing commas)
+- **Piped stdin**: `echo '{"prompt": "a sunset"}' | mindstudio generate-image`
+
+Values are auto-coerced: `--font-size 12` becomes a number, `--enabled true` becomes a boolean.
+
+Output can be shaped with `--output-key` (extract a single field as raw text) and `--no-meta` (strip `$`-prefixed metadata):
+
+```bash
+# Just the URL, ready to pipe
+mindstudio generate-image --prompt "a cat" --output-key imageUrl
+
+# Clean JSON without metadata
+mindstudio generate-text --message "hello" --no-meta
+```
+
+Thread persistence across CLI calls:
+
+```bash
+# First call — capture the thread/app IDs from the JSON output
+result=$(mindstudio generate-text --message "My name is Alice")
+
+# Subsequent calls — pass them back
+mindstudio generate-text --message "What is my name?" \
+  --thread-id $(echo $result | jq -r '."$threadId"') \
+  --app-id $(echo $result | jq -r '."$appId"')
+```
+
+## MCP server
+
+The package includes a built-in [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server. It exposes all step methods and helpers as tools, so any MCP-compatible AI agent (Claude Code, Cursor, Windsurf, VS Code Copilot, etc.) can discover and call them.
+
+Start manually:
+
+```bash
+mindstudio mcp
+```
+
+Or configure your MCP client:
+
+```json
+{
+  "mcpServers": {
+    "mindstudio": {
+      "command": "npx",
+      "args": ["-y", "@mindstudio-ai/agent", "mcp"],
+      "env": {
+        "MINDSTUDIO_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+The MCP server:
+- Uses stdio transport (JSON-RPC 2.0)
+- Creates one agent per session with automatic thread reuse
+- Returns structured JSON results for each tool call
+- Has zero additional dependencies
+
 ## LLM documentation
 
 An `llms.txt` file ships with the package for AI agent consumption:
@@ -227,6 +378,16 @@ node_modules/@mindstudio-ai/agent/llms.txt
 ```
 
 It contains a compact, complete reference of all methods with their required parameters and output keys — optimized for LLM context windows.
+
+## OpenAPI spec
+
+The raw OpenAPI spec that this SDK is generated from is available at:
+
+```
+https://v1.mindstudio-api.com/developer/v2/steps/openapi.json
+```
+
+This contains full JSON Schema definitions for every step's input and output, descriptions, and usage notes. Useful if you want to build your own tooling, code generators, or integrations.
 
 ## Error handling
 
