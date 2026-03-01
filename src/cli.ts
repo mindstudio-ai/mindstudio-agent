@@ -7,6 +7,8 @@ Commands:
   exec <method> [json | --flags]   Execute a step method
   list [--json]               List available methods
   info <method>               Show method details (params, types, output)
+  agents [--json]             List pre-built agents in your organization
+  run <appId> [json | --flags]  Run a pre-built agent and wait for result
   mcp                         Start MCP server (JSON-RPC over stdio)
 
 Options:
@@ -16,7 +18,9 @@ Options:
   --thread-id <id>         Thread ID for state persistence
   --output-key <key>       Extract a single field from the result
   --no-meta                Strip $-prefixed metadata from output
-  --json                   Output as JSON (list only)
+  --workflow <name>        Workflow to execute (run command)
+  --version <ver>          App version override, e.g. "draft" (run command)
+  --json                   Output as JSON (list/agents only)
   --help                   Show this help
 
 Examples:
@@ -27,6 +31,8 @@ Examples:
   echo '{"query":"test"}' | mindstudio search-google
   mindstudio info generate-image
   mindstudio list --json
+  mindstudio agents
+  mindstudio run <appId> --query "hello"
   mindstudio mcp
 `;
 
@@ -119,7 +125,7 @@ const HELPER_NAMES = new Set([
   'getConnector',
 ]);
 
-const BUILTIN_COMMANDS = new Set(['exec', 'list', 'info', 'mcp']);
+const BUILTIN_COMMANDS = new Set(['exec', 'list', 'info', 'mcp', 'agents', 'run']);
 
 /**
  * Resolve a method name from user input.
@@ -343,6 +349,84 @@ async function cmdExec(
   }
 }
 
+async function cmdAgents(
+  asJson: boolean,
+  options: { apiKey?: string; baseUrl?: string },
+): Promise<void> {
+  const { MindStudioAgent } = await import('./client.js');
+  const agent = new MindStudioAgent({
+    apiKey: options.apiKey,
+    baseUrl: options.baseUrl,
+  });
+
+  const result = await agent.listAgents();
+
+  if (asJson) {
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  } else {
+    process.stderr.write(`\n  ${result.orgName} (${result.orgId})\n\n`);
+    if (result.apps.length === 0) {
+      process.stderr.write('  No agents found.\n\n');
+      return;
+    }
+    const maxLen = Math.min(
+      35,
+      result.apps.reduce((m, a) => Math.max(m, a.name.length), 0),
+    );
+    for (const app of result.apps) {
+      const desc = app.description || '(no description)';
+      process.stdout.write(
+        `${app.name.padEnd(maxLen)}  ${app.id}  ${desc}\n`,
+      );
+    }
+  }
+}
+
+async function cmdRun(
+  appId: string,
+  variables: Record<string, unknown>,
+  options: {
+    apiKey?: string;
+    baseUrl?: string;
+    workflow?: string;
+    version?: string;
+    outputKey?: string;
+    noMeta?: boolean;
+  },
+): Promise<void> {
+  const { MindStudioAgent } = await import('./client.js');
+  const agent = new MindStudioAgent({
+    apiKey: options.apiKey,
+    baseUrl: options.baseUrl,
+  });
+
+  const result = await agent.runAgent({
+    appId,
+    variables: Object.keys(variables).length > 0 ? variables : undefined,
+    workflow: options.workflow,
+    version: options.version,
+  });
+
+  const obj = result as unknown as Record<string, unknown>;
+
+  if (options.outputKey) {
+    const val = obj[options.outputKey];
+    if (typeof val === 'string') {
+      process.stdout.write(val + '\n');
+    } else {
+      process.stdout.write(JSON.stringify(val, null, 2) + '\n');
+    }
+  } else if (options.noMeta) {
+    const filtered: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (!k.startsWith('$')) filtered[k] = v;
+    }
+    process.stdout.write(JSON.stringify(filtered, null, 2) + '\n');
+  } else {
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Argv parsing
 // ---------------------------------------------------------------------------
@@ -369,6 +453,8 @@ const GLOBAL_STRING_FLAGS = new Set([
   '--app-id',
   '--thread-id',
   '--output-key',
+  '--workflow',
+  '--version',
 ]);
 
 /**
@@ -438,6 +524,8 @@ async function main(): Promise<void> {
       'thread-id': { type: 'string' },
       'output-key': { type: 'string' },
       'no-meta': { type: 'boolean', default: false },
+      workflow: { type: 'string' },
+      version: { type: 'string' },
       json: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
@@ -453,6 +541,73 @@ async function main(): Promise<void> {
   try {
     if (command === 'list') {
       await cmdList(values.json as boolean);
+      return;
+    }
+
+    if (command === 'agents') {
+      await cmdAgents(values.json as boolean, {
+        apiKey: values['api-key'] as string | undefined,
+        baseUrl: values['base-url'] as string | undefined,
+      });
+      return;
+    }
+
+    if (command === 'run') {
+      const appId = positionals[1];
+      if (!appId)
+        fatal('Missing app ID. Usage: mindstudio run <appId> [json | --flags]');
+
+      // Parse input from remaining args
+      const runArgv = process.argv.slice(
+        process.argv.indexOf('run') + 2,
+      );
+      // Filter out global flags from runArgv
+      const stepArgs: string[] = [];
+      for (let i = 0; i < runArgv.length; i++) {
+        const arg = runArgv[i];
+        if (GLOBAL_STRING_FLAGS.has(arg) || arg === '--workflow' || arg === '--version') {
+          i++; // skip value
+        } else if (arg === '--no-meta' || arg === '--json' || arg === '--help') {
+          // skip boolean global flags
+        } else if (arg === appId) {
+          // skip the appId positional
+        } else {
+          stepArgs.push(arg);
+        }
+      }
+
+      let variables: Record<string, unknown>;
+      const firstArg = stepArgs[0];
+      if (firstArg && firstArg.startsWith('{')) {
+        try {
+          variables = parseJson5(firstArg) as Record<string, unknown>;
+        } catch {
+          fatal(`Invalid JSON input: ${firstArg}`);
+        }
+      } else {
+        const flagInput = parseStepFlags(stepArgs);
+        if (Object.keys(flagInput).length > 0) {
+          variables = flagInput;
+        } else if (!process.stdin.isTTY) {
+          const raw = await readStdin();
+          try {
+            variables = parseJson5(raw) as Record<string, unknown>;
+          } catch {
+            fatal(`Invalid JSON on stdin: ${raw}`);
+          }
+        } else {
+          variables = {};
+        }
+      }
+
+      await cmdRun(appId, variables, {
+        apiKey: values['api-key'] as string | undefined,
+        baseUrl: values['base-url'] as string | undefined,
+        workflow: values.workflow as string | undefined,
+        version: values.version as string | undefined,
+        outputKey: values['output-key'] as string | undefined,
+        noMeta: values['no-meta'] as boolean | undefined,
+      });
       return;
     }
 

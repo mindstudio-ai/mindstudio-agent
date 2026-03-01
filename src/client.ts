@@ -5,6 +5,9 @@ import type {
   AgentOptions,
   StepExecutionOptions,
   StepExecutionResult,
+  ListAgentsResult,
+  RunAgentOptions,
+  RunAgentResult,
 } from './types.js';
 
 const DEFAULT_BASE_URL = 'https://v1.mindstudio-api.com';
@@ -133,10 +136,111 @@ export class MindStudioAgent {
     } as StepExecutionResult<TOutput>;
   }
 
+  /**
+   * List all pre-built agents in the organization.
+   *
+   * ```ts
+   * const { apps } = await agent.listAgents();
+   * for (const app of apps) console.log(app.name, app.id);
+   * ```
+   */
+  async listAgents(): Promise<ListAgentsResult> {
+    const { data } = await request<ListAgentsResult>(
+      this._httpConfig,
+      'GET',
+      '/agents/load',
+    );
+    return data;
+  }
+
+  /**
+   * Run a pre-built agent and wait for the result.
+   *
+   * Uses async polling internally — the request returns immediately with a
+   * callback token, then polls until the run completes or fails.
+   *
+   * ```ts
+   * const result = await agent.runAgent({
+   *   appId: 'your-agent-id',
+   *   variables: { query: 'hello' },
+   * });
+   * console.log(result.result);
+   * ```
+   */
+  async runAgent(options: RunAgentOptions): Promise<RunAgentResult> {
+    const pollInterval = options.pollIntervalMs ?? 1000;
+
+    const { data } = await request<{
+      success: boolean;
+      threadId: string;
+      callbackToken: string;
+    }>(this._httpConfig, 'POST', '/agents/run', {
+      appId: options.appId,
+      async: true,
+      ...(options.variables != null && { variables: options.variables }),
+      ...(options.workflow != null && { workflow: options.workflow }),
+      ...(options.version != null && { version: options.version }),
+      ...(options.includeBillingCost != null && {
+        includeBillingCost: options.includeBillingCost,
+      }),
+      ...(options.metadata != null && { metadata: options.metadata }),
+    });
+
+    const token = data.callbackToken;
+    const pollUrl = `${this._httpConfig.baseUrl}/developer/v2/agents/run/poll/${token}`;
+
+    // Poll until complete or error
+    while (true) {
+      await sleep(pollInterval);
+
+      const res = await fetch(pollUrl, {
+        headers: { 'User-Agent': '@mindstudio-ai/agent' },
+      });
+
+      if (res.status === 404) {
+        throw new MindStudioError(
+          'Poll token not found or expired.',
+          'poll_token_expired',
+          404,
+        );
+      }
+
+      if (!res.ok) {
+        throw new MindStudioError(
+          `Poll request failed: ${res.status} ${res.statusText}`,
+          'poll_error',
+          res.status,
+        );
+      }
+
+      const poll = (await res.json()) as {
+        status: 'pending' | 'complete' | 'error';
+        result?: RunAgentResult;
+        error?: string;
+      };
+
+      if (poll.status === 'pending') continue;
+
+      if (poll.status === 'error') {
+        throw new MindStudioError(
+          poll.error ?? 'Agent run failed.',
+          'agent_run_error',
+          500,
+        );
+      }
+
+      return poll.result!;
+    }
+  }
+
   /** @internal Used by generated helper methods. */
   _request<T>(method: 'GET' | 'POST', path: string, body?: unknown) {
     return request<T>(this._httpConfig, method, path, body);
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // Attach generated methods to the prototype

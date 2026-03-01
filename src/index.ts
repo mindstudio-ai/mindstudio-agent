@@ -17,6 +17,10 @@ export type {
   StepExecutionOptions,
   StepExecutionResult,
   StepExecutionMeta,
+  AgentInfo,
+  ListAgentsResult,
+  RunAgentOptions,
+  RunAgentResult,
 } from './types.js';
 
 // Re-export all generated types

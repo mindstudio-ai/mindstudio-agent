@@ -92,7 +92,7 @@ Add to your MCP client config (Claude Code, Cursor, VS Code, etc.):
 }
 ```
 
-All 120+ step methods are exposed as MCP tools with full JSON Schema input definitions, so your AI agent can discover and call them directly.
+All 120+ step methods are exposed as MCP tools with full JSON Schema input definitions, so your AI agent can discover and call them directly. The MCP server also exposes `listAgents` and `runAgent` tools for running pre-built agents.
 
 ## Authentication
 
@@ -202,6 +202,35 @@ Every step has a dedicated typed method. A few highlights:
 
 All methods show full documentation in your editor's IntelliSense — hover any method to see usage notes, parameter descriptions, and enum options.
 
+## Running pre-built agents
+
+List and run the pre-built agents in your MindStudio organization:
+
+```typescript
+// List all agents in your org
+const { apps } = await agent.listAgents();
+for (const app of apps) {
+  console.log(app.name, app.id);
+}
+
+// Run an agent and wait for the result
+const result = await agent.runAgent({
+  appId: 'your-agent-id',
+  variables: { query: 'Summarize the latest news' },
+});
+console.log(result.result);
+
+// Run a specific workflow with version override
+const result = await agent.runAgent({
+  appId: 'your-agent-id',
+  variables: { topic: 'AI' },
+  workflow: 'research',
+  version: 'draft',
+});
+```
+
+`runAgent()` always uses async mode internally — it submits the run, then polls for the result until it completes or fails. The poll interval defaults to 1 second and can be configured with `pollIntervalMs`.
+
 ## Helpers
 
 ```typescript
@@ -257,6 +286,10 @@ import type {
   StepName,
   StepInputMap,
   StepOutputMap,
+  AgentInfo,
+  ListAgentsResult,
+  RunAgentOptions,
+  RunAgentResult,
 } from '@mindstudio-ai/agent';
 ```
 
@@ -293,6 +326,8 @@ Commands:
   exec <method> [json | --flags]   Execute a step method (same as above)
   list [--json]                    List available methods
   info <method>                    Show method details (params, types, output)
+  agents [--json]                  List pre-built agents in your organization
+  run <appId> [json | --flags]     Run a pre-built agent and wait for result
   mcp                              Start MCP server (JSON-RPC over stdio)
 
 Options:
@@ -302,7 +337,9 @@ Options:
   --thread-id <id>         Thread ID for state persistence
   --output-key <key>       Extract a single field from the result
   --no-meta                Strip $-prefixed metadata from output
-  --json                   Output as JSON (list only)
+  --workflow <name>        Workflow to execute (run command)
+  --version <ver>          App version override, e.g. "draft" (run command)
+  --json                   Output as JSON (list/agents only)
   --help                   Show help
 ```
 
@@ -323,6 +360,25 @@ mindstudio generate-image --prompt "a cat" --output-key imageUrl
 
 # Clean JSON without metadata
 mindstudio generate-text --message "hello" --no-meta
+```
+
+Running pre-built agents from the CLI:
+
+```bash
+# List agents in your organization
+mindstudio agents
+
+# Run an agent with input variables
+mindstudio run <appId> --query "Summarize the latest news"
+
+# Run with JSON input
+mindstudio run <appId> '{"query": "hello", "topic": "AI"}'
+
+# Run a specific workflow
+mindstudio run <appId> --query "hello" --workflow research
+
+# Extract just the result text
+mindstudio run <appId> --query "hello" --output-key result
 ```
 
 Thread persistence across CLI calls:

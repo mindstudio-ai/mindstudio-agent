@@ -72,6 +72,41 @@ const HELPER_TOOLS: McpTool[] = [
       required: ['serviceId'],
     },
   },
+  {
+    name: 'listAgents',
+    description:
+      'List all pre-built agents in the organization along with org metadata.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'runAgent',
+    description:
+      'Run a pre-built agent and wait for the result. Uses async polling internally.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appId: {
+          type: 'string',
+          description: 'The agent/app ID to run.',
+        },
+        variables: {
+          type: 'object',
+          description: 'Input variables as key-value pairs.',
+          additionalProperties: true,
+        },
+        workflow: {
+          type: 'string',
+          description:
+            'Workflow name to execute. Omit for the app default.',
+        },
+        version: {
+          type: 'string',
+          description: 'App version override (e.g. "draft"). Defaults to "live".',
+        },
+      },
+      required: ['appId'],
+    },
+  },
 ];
 
 function send(message: object): void {
@@ -177,6 +212,17 @@ export async function startMcpServer(options?: {
             result = await (getAgent() as any).getConnector(
               args.serviceId as string,
             );
+          } else if (toolName === 'listAgents') {
+            result = await getAgent().listAgents();
+          } else if (toolName === 'runAgent') {
+            result = await getAgent().runAgent({
+              appId: args.appId as string,
+              variables: args.variables as
+                | Record<string, unknown>
+                | undefined,
+              workflow: args.workflow as string | undefined,
+              version: args.version as string | undefined,
+            });
           } else {
             const meta = await getMetadata();
             const step = meta[toolName];
