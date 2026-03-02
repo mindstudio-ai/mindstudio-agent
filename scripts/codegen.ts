@@ -1226,26 +1226,53 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('// With API key (or set MINDSTUDIO_API_KEY env var)');
   lines.push("const agent = new MindStudioAgent({ apiKey: 'your-key' });");
+  lines.push('```');
   lines.push('');
   lines.push(
-    '// Inside MindStudio custom functions, auth is automatic (CALLBACK_TOKEN + REMOTE_HOSTNAME)',
+    'Your MindStudio API key authenticates all requests. MindStudio routes to the correct AI provider (OpenAI, Google, Anthropic, etc.) server-side — you do NOT need separate provider API keys.',
   );
-  lines.push('const agent = new MindStudioAgent();');
-  lines.push('```');
   lines.push('');
   lines.push('Constructor options:');
   lines.push('```typescript');
   lines.push('new MindStudioAgent({');
   lines.push(
-    '  apiKey?: string,     // Auth token. Falls back to MINDSTUDIO_API_KEY env, then CALLBACK_TOKEN env.',
+    '  apiKey?: string,     // Auth token. Falls back to MINDSTUDIO_API_KEY env var.',
   );
   lines.push(
-    '  baseUrl?: string,    // API base URL. Falls back to MINDSTUDIO_BASE_URL env, then REMOTE_HOSTNAME env, then "https://v1.mindstudio-api.com".',
+    '  baseUrl?: string,    // API base URL. Defaults to "https://v1.mindstudio-api.com".',
   );
   lines.push(
     '  maxRetries?: number, // Retries on 429 rate limit (default: 3). Uses Retry-After header for delay.',
   );
   lines.push('})');
+  lines.push('```');
+  lines.push('');
+
+  // --- Models ---
+  lines.push('## Models');
+  lines.push('');
+  lines.push(
+    'MindStudio provides access to models from many providers (OpenAI, Google, Anthropic, Meta, xAI, DeepSeek, etc.) through a single API key. You do NOT need provider-specific API keys.',
+  );
+  lines.push('');
+  lines.push(
+    'Use `listModels()` or `listModelsByType("llm_chat")` to discover available models. Pass a model ID to `modelOverride.model` in methods like `generateText` to select a specific model:',
+  );
+  lines.push('');
+  lines.push('```typescript');
+  lines.push(
+    "const { models } = await agent.listModelsByType('llm_chat');",
+  );
+  lines.push('const model = models.find(m => m.name.includes("Gemini"));');
+  lines.push('');
+  lines.push('const { content } = await agent.generateText({');
+  lines.push("  message: 'Hello',");
+  lines.push('  modelOverride: {');
+  lines.push('    model: model.rawName,');
+  lines.push('    temperature: 0.7,');
+  lines.push('    maxResponseTokens: 1024,');
+  lines.push('  },');
+  lines.push('});');
   lines.push('```');
   lines.push('');
 
@@ -1335,9 +1362,6 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push(
     '429 rate limit errors are retried automatically (configurable via `maxRetries`).',
-  );
-  lines.push(
-    'Internal tokens (CALLBACK_TOKEN) are capped at 500 calls — exceeding this throws `call_cap_exceeded`.',
   );
   lines.push('');
 
