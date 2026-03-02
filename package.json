@@ -1,6 +1,6 @@
 {
   "name": "@mindstudio-ai/agent",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "description": "TypeScript SDK for MindStudio direct step execution",
   "type": "module",
   "main": "./dist/index.js",
@@ -51,6 +51,14 @@
   },
   "author": "MindStudio <support@mindstudio.ai> (https://mindstudio.ai)",
   "license": "MIT",
+  "browser": {
+    "fs": false,
+    "path": false,
+    "os": false,
+    "node:fs": false,
+    "node:path": false,
+    "node:os": false
+  },
   "sideEffects": false,
   "devDependencies": {
     "@eslint/js": "^10.0.1",
