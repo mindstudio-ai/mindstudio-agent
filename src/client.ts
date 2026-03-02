@@ -1,6 +1,7 @@
 import { request, type HttpClientConfig } from './http.js';
 import { MindStudioError } from './errors.js';
 import { RateLimiter, type AuthType } from './rate-limit.js';
+import { loadConfig, type MindStudioConfig } from './config.js';
 import type {
   AgentOptions,
   StepExecutionOptions,
@@ -27,13 +28,15 @@ const DEFAULT_MAX_RETRIES = 3;
  * Authentication is resolved in order:
  * 1. `apiKey` passed to the constructor
  * 2. `MINDSTUDIO_API_KEY` environment variable
- * 3. `CALLBACK_TOKEN` environment variable (auto-set inside MindStudio custom functions)
+ * 3. `~/.mindstudio/config.json` (set via `mindstudio login`)
+ * 4. `CALLBACK_TOKEN` environment variable (auto-set inside MindStudio custom functions)
  *
  * Base URL is resolved in order:
  * 1. `baseUrl` passed to the constructor
  * 2. `MINDSTUDIO_BASE_URL` environment variable
  * 3. `REMOTE_HOSTNAME` environment variable (auto-set inside MindStudio custom functions)
- * 4. `https://v1.mindstudio-api.com` (production default)
+ * 4. `~/.mindstudio/config.json`
+ * 5. `https://v1.mindstudio-api.com` (production default)
  *
  * Rate limiting is handled automatically:
  * - Concurrent requests are queued to stay within server limits
@@ -49,11 +52,13 @@ export class MindStudioAgent {
   private _threadId: string | undefined;
 
   constructor(options: AgentOptions = {}) {
-    const { token, authType } = resolveToken(options.apiKey);
+    const config = loadConfig();
+    const { token, authType } = resolveToken(options.apiKey, config);
     const baseUrl =
       options.baseUrl ??
       process.env.MINDSTUDIO_BASE_URL ??
       process.env.REMOTE_HOSTNAME ??
+      config.baseUrl ??
       DEFAULT_BASE_URL;
 
     this._reuseThreadId =
@@ -249,18 +254,23 @@ import { applyHelperMethods } from './generated/helpers.js';
 applyStepMethods(MindStudioAgent);
 applyHelperMethods(MindStudioAgent);
 
-function resolveToken(provided?: string): {
+function resolveToken(
+  provided?: string,
+  config?: MindStudioConfig,
+): {
   token: string;
   authType: AuthType;
 } {
   if (provided) return { token: provided, authType: 'apiKey' };
   if (process.env.MINDSTUDIO_API_KEY)
     return { token: process.env.MINDSTUDIO_API_KEY, authType: 'apiKey' };
+  if (config?.apiKey)
+    return { token: config.apiKey, authType: 'apiKey' };
   if (process.env.CALLBACK_TOKEN)
     return { token: process.env.CALLBACK_TOKEN, authType: 'internal' };
   throw new MindStudioError(
-    'No API key provided. Pass `apiKey` to the MindStudioAgent constructor, ' +
-      'or set the MINDSTUDIO_API_KEY environment variable.',
+    'No API key provided. Run `mindstudio login`, pass `apiKey` to the ' +
+      'constructor, or set the MINDSTUDIO_API_KEY environment variable.',
     'missing_api_key',
     401,
   );

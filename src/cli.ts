@@ -1,8 +1,12 @@
 import { parseArgs } from 'node:util';
+import { execSync } from 'node:child_process';
 
 const HELP = `Usage: mindstudio <command | method> [options]
 
 Commands:
+  login                       Authenticate with MindStudio (opens browser)
+  logout                      Clear stored credentials
+  whoami                      Show current authentication status
   <method> [json | --flags]   Execute a step method (shorthand for exec)
   exec <method> [json | --flags]   Execute a step method
   list [--json]               List available methods
@@ -24,6 +28,7 @@ Options:
   --help                   Show this help
 
 Examples:
+  mindstudio login
   mindstudio generate-image --prompt "a sunset"
   mindstudio generate-image --prompt "a sunset" --output-key imageUrl
   mindstudio generate-text --message "hello" --no-meta
@@ -125,7 +130,10 @@ const HELPER_NAMES = new Set([
   'getConnector',
 ]);
 
-const BUILTIN_COMMANDS = new Set(['exec', 'list', 'info', 'mcp', 'agents', 'run']);
+const BUILTIN_COMMANDS = new Set([
+  'exec', 'list', 'info', 'mcp', 'agents', 'run',
+  'login', 'logout', 'whoami',
+]);
 
 /**
  * Resolve a method name from user input.
@@ -428,6 +436,357 @@ async function cmdRun(
 }
 
 // ---------------------------------------------------------------------------
+// Auth commands
+// ---------------------------------------------------------------------------
+
+// ANSI helpers (zero-dep chalk alternative)
+const ansi = {
+  cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
+  cyanBright: (s: string) => `\x1b[96m${s}\x1b[0m`,
+  cyanBold: (s: string) => `\x1b[96;1m${s}\x1b[0m`,
+  dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
+  green: (s: string) => `\x1b[32m${s}\x1b[0m`,
+  greenBold: (s: string) => `\x1b[32;1m${s}\x1b[0m`,
+  gray: (s: string) => `\x1b[90m${s}\x1b[0m`,
+  bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
+};
+
+// ---------------------------------------------------------------------------
+// Update checker
+// ---------------------------------------------------------------------------
+
+const UPDATE_CHECK_INTERVAL = 60 * 60 * 1000; // 1 hour
+
+function isNewerVersion(current: string, latest: string): boolean {
+  const c = current.split('.').map(Number);
+  const l = latest.split('.').map(Number);
+  for (let i = 0; i < Math.max(c.length, l.length); i++) {
+    const cv = c[i] ?? 0;
+    const lv = l[i] ?? 0;
+    if (lv > cv) return true;
+    if (lv < cv) return false;
+  }
+  return false;
+}
+
+/**
+ * Check for a newer version on npm. Uses a cached result from
+ * ~/.mindstudio/config.json to avoid hitting the registry on every call.
+ * Returns the latest version string if an update is available, null otherwise.
+ * Never throws — network/parse failures are silently ignored.
+ */
+async function checkForUpdate(): Promise<string | null> {
+  const currentVersion = process.env.PACKAGE_VERSION;
+  if (!currentVersion) return null;
+
+  try {
+    const { loadConfig, saveConfig } = await import('./config.js');
+    const config = loadConfig();
+
+    // Use cached result if fresh enough
+    if (config._updateCheck) {
+      const age = Date.now() - config._updateCheck.checkedAt;
+      if (age < UPDATE_CHECK_INTERVAL) {
+        return isNewerVersion(currentVersion, config._updateCheck.latestVersion)
+          ? config._updateCheck.latestVersion
+          : null;
+      }
+    }
+
+    // Fetch latest version from npm
+    const res = await fetch(
+      'https://registry.npmjs.org/@mindstudio-ai/agent/latest',
+      { signal: AbortSignal.timeout(5000) },
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { version?: string };
+    const latestVersion = data.version;
+    if (!latestVersion) return null;
+
+    // Cache the result
+    saveConfig({
+      ...config,
+      _updateCheck: { latestVersion, checkedAt: Date.now() },
+    });
+
+    return isNewerVersion(currentVersion, latestVersion)
+      ? latestVersion
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function printUpdateNotice(latestVersion: string): void {
+  const currentVersion = process.env.PACKAGE_VERSION ?? '?';
+  process.stderr.write(
+    `\n  ${ansi.cyanBright('Update available')} ${ansi.gray(currentVersion + ' \u2192')} ${ansi.cyanBold(latestVersion)}\n` +
+      `  ${ansi.gray('Run')} npm install -g @mindstudio-ai/agent ${ansi.gray('to update')}\n`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Login flow
+// ---------------------------------------------------------------------------
+
+const LOGO = `       .=+-.     :++.
+      *@@@@@+  :%@@@@%:
+    .%@@@@@@#..@@@@@@@=
+  .*@@@@@@@--@@@@@@@#.**.
+  *@@@@@@@.-@@@@@@@@.#@@*
+.#@@@@@@@-.@@@@@@@* #@@@@%.
+=@@@@@@@-.@@@@@@@#.-@@@@@@+
+:@@@@@@:  +@@@@@#. .@@@@@@:
+  .++:     .-*-.     .++:`;
+
+function printLogo(): void {
+  const lines = LOGO.split('\n');
+  for (const line of lines) {
+    const colored = line.replace(/[^\s]/g, (ch) =>
+      ch === '.' || ch === ':' || ch === '-' || ch === '+' || ch === '='
+        ? `\x1b[36m${ch}\x1b[0m`
+        : `\x1b[96;1m${ch}\x1b[0m`,
+    );
+    process.stderr.write(`  ${colored}\n`);
+  }
+}
+
+function openBrowser(url: string): void {
+  try {
+    if (process.platform === 'darwin') execSync(`open "${url}"`);
+    else if (process.platform === 'win32') execSync(`start "" "${url}"`);
+    else execSync(`xdg-open "${url}"`);
+  } catch {
+    // Silently fail — URL is printed as fallback
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function waitForKeypress(): Promise<void> {
+  return new Promise((resolve) => {
+    if (!process.stdin.isTTY) {
+      resolve();
+      return;
+    }
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.once('data', () => {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      resolve();
+    });
+  });
+}
+
+function maskKey(key: string): string {
+  if (key.length <= 8) return '****';
+  return key.slice(0, 4) + '...' + key.slice(-4);
+}
+
+const DEFAULT_BASE_URL = 'https://v1.mindstudio-api.com';
+
+const SPINNER_FRAMES = [
+  '\u28FE', '\u28FD', '\u28FB', '\u28BF', '\u287F',
+  '\u28DF', '\u28EF', '\u28F7',
+];
+
+async function cmdLogin(options: { baseUrl?: string }): Promise<void> {
+  const baseUrl =
+    options.baseUrl ??
+    process.env.MINDSTUDIO_BASE_URL ??
+    process.env.REMOTE_HOSTNAME ??
+    DEFAULT_BASE_URL;
+
+  process.stderr.write('\n');
+  printLogo();
+  process.stderr.write('\n');
+  const ver = process.env.PACKAGE_VERSION ?? '';
+  process.stderr.write(
+    `  ${ansi.bold('MindStudio')} ${ansi.gray('CLI')}${ver ? ' ' + ansi.gray('v' + ver) : ''}\n`,
+  );
+  process.stderr.write(
+    `  ${ansi.gray('Connect your MindStudio account to get started.')}\n\n`,
+  );
+  process.stderr.write(
+    `  ${ansi.cyanBright('Press any key to open the browser...')}\n\n\n\n`,
+  );
+  await waitForKeypress();
+  // Move up 4 lines and clear from cursor down
+  process.stderr.write('\x1b[4A\r\x1b[J');
+  process.stderr.write(
+    `  ${ansi.gray('Requesting authorization...')}\n`,
+  );
+
+  const authRes = await fetch(
+    `${baseUrl}/developer/v2/request-auth-url`,
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': '@mindstudio-ai/agent',
+      },
+    },
+  );
+
+  if (!authRes.ok) {
+    fatal(
+      `Failed to request auth URL: ${authRes.status} ${authRes.statusText}`,
+    );
+  }
+
+  const { url, token } = (await authRes.json()) as {
+    url: string;
+    token: string;
+  };
+
+  openBrowser(url);
+  process.stderr.write(
+    `  ${ansi.cyanBright('Opening browser to authenticate...')}\n\n` +
+      `  ${ansi.gray('If the browser didn\'t open, visit:')}\n` +
+      `  ${ansi.cyan(url)}\n\n`,
+  );
+
+  const POLL_INTERVAL = 2000;
+  const MAX_ATTEMPTS = 60;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    await sleep(POLL_INTERVAL);
+
+    const frame = SPINNER_FRAMES[attempt % SPINNER_FRAMES.length];
+    const remaining = Math.ceil(
+      (MAX_ATTEMPTS * POLL_INTERVAL) / 1000 -
+        ((attempt + 1) * POLL_INTERVAL) / 1000,
+    );
+    process.stderr.write(
+      `\r  ${ansi.cyan(frame)} Waiting for browser authorization... ${ansi.gray(`(${remaining}s)`)}`,
+    );
+
+    const pollRes = await fetch(`${baseUrl}/developer/v2/poll-auth-url`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': '@mindstudio-ai/agent',
+      },
+      body: JSON.stringify({ token }),
+    });
+
+    if (!pollRes.ok) {
+      process.stderr.write('\n');
+      fatal(
+        `Poll request failed: ${pollRes.status} ${pollRes.statusText}`,
+      );
+    }
+
+    const result = (await pollRes.json()) as {
+      status: 'pending' | 'completed' | 'expired';
+      apiKey: string | null;
+      userId: string | null;
+    };
+
+    if (result.status === 'completed' && result.apiKey) {
+      process.stderr.write('\r\x1b[K');
+      const { saveConfig, getConfigPath } = await import('./config.js');
+      const config: { apiKey: string; baseUrl?: string } = {
+        apiKey: result.apiKey,
+      };
+      if (baseUrl !== DEFAULT_BASE_URL) {
+        config.baseUrl = baseUrl;
+      }
+      saveConfig(config);
+      process.stderr.write(
+        `  ${ansi.greenBold('\u2714')} Authenticated successfully!\n` +
+          `  ${ansi.gray('Credentials saved to')} ${getConfigPath()}\n\n`,
+      );
+      return;
+    }
+
+    if (result.status === 'expired') {
+      process.stderr.write('\r\x1b[K');
+      fatal('Authorization expired. Please try again.');
+    }
+  }
+
+  process.stderr.write('\r\x1b[K');
+  fatal('Authorization timed out. Please try again.');
+}
+
+async function cmdLogout(): Promise<void> {
+  const { loadConfig, clearConfig, getConfigPath } = await import(
+    './config.js'
+  );
+  const config = loadConfig();
+  if (!config.apiKey) {
+    process.stderr.write(
+      `  ${ansi.gray('Not currently logged in.')}\n`,
+    );
+    return;
+  }
+  clearConfig();
+  process.stderr.write(
+    `  ${ansi.greenBold('\u2714')} Logged out. Credentials removed from ${ansi.gray(getConfigPath())}\n`,
+  );
+}
+
+async function cmdWhoami(options: {
+  apiKey?: string;
+  baseUrl?: string;
+}): Promise<void> {
+  let source: string;
+  let detail: string[] = [];
+
+  if (options.apiKey) {
+    source = `${ansi.bold('--api-key flag')} ${ansi.gray('(CLI argument)')}`;
+  } else if (process.env.MINDSTUDIO_API_KEY) {
+    source = `${ansi.bold('MINDSTUDIO_API_KEY')} ${ansi.gray('(environment variable)')}`;
+    detail.push(
+      `  ${ansi.gray('Key:')}  ${maskKey(process.env.MINDSTUDIO_API_KEY)}`,
+    );
+  } else {
+    const { loadConfig, getConfigPath } = await import('./config.js');
+    const config = loadConfig();
+    if (config.apiKey) {
+      source = `${ansi.bold('config file')} ${ansi.gray('(mindstudio login)')}`;
+      detail.push(`  ${ansi.gray('File:')} ${getConfigPath()}`);
+      detail.push(`  ${ansi.gray('Key:')}  ${maskKey(config.apiKey)}`);
+      if (config.baseUrl) {
+        detail.push(`  ${ansi.gray('URL:')}  ${config.baseUrl}`);
+      }
+    } else if (process.env.CALLBACK_TOKEN) {
+      source = `${ansi.bold('CALLBACK_TOKEN')} ${ansi.gray('(managed/internal mode)')}`;
+    } else {
+      process.stderr.write(
+        `  ${ansi.gray('\u25CB')} Not authenticated. Run ${ansi.cyan('mindstudio login')} to get started.\n`,
+      );
+      return;
+    }
+  }
+
+  process.stderr.write(`  ${ansi.gray('Auth:')} ${source!}\n`);
+  for (const line of detail) process.stderr.write(line + '\n');
+
+  // Verify the key works by calling listAgents
+  process.stderr.write(`  ${ansi.gray('Verifying...')} `);
+  try {
+    const { MindStudioAgent } = await import('./client.js');
+    const agent = new MindStudioAgent({
+      apiKey: options.apiKey,
+      baseUrl: options.baseUrl,
+    });
+    const result = await agent.listAgents();
+    process.stderr.write(
+      `\r\x1b[K  ${ansi.greenBold('\u25CF')} ${ansi.green('Connected')} ${ansi.gray('\u2014')} ${result.orgName} ${ansi.gray('(' + result.orgId + ')')}\n`,
+    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(
+      `\r\x1b[K  ${ansi.dim('\u25CF')} ${ansi.dim('Not connected')} ${ansi.gray('\u2014')} ${message}\n`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Argv parsing
 // ---------------------------------------------------------------------------
 
@@ -538,7 +897,34 @@ async function main(): Promise<void> {
 
   const command = positionals[0];
 
+  // Fire off update check in background (non-blocking).
+  // Skip for mcp (long-running) and login (has its own flow).
+  const updatePromise =
+    command !== 'mcp' && command !== 'login'
+      ? checkForUpdate()
+      : Promise.resolve(null);
+
   try {
+    if (command === 'login') {
+      await cmdLogin({
+        baseUrl: values['base-url'] as string | undefined,
+      });
+      return;
+    }
+
+    if (command === 'logout') {
+      await cmdLogout();
+      return;
+    }
+
+    if (command === 'whoami') {
+      await cmdWhoami({
+        apiKey: values['api-key'] as string | undefined,
+        baseUrl: values['base-url'] as string | undefined,
+      });
+      return;
+    }
+
     if (command === 'list') {
       await cmdList(values.json as boolean);
       return;
@@ -677,6 +1063,9 @@ async function main(): Promise<void> {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     fatal(message);
+  } finally {
+    const latestVersion = await updatePromise;
+    if (latestVersion) printUpdateNotice(latestVersion);
   }
 }
 

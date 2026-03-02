@@ -1183,13 +1183,32 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('```');
   lines.push('');
   lines.push(
-    'Auth: set `MINDSTUDIO_API_KEY` env var or pass `--api-key <key>`.',
+    'Auth: run `mindstudio login`, set `MINDSTUDIO_API_KEY` env var, or pass `--api-key <key>`.',
   );
   lines.push(
     'Method names are kebab-case on the CLI (camelCase also accepted). Flags are kebab-case (`--video-url` for `videoUrl`).',
   );
   lines.push(
     'Use `--output-key <key>` to extract a single field, `--no-meta` to strip $-prefixed metadata.',
+  );
+  lines.push('');
+
+  // --- Authentication ---
+  lines.push('### Authentication');
+  lines.push('');
+  lines.push('```bash');
+  lines.push('# Interactive login (opens browser, saves key to ~/.mindstudio/config.json)');
+  lines.push('mindstudio login');
+  lines.push('');
+  lines.push('# Check current auth status');
+  lines.push('mindstudio whoami');
+  lines.push('');
+  lines.push('# Clear stored credentials');
+  lines.push('mindstudio logout');
+  lines.push('```');
+  lines.push('');
+  lines.push(
+    'Auth resolution order: `--api-key` flag > `MINDSTUDIO_API_KEY` env > `~/.mindstudio/config.json` > `CALLBACK_TOKEN` env.',
   );
   lines.push('');
 
