@@ -46,8 +46,8 @@ Every method is fully typed — your editor will autocomplete available paramete
 ### CLI
 
 ```bash
-# Set your API key
-export MINDSTUDIO_API_KEY=your-api-key
+# Authenticate (opens browser, saves key locally)
+mindstudio login
 
 # Execute a step with named flags
 mindstudio generate-image --prompt "A mountain landscape at sunset"
@@ -96,9 +96,15 @@ All 120+ step methods are exposed as MCP tools with full JSON Schema input defin
 
 ## Authentication
 
-The SDK supports two authentication modes:
+The fastest way to authenticate is the interactive login:
 
-**API Key** — for external apps, scripts, and CLI usage:
+```bash
+mindstudio login
+```
+
+This opens your browser, authenticates with MindStudio, and saves your API key to `~/.mindstudio/config.json`. All subsequent CLI and SDK usage will pick it up automatically.
+
+You can also authenticate via environment variable or constructor parameter:
 
 ```typescript
 // Pass directly
@@ -109,15 +115,19 @@ const agent = new MindStudioAgent({ apiKey: 'your-api-key' });
 const agent = new MindStudioAgent();
 ```
 
-**Managed mode** — automatically available inside MindStudio custom functions:
+MindStudio routes to the correct AI provider (OpenAI, Google, Anthropic, etc.) server-side — you do not need separate provider API keys.
 
-```typescript
-// Inside a MindStudio custom function, auth and base URL are automatic
-// (CALLBACK_TOKEN and REMOTE_HOSTNAME are set by the runtime)
-const agent = new MindStudioAgent();
+Other auth commands:
+
+```bash
+# Check current auth status and verify credentials
+mindstudio whoami
+
+# Clear stored credentials
+mindstudio logout
 ```
 
-Resolution order: constructor `apiKey` > `MINDSTUDIO_API_KEY` env > `CALLBACK_TOKEN` env.
+Resolution order: constructor `apiKey` > `MINDSTUDIO_API_KEY` env > `~/.mindstudio/config.json` > `CALLBACK_TOKEN` env.
 
 ## Thread persistence
 
@@ -248,7 +258,7 @@ const { services } = await agent.listConnectors();
 
 ```typescript
 const agent = new MindStudioAgent({
-  // API key (or set MINDSTUDIO_API_KEY env var)
+  // API key (or set MINDSTUDIO_API_KEY env var, or run `mindstudio login`)
   apiKey: 'your-api-key',
 
   // Base URL (or set MINDSTUDIO_BASE_URL env var)
@@ -322,6 +332,9 @@ import { blockTypeAliases } from '@mindstudio-ai/agent';
 Usage: mindstudio <command | method> [options]
 
 Commands:
+  login                            Authenticate with MindStudio (opens browser)
+  logout                           Clear stored credentials
+  whoami                           Show current authentication status
   <method> [json | --flags]        Execute a step method
   exec <method> [json | --flags]   Execute a step method (same as above)
   list [--json]                    List available methods

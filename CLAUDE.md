@@ -8,7 +8,8 @@ TypeScript SDK for MindStudio's direct step execution API. Methods and types are
 src/
   index.ts              # Package entry — merges generated interfaces onto MindStudioAgent, re-exports
   client.ts             # MindStudioAgent class (hand-written, stable)
-  cli.ts                # CLI entry point (bin script) — exec, list, agents, run, mcp commands
+  config.ts             # Config file read/write for ~/.mindstudio/config.json (login persistence)
+  cli.ts                # CLI entry point (bin script) — login, exec, list, agents, run, mcp commands
   mcp.ts                # Minimal MCP server (JSON-RPC 2.0 over stdio, zero deps)
   http.ts               # Fetch wrapper with concurrency queuing and 429 retry
   errors.ts             # MindStudioError class
@@ -43,12 +44,15 @@ examples/
 
 The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI agent consumption.
 
+- `mindstudio login` — device auth flow: opens browser, polls, saves API key to `~/.mindstudio/config.json`
+- `mindstudio logout` — clears stored credentials
+- `mindstudio whoami` — shows current auth source (flag, env, config file, or managed mode)
 - `mindstudio exec <method> '<json>'` — execute a step method, JSON output to stdout
 - `mindstudio list [--json]` — list available methods
 - `mindstudio agents [--json]` — list pre-built agents in the organization
 - `mindstudio run <appId> [json | --flags]` — run a pre-built agent (async poll, returns result)
 - `mindstudio mcp` — start MCP server (JSON-RPC 2.0 over stdio)
-- Auth via `--api-key` flag or `MINDSTUDIO_API_KEY` env var
+- Auth via `mindstudio login`, `--api-key` flag, or `MINDSTUDIO_API_KEY` env var
 - MCP server creates one agent per session with `reuseThreadId: true`
 - CLI supports `--app-id` and `--thread-id` for thread persistence across calls
 - Both CLI and MCP consume `src/generated/metadata.ts` for method schemas and descriptions
@@ -62,8 +66,10 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
 - **Type merging pattern.** Generated code exports `StepMethods` and `HelperMethods` interfaces. `index.ts` merges them onto `MindStudioAgent` via `export type MindStudioAgent = _MindStudioAgent & StepMethods & HelperMethods` + constructor retyping. Runtime methods are attached to the prototype via `applyStepMethods()` / `applyHelperMethods()`.
 - **Flat results.** `StepExecutionResult<T> = T & StepExecutionMeta`. Output properties are spread at the top level. Metadata uses `$` prefix (`$appId`, `$threadId`, `$rateLimitRemaining`, `$billingCost`, `$billingEvents`).
 - **S3 output resolution.** When the API returns `outputUrl` instead of inline `output`, the SDK auto-fetches the S3 JSON (`{ value: ... }`) and unwraps it transparently.
-- **Auth resolution order:** constructor `apiKey` → `MINDSTUDIO_API_KEY` env → `CALLBACK_TOKEN` env (managed mode).
-- **Base URL resolution order:** constructor `baseUrl` → `MINDSTUDIO_BASE_URL` env → `REMOTE_HOSTNAME` env (managed mode) → `https://v1.mindstudio-api.com`.
+- **Auth resolution order:** constructor `apiKey` → `MINDSTUDIO_API_KEY` env → `~/.mindstudio/config.json` → `CALLBACK_TOKEN` env (managed mode).
+- **Base URL resolution order:** constructor `baseUrl` → `MINDSTUDIO_BASE_URL` env → `REMOTE_HOSTNAME` env (managed mode) → `~/.mindstudio/config.json` → `https://v1.mindstudio-api.com`.
+- **Config file** (`src/config.ts`): reads/writes `~/.mindstudio/config.json` with `{ apiKey?, baseUrl?, _updateCheck? }`. Used by `client.ts` for auth resolution and by `cli.ts` for login/logout/whoami commands. Device auth flow uses `GET /developer/v2/request-auth-url` and `POST /developer/v2/poll-auth-url`.
+- **Update checker** (in `cli.ts`): non-blocking check against npm registry (`https://registry.npmjs.org/@mindstudio-ai/agent/latest`) on every CLI invocation (except `mcp` and `login`). Result cached in config `_updateCheck` for 1 hour. Prints a notice to stderr if a newer version is available.
 - **Thread reuse:** constructor `reuseThreadId` → `MINDSTUDIO_REUSE_THREAD_ID` env (`"true"` / `"1"`). When enabled, the thread ID from the first API response is stored on the instance and automatically sent with all subsequent `executeStep` calls (unless an explicit `threadId` is passed in options).
 - All step endpoints follow the pattern: `POST /developer/v2/steps/{stepType}/execute` with `{ step, appId?, threadId? }` body.
 - `appId` and `threadId` are returned in response headers (`x-mindstudio-app-id`, `x-mindstudio-thread-id`).
