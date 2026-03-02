@@ -12,16 +12,18 @@ export interface MindStudioConfig {
   };
 }
 
-const CONFIG_DIR = join(homedir(), '.mindstudio');
-const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
+function configPaths() {
+  const dir = join(homedir(), '.mindstudio');
+  return { dir, file: join(dir, 'config.json') };
+}
 
 export function getConfigPath(): string {
-  return CONFIG_PATH;
+  return configPaths().file;
 }
 
 export function loadConfig(): MindStudioConfig {
   try {
-    const raw = readFileSync(CONFIG_PATH, 'utf-8');
+    const raw = readFileSync(configPaths().file, 'utf-8');
     return JSON.parse(raw) as MindStudioConfig;
   } catch {
     return {};
@@ -29,12 +31,9 @@ export function loadConfig(): MindStudioConfig {
 }
 
 export function saveConfig(config: MindStudioConfig): void {
-  mkdirSync(CONFIG_DIR, { recursive: true });
-  writeFileSync(
-    CONFIG_PATH,
-    JSON.stringify(config, null, 2) + '\n',
-    'utf-8',
-  );
+  const { dir, file } = configPaths();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(file, JSON.stringify(config, null, 2) + '\n', 'utf-8');
 }
 
 export function clearConfig(): void {
