@@ -79,7 +79,7 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
   - `listConnectors()` / `getConnector(serviceId)` — `GET /developer/v2/helpers/connectors[/{serviceId}]`
   - `getConnectorAction(serviceId, actionId)` — `GET /developer/v2/helpers/connectors/{serviceId}/{actionId}` (full action config with input fields)
   - `listConnections()` — `GET /developer/v2/helpers/connections` (authenticated, returns OAuth connection IDs for use with connector actions)
-  - Connectors are sourced from the open-source [MindStudio Connector Registry (MSCR)](https://github.com/mindstudio-ai/mscr) with 850+ third-party service integrations. Connector actions are executed via the `runFromConnectorRegistry` step and require the user to connect to the third-party service in MindStudio first.
+  - Connectors are sourced from the open-source [MindStudio Connector Registry (MSCR)](https://github.com/mindstudio-ai/mscr) with 850+ connector actions across third-party services. Connector actions are executed via the `runFromConnectorRegistry` step and require the user to connect to the third-party service in MindStudio first.
 - **Agent methods** (`listAgents`, `runAgent`) are hand-written on `MindStudioAgent` (not generated). `listAgents()` calls `GET /developer/v2/agents/load`. `runAgent()` posts to `POST /developer/v2/agents/run` with `async: true`, then polls `GET /developer/v2/agents/run/poll/:callbackToken` until complete/error. Poll requests bypass the rate limiter (no auth needed, token is the secret). Default poll interval is 1s, configurable via `pollIntervalMs`.
 
 ## Rate limiting

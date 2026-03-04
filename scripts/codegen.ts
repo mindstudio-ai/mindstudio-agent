@@ -1281,7 +1281,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('# @mindstudio-ai/agent');
   lines.push('');
   lines.push(
-    'TypeScript SDK, CLI, and MCP server for MindStudio. One API key gives you access to 200+ AI models (OpenAI, Anthropic, Google, Meta, xAI, DeepSeek, etc.) and 1,000+ integrations including 850+ third-party connectors from the open-source MindStudio Connector Registry (https://github.com/mindstudio-ai/mscr). No separate provider API keys required.',
+    'TypeScript SDK, CLI, and MCP server for MindStudio. One API key gives you access to 200+ AI models (OpenAI, Anthropic, Google, Meta, xAI, DeepSeek, etc.) and 1,000+ actions including 850+ connector actions across third-party services from the open-source MindStudio Connector Registry (https://github.com/mindstudio-ai/mscr). No separate provider API keys required.',
   );
   lines.push('');
   lines.push(
@@ -1713,7 +1713,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('#### `getConnectorAction(serviceId, actionId)`');
   lines.push(
-    'Get the full configuration for a connector action, including all input fields needed to call it via `runFromConnectorRegistry`. Connectors are sourced from the open-source MindStudio Connector Registry (MSCR) with 850+ third-party service integrations.',
+    'Get the full configuration for a connector action, including all input fields needed to call it via `runFromConnectorRegistry`. Connectors are sourced from the open-source MindStudio Connector Registry (MSCR) with 850+ connector actions across third-party services.',
   );
   lines.push('');
   lines.push('Output:');

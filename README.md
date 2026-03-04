@@ -4,7 +4,7 @@ Every AI model. Every integration. One SDK.
 
 [MindStudio](https://mindstudio.ai) gives you direct access to 200+ AI models and [1,000+ integrations](https://github.com/mindstudio-ai/mscr) — no separate API keys, no setup, no friction. This package is the developer toolkit: a TypeScript SDK, CLI, and MCP server that puts the entire platform at your fingertips.
 
-Generate text, images, video, and audio. Scrape the web. Search Google. Post to Slack. Read from Airtable. Send emails. Process media. Connect to 850+ third-party services. All with one API key, fully typed, and ready to use from code, the command line, or any MCP-compatible AI agent.
+Generate text, images, video, and audio. Scrape the web. Search Google. Post to Slack. Read from Airtable. Send emails. Process media. Run any of 850+ connector actions across third-party services. All with one API key, fully typed, and ready to use from code, the command line, or any MCP-compatible AI agent.
 
 ## Install
 
@@ -154,7 +154,7 @@ Model types: `llm_chat`, `image_generation`, `video_generation`, `video_analysis
 
 ## 1,000+ integrations
 
-850+ third-party connectors from the open-source [MindStudio Connector Registry (MSCR)](https://github.com/mindstudio-ai/mscr) — Slack, Google, HubSpot, Salesforce, Airtable, Notion, and hundreds more — alongside 140+ built-in actions for AI, media, web, and data processing.
+850+ connector actions from the open-source [MindStudio Connector Registry (MSCR)](https://github.com/mindstudio-ai/mscr) — across services like ActiveCampaign, Airtable, Apollo, Canva, ElevenLabs, MailChimp, Notion, and more — alongside 140+ built-in actions for AI, media, web, and data processing.
 
 ```typescript
 // Browse connectors and their actions
