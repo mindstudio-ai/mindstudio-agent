@@ -58,9 +58,37 @@ const HELPER_TOOLS: McpTool[] = [
     },
   },
   {
+    name: 'listModelsSummary',
+    description:
+      'List all available AI models (summary) with only id, name, type, and tags. Suitable for display or consumption inside a model context window.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'listModelsSummaryByType',
+    description: 'List AI models (summary) filtered by type.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        modelType: {
+          type: 'string',
+          enum: [
+            'llm_chat',
+            'image_generation',
+            'video_generation',
+            'video_analysis',
+            'text_to_speech',
+            'vision',
+            'transcription',
+          ],
+        },
+      },
+      required: ['modelType'],
+    },
+  },
+  {
     name: 'listConnectors',
     description:
-      'List available connector services (Slack, Google, HubSpot, etc.).',
+      'List available connector services (Slack, Google, HubSpot, etc.) and their actions.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -71,6 +99,32 @@ const HELPER_TOOLS: McpTool[] = [
       properties: { serviceId: { type: 'string' } },
       required: ['serviceId'],
     },
+  },
+  {
+    name: 'getConnectorAction',
+    description:
+      'Get the full configuration for a connector action, including all input fields needed to call it via runFromConnectorRegistry.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serviceId: {
+          type: 'string',
+          description: 'The connector service ID.',
+        },
+        actionId: {
+          type: 'string',
+          description:
+            'The full action ID including service prefix (e.g. "slack/send-message").',
+        },
+      },
+      required: ['serviceId', 'actionId'],
+    },
+  },
+  {
+    name: 'listConnections',
+    description:
+      'List OAuth connections for the organization. Use the returned connection IDs when calling connector actions.',
+    inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'listAgents',
@@ -206,12 +260,25 @@ export async function startMcpServer(options?: {
             result = await (getAgent() as any).listModelsByType(
               args.modelType as string,
             );
+          } else if (toolName === 'listModelsSummary') {
+            result = await (getAgent() as any).listModelsSummary();
+          } else if (toolName === 'listModelsSummaryByType') {
+            result = await (getAgent() as any).listModelsSummaryByType(
+              args.modelType as string,
+            );
           } else if (toolName === 'listConnectors') {
             result = await (getAgent() as any).listConnectors();
           } else if (toolName === 'getConnector') {
             result = await (getAgent() as any).getConnector(
               args.serviceId as string,
             );
+          } else if (toolName === 'getConnectorAction') {
+            result = await (getAgent() as any).getConnectorAction(
+              args.serviceId as string,
+              args.actionId as string,
+            );
+          } else if (toolName === 'listConnections') {
+            result = await (getAgent() as any).listConnections();
           } else if (toolName === 'listAgents') {
             result = await getAgent().listAgents();
           } else if (toolName === 'runAgent') {

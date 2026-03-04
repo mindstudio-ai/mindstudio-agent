@@ -126,8 +126,12 @@ async function readStdin(): Promise<string> {
 const HELPER_NAMES = new Set([
   'listModels',
   'listModelsByType',
+  'listModelsSummary',
+  'listModelsSummaryByType',
   'listConnectors',
   'getConnector',
+  'getConnectorAction',
+  'listConnections',
 ]);
 
 const BUILTIN_COMMANDS = new Set([
@@ -213,8 +217,12 @@ async function cmdInfo(rawMethod: string): Promise<void> {
     const helpers: Record<string, { desc: string; input: string; output: string }> = {
       listModels: { desc: 'List all available AI models.', input: '(none)', output: '{ models: MindStudioModel[] }' },
       listModelsByType: { desc: 'List AI models filtered by type.', input: 'modelType: string (required)', output: '{ models: MindStudioModel[] }' },
-      listConnectors: { desc: 'List available connector services.', input: '(none)', output: '{ services: Array }' },
-      getConnector: { desc: 'Get details for a connector service.', input: 'serviceId: string (required)', output: '{ service: object }' },
+      listModelsSummary: { desc: 'List all AI models (summary: id, name, type, tags).', input: '(none)', output: '{ models: MindStudioModelSummary[] }' },
+      listModelsSummaryByType: { desc: 'List AI models (summary) filtered by type.', input: 'modelType: string (required)', output: '{ models: MindStudioModelSummary[] }' },
+      listConnectors: { desc: 'List available connector services and their actions.', input: '(none)', output: '{ services: ConnectorService[] }' },
+      getConnector: { desc: 'Get details for a connector service.', input: 'serviceId: string (required)', output: '{ service: ConnectorService }' },
+      getConnectorAction: { desc: 'Get full configuration for a connector action.', input: 'serviceId: string, actionId: string (both required)', output: '{ action: ConnectorActionDetail }' },
+      listConnections: { desc: 'List OAuth connections for the organization.', input: '(none)', output: '{ connections: Connection[] }' },
     };
     const h = helpers[method];
     process.stderr.write(`\n  ${camelToKebab(method)}\n\n`);
@@ -319,10 +327,23 @@ async function cmdExec(
     result = await agent.listModels();
   } else if (method === 'listModelsByType') {
     result = await agent.listModelsByType(input.modelType as string);
+  } else if (method === 'listModelsSummary') {
+    result = await agent.listModelsSummary();
+  } else if (method === 'listModelsSummaryByType') {
+    result = await agent.listModelsSummaryByType(
+      input.modelType as string,
+    );
   } else if (method === 'listConnectors') {
     result = await agent.listConnectors();
   } else if (method === 'getConnector') {
     result = await agent.getConnector(input.serviceId as string);
+  } else if (method === 'getConnectorAction') {
+    result = await agent.getConnectorAction(
+      input.serviceId as string,
+      input.actionId as string,
+    );
+  } else if (method === 'listConnections') {
+    result = await agent.listConnections();
   } else {
     const { stepMetadata } = await import('./generated/metadata.js');
     const meta = stepMetadata[method];
