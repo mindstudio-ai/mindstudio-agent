@@ -18,7 +18,7 @@ src/
   generated/            # AUTO-GENERATED at build time — do not edit by hand
     types.ts            # Step input/output interfaces, StepName union, StepInputMap/StepOutputMap
     steps.ts            # StepMethods interface + applyStepMethods() runtime attachment
-    helpers.ts          # HelperMethods interface + applyHelperMethods() runtime attachment
+    helpers.ts          # HelperMethods interface + applyHelperMethods() runtime attachment (models, connectors, connections)
     snippets.ts         # monacoSnippets object (fields, output keys) + blockTypeAliases
     metadata.ts         # stepMetadata — full JSON schemas + descriptions for CLI/MCP
 scripts/
@@ -56,7 +56,7 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
 - MCP server creates one agent per session with `reuseThreadId: true`
 - CLI supports `--app-id` and `--thread-id` for thread persistence across calls
 - Both CLI and MCP consume `src/generated/metadata.ts` for method schemas and descriptions
-- MCP exposes `listAgents` and `runAgent` as tools alongside all step/helper methods
+- MCP exposes `listAgents`, `runAgent`, and all helper methods (`listModels`, `listModelsByType`, `listModelsSummary`, `listModelsSummaryByType`, `listConnectors`, `getConnector`, `getConnectorAction`, `listConnections`) as tools alongside all step methods
 - `tsup.config.ts` uses an array of two configs: library build (dts, sourcemap) + CLI build (shebang, no dts)
 
 ## Architecture notes
@@ -73,6 +73,13 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
 - **Thread reuse:** constructor `reuseThreadId` → `MINDSTUDIO_REUSE_THREAD_ID` env (`"true"` / `"1"`). When enabled, the thread ID from the first API response is stored on the instance and automatically sent with all subsequent `executeStep` calls (unless an explicit `threadId` is passed in options).
 - All step endpoints follow the pattern: `POST /developer/v2/steps/{stepType}/execute` with `{ step, appId?, threadId? }` body.
 - `appId` and `threadId` are returned in response headers (`x-mindstudio-app-id`, `x-mindstudio-thread-id`).
+- **Helper methods** are generated in `src/generated/helpers.ts` and attached to the prototype at runtime. They cover:
+  - `listModels()` / `listModelsByType(modelType)` — `GET /developer/v2/helpers/models[/{modelType}]`
+  - `listModelsSummary()` / `listModelsSummaryByType(modelType)` — `GET /developer/v2/helpers/models-summary[/{modelType}]` (lightweight: id, name, type, tags)
+  - `listConnectors()` / `getConnector(serviceId)` — `GET /developer/v2/helpers/connectors[/{serviceId}]`
+  - `getConnectorAction(serviceId, actionId)` — `GET /developer/v2/helpers/connectors/{serviceId}/{actionId}` (full action config with input fields)
+  - `listConnections()` — `GET /developer/v2/helpers/connections` (authenticated, returns OAuth connection IDs for use with connector actions)
+  - Connectors are sourced from the open-source [MindStudio Connector Registry (MSCR)](https://github.com/mindstudio-ai/mscr) with 850+ third-party service integrations. Connector actions are executed via the `runFromConnectorRegistry` step and require the user to connect to the third-party service in MindStudio first.
 - **Agent methods** (`listAgents`, `runAgent`) are hand-written on `MindStudioAgent` (not generated). `listAgents()` calls `GET /developer/v2/agents/load`. `runAgent()` posts to `POST /developer/v2/agents/run` with `async: true`, then polls `GET /developer/v2/agents/run/poll/:callbackToken` until complete/error. Poll requests bypass the rate limiter (no auth needed, token is the secret). Default poll interval is 1s, configurable via `pollIntervalMs`.
 
 ## Rate limiting
@@ -100,7 +107,7 @@ When a step has a rename, the original name is removed from `StepMethods` and th
 
 1. **src/generated/types.ts** — input/output interfaces from JSON Schema, `StepName` union, `StepInputMap`/`StepOutputMap`, type aliases for renamed steps
 2. **src/generated/steps.ts** — `StepMethods` interface with JSDoc (`description` as main line, `x-usage-notes` as `@remarks`, snippet as `@example`), `applyStepMethods()` for runtime
-3. **src/generated/helpers.ts** — `HelperMethods` interface + `applyHelperMethods()` for models/connectors endpoints
+3. **src/generated/helpers.ts** — `HelperMethods` interface + `applyHelperMethods()` for models, models-summary, connectors, connector actions, and connections endpoints
 4. **src/generated/snippets.ts** — `monacoSnippets` object with fields (required params + types) and output keys, plus `blockTypeAliases` for renamed steps
 5. **llms.txt** — compact LLM reference with full typed input/output shapes, categorized by integration
 

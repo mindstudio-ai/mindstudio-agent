@@ -573,6 +573,76 @@ function generateHelpers(spec: OpenAPISpec): string {
     }
   }
 
+  // Model summary type (from models-summary endpoint)
+  const modelsSummaryOp =
+    spec.paths['/developer/v2/helpers/models-summary']?.get;
+  if (modelsSummaryOp) {
+    const summarySchema =
+      modelsSummaryOp.responses['200']?.content?.['application/json']?.schema
+        ?.properties?.models?.items;
+
+    if (summarySchema) {
+      chunks.push('/** A lightweight AI model summary. */');
+      chunks.push(
+        `export interface MindStudioModelSummary ${schemaToTs(summarySchema, '')}`,
+      );
+      chunks.push('');
+    }
+  }
+
+  // Connector service type (from connectors endpoint)
+  const connectorsOp = spec.paths['/developer/v2/helpers/connectors']?.get;
+  if (connectorsOp) {
+    const serviceSchema =
+      connectorsOp.responses['200']?.content?.['application/json']?.schema
+        ?.properties?.services?.items;
+
+    if (serviceSchema) {
+      chunks.push('/** A connector service with its available actions. */');
+      chunks.push(
+        `export interface ConnectorService ${schemaToTs(serviceSchema, '')}`,
+      );
+      chunks.push('');
+    }
+  }
+
+  // Connector action detail type (from connectors/{serviceId}/{actionId} endpoint)
+  const connectorActionOp =
+    spec.paths['/developer/v2/helpers/connectors/{serviceId}/{actionId}']?.get;
+  if (connectorActionOp) {
+    const actionSchema =
+      connectorActionOp.responses['200']?.content?.['application/json']?.schema
+        ?.properties?.action;
+
+    if (actionSchema) {
+      chunks.push(
+        '/** Full configuration details for a connector action. */',
+      );
+      chunks.push(
+        `export interface ConnectorActionDetail ${schemaToTs(actionSchema, '')}`,
+      );
+      chunks.push('');
+    }
+  }
+
+  // Connection type (from connections endpoint)
+  const connectionsOp = spec.paths['/developer/v2/helpers/connections']?.get;
+  if (connectionsOp) {
+    const connectionSchema =
+      connectionsOp.responses['200']?.content?.['application/json']?.schema
+        ?.properties?.connections?.items;
+
+    if (connectionSchema) {
+      chunks.push(
+        '/** An OAuth connection to a third-party service. */',
+      );
+      chunks.push(
+        `export interface Connection ${schemaToTs(connectionSchema, '')}`,
+      );
+      chunks.push('');
+    }
+  }
+
   // Model type enum
   chunks.push('/** Supported model type categories for filtering. */');
   chunks.push(
@@ -605,11 +675,35 @@ function generateHelpers(spec: OpenAPISpec): string {
   chunks.push('');
   chunks.push('  /**');
   chunks.push(
+    '   * List all available AI models (summary). Returns only id, name, type, and tags.',
+  );
+  chunks.push('   *');
+  chunks.push(
+    '   * Suitable for display or consumption inside a model context window.',
+  );
+  chunks.push('   */');
+  chunks.push(
+    '  listModelsSummary(): Promise<{ models: MindStudioModelSummary[] }>;',
+  );
+  chunks.push('');
+  chunks.push('  /**');
+  chunks.push('   * List AI models (summary) filtered by type.');
+  chunks.push('   *');
+  chunks.push(
+    '   * @param modelType - The category to filter by (e.g. "llm_chat", "image_generation").',
+  );
+  chunks.push('   */');
+  chunks.push(
+    '  listModelsSummaryByType(modelType: ModelType): Promise<{ models: MindStudioModelSummary[] }>;',
+  );
+  chunks.push('');
+  chunks.push('  /**');
+  chunks.push(
     '   * List all available connector services (Slack, Google, HubSpot, etc.).',
   );
   chunks.push('   */');
   chunks.push(
-    '  listConnectors(): Promise<{ services: Array<{ service: Record<string, unknown>; actions: Record<string, unknown>[] }> }>;',
+    '  listConnectors(): Promise<{ services: ConnectorService[] }>;',
   );
   chunks.push('');
   chunks.push('  /**');
@@ -618,7 +712,37 @@ function generateHelpers(spec: OpenAPISpec): string {
   chunks.push('   * @param serviceId - The connector service ID.');
   chunks.push('   */');
   chunks.push(
-    '  getConnector(serviceId: string): Promise<{ service: Record<string, unknown> }>;',
+    '  getConnector(serviceId: string): Promise<{ service: ConnectorService }>;',
+  );
+  chunks.push('');
+  chunks.push('  /**');
+  chunks.push(
+    '   * Get the full configuration for a connector action, including input fields.',
+  );
+  chunks.push('   *');
+  chunks.push('   * @param serviceId - The connector service ID.');
+  chunks.push(
+    '   * @param actionId - The full action ID including service prefix (e.g. "slack/send-message").',
+  );
+  chunks.push('   */');
+  chunks.push(
+    '  getConnectorAction(serviceId: string, actionId: string): Promise<{ action: ConnectorActionDetail }>;',
+  );
+  chunks.push('');
+  chunks.push('  /**');
+  chunks.push(
+    '   * List OAuth connections for the organization.',
+  );
+  chunks.push('   *');
+  chunks.push(
+    '   * Returns the third-party services the caller\'s organization has OAuth connections for.',
+  );
+  chunks.push(
+    '   * Use the returned connection IDs when calling connector actions.',
+  );
+  chunks.push('   */');
+  chunks.push(
+    '  listConnections(): Promise<{ connections: Connection[] }>;',
   );
   chunks.push('}');
   chunks.push('');
@@ -644,6 +768,20 @@ function generateHelpers(spec: OpenAPISpec): string {
   );
   chunks.push('  };');
   chunks.push('');
+  chunks.push('  proto.listModelsSummary = function () {');
+  chunks.push(
+    '    return this._request("GET", "/helpers/models-summary").then((r: any) => r.data);',
+  );
+  chunks.push('  };');
+  chunks.push('');
+  chunks.push(
+    '  proto.listModelsSummaryByType = function (modelType: string) {',
+  );
+  chunks.push(
+    '    return this._request("GET", `/helpers/models-summary/${modelType}`).then((r: any) => r.data);',
+  );
+  chunks.push('  };');
+  chunks.push('');
   chunks.push('  proto.listConnectors = function () {');
   chunks.push(
     '    return this._request("GET", "/helpers/connectors").then((r: any) => r.data);',
@@ -653,6 +791,20 @@ function generateHelpers(spec: OpenAPISpec): string {
   chunks.push('  proto.getConnector = function (serviceId: string) {');
   chunks.push(
     '    return this._request("GET", `/helpers/connectors/${serviceId}`).then((r: any) => r.data);',
+  );
+  chunks.push('  };');
+  chunks.push('');
+  chunks.push(
+    '  proto.getConnectorAction = function (serviceId: string, actionId: string) {',
+  );
+  chunks.push(
+    '    return this._request("GET", `/helpers/connectors/${serviceId}/${actionId}`).then((r: any) => r.data);',
+  );
+  chunks.push('  };');
+  chunks.push('');
+  chunks.push('  proto.listConnections = function () {');
+  chunks.push(
+    '    return this._request("GET", "/helpers/connections").then((r: any) => r.data);',
   );
   chunks.push('  };');
   chunks.push('}');
@@ -1129,7 +1281,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('# @mindstudio-ai/agent');
   lines.push('');
   lines.push(
-    'TypeScript SDK, CLI, and MCP server for executing MindStudio workflow steps. Each method calls a specific AI/automation action and returns typed results.',
+    'TypeScript SDK, CLI, and MCP server for MindStudio. One API key gives you access to 200+ AI models (OpenAI, Anthropic, Google, Meta, xAI, DeepSeek, etc.) and 1,000+ integrations including 850+ third-party connectors from the open-source MindStudio Connector Registry (https://github.com/mindstudio-ai/mscr). No separate provider API keys required.',
   );
   lines.push('');
   lines.push(
@@ -1271,11 +1423,11 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('## Models');
   lines.push('');
   lines.push(
-    'MindStudio provides access to models from many providers (OpenAI, Google, Anthropic, Meta, xAI, DeepSeek, etc.) through a single API key. You do NOT need provider-specific API keys.',
+    'Direct access to 200+ AI models from every major provider — all through a single API key, billed at cost with no markups.',
   );
   lines.push('');
   lines.push(
-    'Use `listModels()` or `listModelsByType("llm_chat")` to discover available models. Pass a model ID to `modelOverride.model` in methods like `generateText` to select a specific model:',
+    'Use `listModels()` or `listModelsByType()` for full model details, or `listModelsSummary()` / `listModelsSummaryByType()` for a lightweight list (id, name, type, tags) suitable for LLM context windows. Pass a model ID to `modelOverride.model` in methods like `generateText` to select a specific model:',
   );
   lines.push('');
   lines.push('```typescript');
@@ -1287,7 +1439,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('const { content } = await agent.generateText({');
   lines.push("  message: 'Hello',");
   lines.push('  modelOverride: {');
-  lines.push('    model: model.rawName,');
+  lines.push('    model: model.id,');
   lines.push('    temperature: 0.7,');
   lines.push('    maxResponseTokens: 1024,');
   lines.push('  },');
@@ -1484,14 +1636,12 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('  models: {');
   lines.push('    id: string;');
   lines.push('    name: string;            // Display name');
-  lines.push('    rawName: string;          // Full provider model identifier');
   lines.push(
     '    type: "llm_chat" | "image_generation" | "video_generation" | "video_analysis" | "text_to_speech" | "vision" | "transcription";',
   );
-  lines.push('    publisher: string;');
   lines.push('    maxTemperature: number;');
   lines.push('    maxResponseSize: number;');
-  lines.push('    contextWindow: number;');
+  lines.push('    inputs: object[];        // Accepted input types');
   lines.push('  }[]');
   lines.push('}');
   lines.push('```');
@@ -1503,14 +1653,47 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('- Output: same as `listModels()`');
   lines.push('');
-  lines.push('#### `listConnectors()`');
+  lines.push('#### `listModelsSummary()`');
   lines.push(
-    'List available connector services (Slack, Google, HubSpot, etc.).',
+    'List all available AI models (summary). Returns only id, name, type, and tags. Suitable for display or consumption inside a model context window.',
   );
   lines.push('');
   lines.push('Output:');
   lines.push('```typescript');
-  lines.push('{ services: Array<{ service: object, actions: object[] }> }');
+  lines.push('{');
+  lines.push('  models: {');
+  lines.push('    id: string;');
+  lines.push('    name: string;');
+  lines.push(
+    '    type: "llm_chat" | "image_generation" | "video_generation" | "video_analysis" | "text_to_speech" | "vision" | "transcription";',
+  );
+  lines.push('    tags: string;            // Comma-separated tags');
+  lines.push('  }[]');
+  lines.push('}');
+  lines.push('```');
+  lines.push('');
+  lines.push('#### `listModelsSummaryByType(modelType)`');
+  lines.push('List AI models (summary) filtered by type.');
+  lines.push(
+    '- `modelType`: `"llm_chat"` | `"image_generation"` | `"video_generation"` | `"video_analysis"` | `"text_to_speech"` | `"vision"` | `"transcription"`',
+  );
+  lines.push('- Output: same as `listModelsSummary()`');
+  lines.push('');
+  lines.push('#### `listConnectors()`');
+  lines.push(
+    'List available connector services (Slack, Google, HubSpot, etc.) and their actions.',
+  );
+  lines.push('');
+  lines.push('Output:');
+  lines.push('```typescript');
+  lines.push('{');
+  lines.push('  services: {');
+  lines.push('    id: string;');
+  lines.push('    name: string;');
+  lines.push('    icon: string;');
+  lines.push('    actions: { id: string; name: string }[];');
+  lines.push('  }[]');
+  lines.push('}');
   lines.push('```');
   lines.push('');
   lines.push('#### `getConnector(serviceId)`');
@@ -1518,7 +1701,50 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('Output:');
   lines.push('```typescript');
-  lines.push('{ service: object }');
+  lines.push('{');
+  lines.push('  service: {');
+  lines.push('    id: string;');
+  lines.push('    name: string;');
+  lines.push('    icon: string;');
+  lines.push('    actions: { id: string; name: string }[];');
+  lines.push('  }');
+  lines.push('}');
+  lines.push('```');
+  lines.push('');
+  lines.push('#### `getConnectorAction(serviceId, actionId)`');
+  lines.push(
+    'Get the full configuration for a connector action, including all input fields needed to call it via `runFromConnectorRegistry`. Connectors are sourced from the open-source MindStudio Connector Registry (MSCR) with 850+ third-party service integrations.',
+  );
+  lines.push('');
+  lines.push('Output:');
+  lines.push('```typescript');
+  lines.push('{');
+  lines.push('  action: {');
+  lines.push('    id: string;');
+  lines.push('    name: string;');
+  lines.push('    description: string;');
+  lines.push('    quickHelp: string;');
+  lines.push(
+    '    configuration: { title: string; items: { label: string; helpText: string; variable: string; type: string; defaultValue: string; placeholder: string; selectOptions?: object }[] }[];',
+  );
+  lines.push('  }');
+  lines.push('}');
+  lines.push('```');
+  lines.push('');
+  lines.push('#### `listConnections()`');
+  lines.push(
+    'List OAuth connections for the organization. Use the returned connection IDs when calling connector actions. Connectors require the user to connect to the third-party service in MindStudio before they can be used.',
+  );
+  lines.push('');
+  lines.push('Output:');
+  lines.push('```typescript');
+  lines.push('{');
+  lines.push('  connections: {');
+  lines.push('    id: string;       // Connection ID to pass to connector actions');
+  lines.push('    provider: string; // Integration provider (e.g. slack, google)');
+  lines.push('    name: string;     // Display name or account identifier');
+  lines.push('  }[]');
+  lines.push('}');
   lines.push('```');
   lines.push('');
 
