@@ -48,7 +48,7 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
 - `mindstudio logout` — clears stored credentials
 - `mindstudio whoami` — shows current auth source (flag, env, config file, or managed mode)
 - `mindstudio exec <method> '<json>'` — execute a step method, JSON output to stdout
-- `mindstudio list [--json]` — list available methods
+- `mindstudio list [--json] [--summary]` — list available methods (`--summary` for compact `{method: description}` JSON, `--json` for full schemas)
 - `mindstudio agents [--json]` — list pre-built agents in the organization
 - `mindstudio run <appId> [json | --flags]` — run a pre-built agent (async poll, returns result)
 - `mindstudio mcp` — start MCP server (JSON-RPC 2.0 over stdio)
@@ -56,7 +56,7 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
 - MCP server creates one agent per session with `reuseThreadId: true`
 - CLI supports `--app-id` and `--thread-id` for thread persistence across calls
 - Both CLI and MCP consume `src/generated/metadata.ts` for method schemas and descriptions
-- MCP exposes `listAgents`, `runAgent`, and all helper methods (`listModels`, `listModelsByType`, `listModelsSummary`, `listModelsSummaryByType`, `listConnectors`, `getConnector`, `getConnectorAction`, `listConnections`) as tools alongside all step methods
+- MCP exposes `listSteps` (compact discovery), `listAgents`, `runAgent`, and all helper methods (`listModels`, `listModelsByType`, `listModelsSummary`, `listModelsSummaryByType`, `listConnectors`, `getConnector`, `getConnectorAction`, `listConnections`, `estimateStepCost`) as tools alongside all step methods
 - `tsup.config.ts` uses an array of two configs: library build (dts, sourcemap) + CLI build (shebang, no dts)
 
 ## Architecture notes
@@ -80,6 +80,7 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
   - `getConnectorAction(serviceId, actionId)` — `GET /developer/v2/helpers/connectors/{serviceId}/{actionId}` (full action config with input fields)
   - `listConnections()` — `GET /developer/v2/helpers/connections` (authenticated, returns OAuth connection IDs for use with connector actions)
   - Connectors are sourced from the open-source [MindStudio Connector Registry (MSCR)](https://github.com/mindstudio-ai/mscr) with 850+ connector actions across third-party services. Connector actions are executed via the `runFromConnectorRegistry` step and require the user to connect to the third-party service in MindStudio first.
+  - `estimateStepCost(stepType, step?, options?)` — `POST /developer/v2/helpers/step-cost-estimate` (returns `{ costType?, estimates? }` with per-event pricing info)
 - **Agent methods** (`listAgents`, `runAgent`) are hand-written on `MindStudioAgent` (not generated). `listAgents()` calls `GET /developer/v2/agents/load`. `runAgent()` posts to `POST /developer/v2/agents/run` with `async: true`, then polls `GET /developer/v2/agents/run/poll/:callbackToken` until complete/error. Poll requests bypass the rate limiter (no auth needed, token is the secret). Default poll interval is 1s, configurable via `pollIntervalMs`.
 
 ## Rate limiting

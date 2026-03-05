@@ -29,7 +29,27 @@ interface McpTool {
   inputSchema: Record<string, unknown>;
 }
 
+const HELPER_DESCRIPTIONS: Record<string, string> = {
+  listModels: 'List all available AI models.',
+  listModelsByType: 'List AI models filtered by type.',
+  listModelsSummary: 'List all AI models (summary: id, name, type, tags).',
+  listModelsSummaryByType: 'List AI models (summary) filtered by type.',
+  listConnectors: 'List available connector services and their actions.',
+  getConnector: 'Get details for a connector service.',
+  getConnectorAction: 'Get full configuration for a connector action.',
+  listConnections: 'List OAuth connections for the organization.',
+  estimateStepCost: 'Estimate the cost of executing a step before running it.',
+  listAgents: 'List all pre-built agents in the organization.',
+  runAgent: 'Run a pre-built agent and wait for the result.',
+};
+
 const HELPER_TOOLS: McpTool[] = [
+  {
+    name: 'listSteps',
+    description:
+      'List all available methods with their descriptions. Returns a compact { method: description } map. Use this first to discover what steps and helpers are available, then call a specific method by name.',
+    inputSchema: { type: 'object', properties: {} },
+  },
   {
     name: 'listModels',
     description: 'List all available AI models across all categories.',
@@ -125,6 +145,34 @@ const HELPER_TOOLS: McpTool[] = [
     description:
       'List OAuth connections for the organization. Use the returned connection IDs when calling connector actions.',
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'estimateStepCost',
+    description:
+      'Estimate the cost of executing a step before running it. Pass the same step config you would use for execution.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        stepType: {
+          type: 'string',
+          description: 'The step type name (e.g. "generateText").',
+        },
+        step: {
+          type: 'object',
+          description: 'The step input parameters.',
+          additionalProperties: true,
+        },
+        appId: {
+          type: 'string',
+          description: 'Optional app ID for context-specific pricing.',
+        },
+        workflowId: {
+          type: 'string',
+          description: 'Optional workflow ID for context-specific pricing.',
+        },
+      },
+      required: ['stepType'],
+    },
   },
   {
     name: 'listAgents',
@@ -254,7 +302,19 @@ export async function startMcpServer(options?: {
         try {
           let result: unknown;
 
-          if (toolName === 'listModels') {
+          if (toolName === 'listSteps') {
+            const meta = await getMetadata();
+            const summary: Record<string, string> = {};
+            for (const [name, step] of Object.entries(meta)) {
+              summary[name] = step.description;
+            }
+            for (const [name, desc] of Object.entries(
+              HELPER_DESCRIPTIONS,
+            )) {
+              summary[name] = desc;
+            }
+            result = summary;
+          } else if (toolName === 'listModels') {
             result = await (getAgent() as any).listModels();
           } else if (toolName === 'listModelsByType') {
             result = await (getAgent() as any).listModelsByType(
@@ -279,6 +339,15 @@ export async function startMcpServer(options?: {
             );
           } else if (toolName === 'listConnections') {
             result = await (getAgent() as any).listConnections();
+          } else if (toolName === 'estimateStepCost') {
+            result = await (getAgent() as any).estimateStepCost(
+              args.stepType as string,
+              args.step as Record<string, unknown> | undefined,
+              {
+                appId: args.appId as string | undefined,
+                workflowId: args.workflowId as string | undefined,
+              },
+            );
           } else if (toolName === 'listAgents') {
             result = await getAgent().listAgents();
           } else if (toolName === 'runAgent') {

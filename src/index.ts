@@ -26,7 +26,7 @@ export type {
 // Re-export all generated types
 export * from './generated/types.js';
 export type { StepMethods } from './generated/steps.js';
-export type { HelperMethods, MindStudioModel, ModelType } from './generated/helpers.js';
+export type { HelperMethods, MindStudioModel, ModelType, StepCostEstimateEntry } from './generated/helpers.js';
 export {
   monacoSnippets,
   blockTypeAliases,

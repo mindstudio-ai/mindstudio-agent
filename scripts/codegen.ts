@@ -643,6 +643,23 @@ function generateHelpers(spec: OpenAPISpec): string {
     }
   }
 
+  // Step cost estimate type (from step-cost-estimate endpoint)
+  const stepCostOp =
+    spec.paths['/developer/v2/helpers/step-cost-estimate']?.post;
+  if (stepCostOp) {
+    const estimateSchema =
+      stepCostOp.responses['200']?.content?.['application/json']?.schema
+        ?.properties?.estimates?.items;
+
+    if (estimateSchema) {
+      chunks.push('/** A single cost estimate entry for a step. */');
+      chunks.push(
+        `export interface StepCostEstimateEntry ${schemaToTs(estimateSchema, '')}`,
+      );
+      chunks.push('');
+    }
+  }
+
   // Model type enum
   chunks.push('/** Supported model type categories for filtering. */');
   chunks.push(
@@ -744,6 +761,29 @@ function generateHelpers(spec: OpenAPISpec): string {
   chunks.push(
     '  listConnections(): Promise<{ connections: Connection[] }>;',
   );
+  chunks.push('');
+  chunks.push('  /**');
+  chunks.push(
+    '   * Estimate the cost of executing a step before running it.',
+  );
+  chunks.push('   *');
+  chunks.push(
+    '   * Pass the same step config you would use for execution.',
+  );
+  chunks.push('   *');
+  chunks.push(
+    '   * @param stepType - The step type name (e.g. "generateText").',
+  );
+  chunks.push(
+    '   * @param step - The step input parameters.',
+  );
+  chunks.push(
+    '   * @param options - Optional appId and workflowId for context-specific pricing.',
+  );
+  chunks.push('   */');
+  chunks.push(
+    '  estimateStepCost(stepType: string, step?: Record<string, unknown>, options?: { appId?: string; workflowId?: string }): Promise<{ costType?: string; estimates?: StepCostEstimateEntry[] }>;',
+  );
   chunks.push('}');
   chunks.push('');
 
@@ -805,6 +845,14 @@ function generateHelpers(spec: OpenAPISpec): string {
   chunks.push('  proto.listConnections = function () {');
   chunks.push(
     '    return this._request("GET", "/helpers/connections").then((r: any) => r.data);',
+  );
+  chunks.push('  };');
+  chunks.push('');
+  chunks.push(
+    '  proto.estimateStepCost = function (stepType: string, step?: Record<string, unknown>, options?: { appId?: string; workflowId?: string }) {',
+  );
+  chunks.push(
+    '    return this._request("POST", "/helpers/step-cost-estimate", { step: { type: stepType, ...step }, ...options }).then((r: any) => r.data);',
   );
   chunks.push('  };');
   chunks.push('}');
@@ -1289,6 +1337,39 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
 
+  // --- Recommended workflow ---
+  lines.push('## Recommended workflow');
+  lines.push('');
+  lines.push(
+    'There are 150+ methods available. Do NOT try to read or load them all at once. Follow this discovery flow:',
+  );
+  lines.push('');
+  lines.push(
+    '1. **Discover** — Call `listSteps` (MCP tool) or `mindstudio list --summary` (CLI) to get a compact `{ method: description }` map of everything available (~3k tokens).',
+  );
+  lines.push(
+    '2. **Drill in** — Once you identify the right method, look up its full signature in the Methods reference below, or call `mindstudio info <method>` (CLI) for parameter details.',
+  );
+  lines.push(
+    '3. **Call it** — Invoke the method with the required parameters. All step methods share the same calling convention (see below).',
+  );
+  lines.push('');
+  lines.push('For specific use cases:');
+  lines.push('');
+  lines.push(
+    '- **Third-party integrations** (Slack, Google, HubSpot, etc.): Call `listConnectors()` to browse services → `getConnectorAction(serviceId, actionId)` for input fields → execute via `runFromConnectorRegistry`. Requires an OAuth connection set up in MindStudio first — call `listConnections()` to check available connections.',
+  );
+  lines.push(
+    '- **Pre-built agents**: Call `listAgents()` to see what\'s available → `runAgent({ appId })` to execute one. Agents are full workflows built in MindStudio — they can combine multiple steps, have custom logic, and maintain their own state.',
+  );
+  lines.push(
+    '- **Model selection**: Call `listModelsSummary()` or `listModelsSummaryByType("llm_chat")` to browse models, then pass the model ID as `modelOverride.model` to methods like `generateText`. Use the summary endpoints (not `listModels`) to keep token usage low.',
+  );
+  lines.push(
+    '- **Cost estimation**: Call `estimateStepCost(stepType, stepInput)` before expensive calls to preview pricing.',
+  );
+  lines.push('');
+
   // --- Install ---
   lines.push('## Install');
   lines.push('');
@@ -1322,7 +1403,10 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     'mindstudio generate-image --prompt "A sunset" --output-key imageUrl',
   );
   lines.push('');
-  lines.push('# List all available methods');
+  lines.push('# List all methods (compact JSON — best for LLM discovery)');
+  lines.push('mindstudio list --summary');
+  lines.push('');
+  lines.push('# List all methods (human-readable table)');
   lines.push('mindstudio list');
   lines.push('');
   lines.push('# Show method details (params, types, output)');
@@ -1368,7 +1452,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('## MCP server');
   lines.push('');
   lines.push(
-    'The package includes an MCP server exposing all methods as tools:',
+    'The package includes an MCP server exposing all methods as tools. Start by calling the `listSteps` tool to discover available methods.',
   );
   lines.push('');
   lines.push('```bash');
@@ -1743,6 +1827,38 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('    id: string;       // Connection ID to pass to connector actions');
   lines.push('    provider: string; // Integration provider (e.g. slack, google)');
   lines.push('    name: string;     // Display name or account identifier');
+  lines.push('  }[]');
+  lines.push('}');
+  lines.push('```');
+  lines.push('');
+  lines.push('#### `estimateStepCost(stepType, step?, options?)`');
+  lines.push(
+    'Estimate the cost of executing a step before running it. Pass the same step config you would use for execution.',
+  );
+  lines.push('');
+  lines.push('```typescript');
+  lines.push(
+    "const estimate = await agent.estimateStepCost('generateText', { message: 'Hello' });",
+  );
+  lines.push('```');
+  lines.push('');
+  lines.push('- `stepType`: string — The step method name (e.g. `"generateText"`).');
+  lines.push('- `step`: object — Optional step input parameters for more accurate estimates.');
+  lines.push(
+    '- `options`: `{ appId?: string, workflowId?: string }` — Optional context for pricing.',
+  );
+  lines.push('');
+  lines.push('Output:');
+  lines.push('```typescript');
+  lines.push('{');
+  lines.push('  costType?: string;  // "free" when the step has no cost');
+  lines.push('  estimates?: {');
+  lines.push('    eventType: string;       // Billing event type');
+  lines.push('    label: string;           // Human-readable cost label');
+  lines.push('    unitPrice: number;       // Price per unit in billing units');
+  lines.push('    unitType: string;        // What constitutes a unit (e.g. "token", "request")');
+  lines.push('    estimatedCost?: number;  // Estimated total cost, or null if not estimable');
+  lines.push('    quantity: number;        // Number of billable units');
   lines.push('  }[]');
   lines.push('}');
   lines.push('```');

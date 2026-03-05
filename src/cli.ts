@@ -9,7 +9,7 @@ Commands:
   whoami                      Show current authentication status
   <method> [json | --flags]   Execute a step method (shorthand for exec)
   exec <method> [json | --flags]   Execute a step method
-  list [--json]               List available methods
+  list [--json] [--summary]   List available methods (--summary for compact JSON)
   info <method>               Show method details (params, types, output)
   agents [--json]             List pre-built agents in your organization
   run <appId> [json | --flags]  Run a pre-built agent and wait for result
@@ -132,6 +132,7 @@ const HELPER_NAMES = new Set([
   'getConnector',
   'getConnectorAction',
   'listConnections',
+  'estimateStepCost',
 ]);
 
 const BUILTIN_COMMANDS = new Set([
@@ -180,10 +181,44 @@ async function getAllMethodKeys(): Promise<Set<string>> {
 // Commands
 // ---------------------------------------------------------------------------
 
-async function cmdList(asJson: boolean): Promise<void> {
+const HELPER_DESCRIPTIONS: Record<string, string> = {
+  listModels: 'List all available AI models.',
+  listModelsByType: 'List AI models filtered by type.',
+  listModelsSummary: 'List all AI models (summary: id, name, type, tags).',
+  listModelsSummaryByType: 'List AI models (summary) filtered by type.',
+  listConnectors: 'List available connector services and their actions.',
+  getConnector: 'Get details for a connector service.',
+  getConnectorAction: 'Get full configuration for a connector action.',
+  listConnections: 'List OAuth connections for the organization.',
+  estimateStepCost: 'Estimate the cost of executing a step before running it.',
+  listAgents: 'List all pre-built agents in the organization.',
+  runAgent: 'Run a pre-built agent and wait for the result.',
+};
+
+function buildSummary(
+  stepMetadata: Record<string, { description: string }>,
+): Record<string, string> {
+  const summary: Record<string, string> = {};
+  for (const [name, meta] of Object.entries(stepMetadata)) {
+    summary[name] = meta.description;
+  }
+  for (const [name, desc] of Object.entries(HELPER_DESCRIPTIONS)) {
+    summary[name] = desc;
+  }
+  return summary;
+}
+
+async function cmdList(
+  asJson: boolean,
+  asSummary: boolean,
+): Promise<void> {
   const { stepMetadata } = await import('./generated/metadata.js');
 
-  if (asJson) {
+  if (asSummary) {
+    process.stdout.write(
+      JSON.stringify(buildSummary(stepMetadata)) + '\n',
+    );
+  } else if (asJson) {
     const entries = Object.entries(stepMetadata).map(([name, meta]) => ({
       method: camelToKebab(name),
       description: meta.description,
@@ -223,6 +258,7 @@ async function cmdInfo(rawMethod: string): Promise<void> {
       getConnector: { desc: 'Get details for a connector service.', input: 'serviceId: string (required)', output: '{ service: ConnectorService }' },
       getConnectorAction: { desc: 'Get full configuration for a connector action.', input: 'serviceId: string, actionId: string (both required)', output: '{ action: ConnectorActionDetail }' },
       listConnections: { desc: 'List OAuth connections for the organization.', input: '(none)', output: '{ connections: Connection[] }' },
+      estimateStepCost: { desc: 'Estimate the cost of executing a step before running it.', input: 'stepType: string (required), step: object, appId?: string, workflowId?: string', output: '{ costType?: string, estimates?: StepCostEstimateEntry[] }' },
     };
     const h = helpers[method];
     process.stderr.write(`\n  ${camelToKebab(method)}\n\n`);
@@ -344,6 +380,15 @@ async function cmdExec(
     );
   } else if (method === 'listConnections') {
     result = await agent.listConnections();
+  } else if (method === 'estimateStepCost') {
+    result = await agent.estimateStepCost(
+      input.stepType as string,
+      input.step as Record<string, unknown> | undefined,
+      {
+        appId: input.appId as string | undefined,
+        workflowId: input.workflowId as string | undefined,
+      },
+    );
   } else {
     const { stepMetadata } = await import('./generated/metadata.js');
     const meta = stepMetadata[method];
@@ -907,6 +952,7 @@ async function main(): Promise<void> {
       workflow: { type: 'string' },
       version: { type: 'string' },
       json: { type: 'boolean', default: false },
+      summary: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
   });
@@ -947,7 +993,10 @@ async function main(): Promise<void> {
     }
 
     if (command === 'list') {
-      await cmdList(values.json as boolean);
+      await cmdList(
+        values.json as boolean,
+        values.summary as boolean,
+      );
       return;
     }
 
