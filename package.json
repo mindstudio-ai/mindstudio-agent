@@ -25,6 +25,7 @@
     "dev": "tsup --watch",
     "codegen": "tsx scripts/codegen.ts",
     "typecheck": "tsc --noEmit",
+    "postinstall": "node dist/postinstall.js || true",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },

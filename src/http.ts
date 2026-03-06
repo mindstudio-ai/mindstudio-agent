@@ -6,6 +6,7 @@ export interface HttpClientConfig {
   token: string;
   rateLimiter: RateLimiter;
   maxRetries: number;
+  agentName?: string;
 }
 
 export async function request<T>(
@@ -32,13 +33,18 @@ async function requestWithRetry<T>(
   body: unknown,
   attempt: number,
 ): Promise<{ data: T; headers: Headers }> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${config.token}`,
+    'Content-Type': 'application/json',
+    'User-Agent': '@mindstudio-ai/agent',
+  };
+  if (config.agentName) {
+    headers['X-Agent-Name'] = config.agentName;
+  }
+
   const res = await fetch(url, {
     method,
-    headers: {
-      Authorization: `Bearer ${config.token}`,
-      'Content-Type': 'application/json',
-      'User-Agent': '@mindstudio-ai/agent',
-    },
+    headers,
     body: body != null ? JSON.stringify(body) : undefined,
   });
 

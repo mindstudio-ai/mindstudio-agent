@@ -230,10 +230,12 @@ function sendError(
 export async function startMcpServer(options?: {
   apiKey?: string;
   baseUrl?: string;
+  agentName?: string;
 }): Promise<void> {
   let agent: MindStudioAgent | null = null;
   let metadata: Record<string, StepMetadata> | null = null;
   let tools: McpTool[] | null = null;
+  let mcpClientName: string | undefined;
 
   async function getMetadata(): Promise<Record<string, StepMetadata>> {
     if (!metadata) {
@@ -248,6 +250,7 @@ export async function startMcpServer(options?: {
       agent = new MindStudioAgent({
         apiKey: options?.apiKey,
         baseUrl: options?.baseUrl,
+        agentName: options?.agentName ?? mcpClientName,
         reuseThreadId: true,
       });
     }
@@ -275,6 +278,8 @@ export async function startMcpServer(options?: {
 
     switch (method) {
       case 'initialize':
+        mcpClientName =
+          (params as { clientInfo?: { name?: string } })?.clientInfo?.name;
         sendResult(id!, {
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: { tools: {} },

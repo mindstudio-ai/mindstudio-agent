@@ -16,7 +16,7 @@ export default defineConfig([
     },
   },
   {
-    entry: ['src/cli.ts'],
+    entry: ['src/cli.ts', 'src/postinstall.ts'],
     format: ['esm'],
     dts: false,
     clean: false,

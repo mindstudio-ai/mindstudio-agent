@@ -18,6 +18,7 @@ Commands:
 Options:
   --api-key <key>          API key (or set MINDSTUDIO_API_KEY env)
   --base-url <url>         API base URL
+  --agent-name <name>      Name shown in request logs (or set MINDSTUDIO_AGENT_NAME)
   --app-id <id>            App ID for thread context
   --thread-id <id>         Thread ID for state persistence
   --output-key <key>       Extract a single field from the result
@@ -338,6 +339,7 @@ async function cmdExec(
   options: {
     apiKey?: string;
     baseUrl?: string;
+    agentName?: string;
     appId?: string;
     threadId?: string;
     outputKey?: string;
@@ -355,6 +357,7 @@ async function cmdExec(
   const agent = new MindStudioAgent({
     apiKey: options.apiKey,
     baseUrl: options.baseUrl,
+    agentName: options.agentName,
   }) as any;
 
   let result: unknown;
@@ -425,12 +428,13 @@ async function cmdExec(
 
 async function cmdAgents(
   asJson: boolean,
-  options: { apiKey?: string; baseUrl?: string },
+  options: { apiKey?: string; baseUrl?: string; agentName?: string },
 ): Promise<void> {
   const { MindStudioAgent } = await import('./client.js');
   const agent = new MindStudioAgent({
     apiKey: options.apiKey,
     baseUrl: options.baseUrl,
+    agentName: options.agentName,
   });
 
   const result = await agent.listAgents();
@@ -462,6 +466,7 @@ async function cmdRun(
   options: {
     apiKey?: string;
     baseUrl?: string;
+    agentName?: string;
     workflow?: string;
     version?: string;
     outputKey?: string;
@@ -472,6 +477,7 @@ async function cmdRun(
   const agent = new MindStudioAgent({
     apiKey: options.apiKey,
     baseUrl: options.baseUrl,
+    agentName: options.agentName,
   });
 
   const result = await agent.runAgent({
@@ -875,6 +881,7 @@ function parseStepFlags(argv: string[]): Record<string, unknown> {
 const GLOBAL_STRING_FLAGS = new Set([
   '--api-key',
   '--base-url',
+  '--agent-name',
   '--app-id',
   '--thread-id',
   '--output-key',
@@ -945,6 +952,7 @@ async function main(): Promise<void> {
     options: {
       'api-key': { type: 'string' },
       'base-url': { type: 'string' },
+      'agent-name': { type: 'string' },
       'app-id': { type: 'string' },
       'thread-id': { type: 'string' },
       'output-key': { type: 'string' },
@@ -957,9 +965,31 @@ async function main(): Promise<void> {
     },
   });
 
-  if (values.help || positionals.length === 0) {
+  if (values.help) {
     printHelp();
-    process.exit(positionals.length === 0 ? 1 : 0);
+    process.exit(0);
+  }
+
+  if (positionals.length === 0) {
+    // If not authenticated, prompt login instead of showing help
+    const hasAuth =
+      values['api-key'] ||
+      process.env.MINDSTUDIO_API_KEY ||
+      process.env.CALLBACK_TOKEN;
+
+    if (!hasAuth) {
+      const { loadConfig } = await import('./config.js');
+      const config = loadConfig();
+      if (!config.apiKey) {
+        await cmdLogin({
+          baseUrl: values['base-url'] as string | undefined,
+        });
+        return;
+      }
+    }
+
+    printHelp();
+    process.exit(1);
   }
 
   const command = positionals[0];
@@ -1004,6 +1034,7 @@ async function main(): Promise<void> {
       await cmdAgents(values.json as boolean, {
         apiKey: values['api-key'] as string | undefined,
         baseUrl: values['base-url'] as string | undefined,
+        agentName: values['agent-name'] as string | undefined,
       });
       return;
     }
@@ -1059,6 +1090,7 @@ async function main(): Promise<void> {
       await cmdRun(appId, variables, {
         apiKey: values['api-key'] as string | undefined,
         baseUrl: values['base-url'] as string | undefined,
+        agentName: values['agent-name'] as string | undefined,
         workflow: values.workflow as string | undefined,
         version: values.version as string | undefined,
         outputKey: values['output-key'] as string | undefined,
@@ -1072,6 +1104,7 @@ async function main(): Promise<void> {
       await startMcpServer({
         apiKey: values['api-key'] as string | undefined,
         baseUrl: values['base-url'] as string | undefined,
+        agentName: values['agent-name'] as string | undefined,
       });
       return;
     }
@@ -1125,6 +1158,7 @@ async function main(): Promise<void> {
     await cmdExec(method, input, {
       apiKey: values['api-key'] as string | undefined,
       baseUrl: values['base-url'] as string | undefined,
+      agentName: values['agent-name'] as string | undefined,
       appId: values['app-id'] as string | undefined,
       threadId: values['thread-id'] as string | undefined,
       outputKey: values['output-key'] as string | undefined,

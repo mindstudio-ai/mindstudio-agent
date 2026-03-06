@@ -1499,6 +1499,9 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push(
     '  maxRetries?: number, // Retries on 429 rate limit (default: 3). Uses Retry-After header for delay.',
   );
+  lines.push(
+    '  agentName?: string,  // Name shown in your MindStudio request logs. Can be anything — app name, bot persona, etc. Falls back to MINDSTUDIO_AGENT_NAME env, then os.hostname().',
+  );
   lines.push('})');
   lines.push('```');
   lines.push('');
