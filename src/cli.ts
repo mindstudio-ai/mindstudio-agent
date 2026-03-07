@@ -1458,6 +1458,10 @@ async function main(): Promise<void> {
           '',
           'Tip: run "mindstudio list-actions" to see available actions.',
         ]);
+      const allKeys = await getAllMethodKeys();
+      const resolvedMethod = resolveMethodOrFail(stepMethod, allKeys);
+      const { stepMetadata } = await import('./generated/metadata.js');
+      const meta = stepMetadata[resolvedMethod];
       const costArgv = positionals.slice(2);
       let costInput: Record<string, unknown>;
       const firstArg = costArgv[0];
@@ -1470,7 +1474,7 @@ async function main(): Promise<void> {
       } else {
         costInput = parseStepFlags(costArgv);
       }
-      await cmdEstimateStepCost(stepMethod, costInput, {
+      await cmdEstimateStepCost(meta.stepType, costInput, {
         apiKey: values['api-key'] as string | undefined,
         baseUrl: values['base-url'] as string | undefined,
       });
