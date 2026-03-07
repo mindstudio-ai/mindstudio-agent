@@ -1,10 +1,9 @@
 import { MindStudioAgent as _MindStudioAgent } from './client.js';
 import type { StepMethods } from './generated/steps.js';
-import type { HelperMethods } from './generated/helpers.js';
 import type { AgentOptions } from './types.js';
 
-/** MindStudioAgent with all generated step and helper methods. */
-export type MindStudioAgent = _MindStudioAgent & StepMethods & HelperMethods;
+/** MindStudioAgent with all generated step methods. */
+export type MindStudioAgent = _MindStudioAgent & StepMethods;
 
 /** {@inheritDoc MindStudioAgent} */
 export const MindStudioAgent = _MindStudioAgent as unknown as {
@@ -19,14 +18,22 @@ export type {
   StepExecutionMeta,
   AgentInfo,
   ListAgentsResult,
+  UserInfoResult,
   RunAgentOptions,
   RunAgentResult,
+  MindStudioModel,
+  MindStudioModelSummary,
+  ModelType,
+  ConnectorService,
+  ConnectorActionDetail,
+  Connection,
+  StepCostEstimateEntry,
+  UploadFileResult,
 } from './types.js';
 
 // Re-export all generated types
 export * from './generated/types.js';
 export type { StepMethods } from './generated/steps.js';
-export type { HelperMethods, MindStudioModel, ModelType, StepCostEstimateEntry } from './generated/helpers.js';
 export {
   monacoSnippets,
   blockTypeAliases,

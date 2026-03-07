@@ -5,7 +5,7 @@
  * Fetches the OpenAPI spec from the MindStudio API and generates:
  *   - src/generated/types.ts   — TypeScript interfaces for every step's input & output
  *   - src/generated/steps.ts   — Module augmentation adding typed methods to MindStudioAgent
- *   - src/generated/helpers.ts — Module augmentation adding helper methods (models, connectors)
+ *   - src/generated/helpers.ts — (REMOVED — helpers are now hand-written in client.ts)
  *
  * Usage:
  *   npm run codegen                                         # uses MINDSTUDIO_BASE_URL or localhost
@@ -551,402 +551,6 @@ function generateSteps(steps: StepInfo[]): string {
 }
 
 // ---------------------------------------------------------------------------
-// Generate src/generated/helpers.ts
-// ---------------------------------------------------------------------------
-
-function generateHelpers(spec: OpenAPISpec): string {
-  const chunks: string[] = [HEADER, ''];
-
-  // Model type (from the models endpoint response schema)
-  const modelsOp = spec.paths['/developer/v2/helpers/models']?.get;
-  if (modelsOp) {
-    const modelSchema =
-      modelsOp.responses['200']?.content?.['application/json']?.schema
-        ?.properties?.models?.items;
-
-    if (modelSchema) {
-      chunks.push('/** An AI model available on MindStudio. */');
-      chunks.push(
-        `export interface MindStudioModel ${schemaToTs(modelSchema, '')}`,
-      );
-      chunks.push('');
-    }
-  }
-
-  // Model summary type (from models-summary endpoint)
-  const modelsSummaryOp =
-    spec.paths['/developer/v2/helpers/models-summary']?.get;
-  if (modelsSummaryOp) {
-    const summarySchema =
-      modelsSummaryOp.responses['200']?.content?.['application/json']?.schema
-        ?.properties?.models?.items;
-
-    if (summarySchema) {
-      chunks.push('/** A lightweight AI model summary. */');
-      chunks.push(
-        `export interface MindStudioModelSummary ${schemaToTs(summarySchema, '')}`,
-      );
-      chunks.push('');
-    }
-  }
-
-  // Connector service type (from connectors endpoint)
-  const connectorsOp = spec.paths['/developer/v2/helpers/connectors']?.get;
-  if (connectorsOp) {
-    const serviceSchema =
-      connectorsOp.responses['200']?.content?.['application/json']?.schema
-        ?.properties?.services?.items;
-
-    if (serviceSchema) {
-      chunks.push('/** A connector service with its available actions. */');
-      chunks.push(
-        `export interface ConnectorService ${schemaToTs(serviceSchema, '')}`,
-      );
-      chunks.push('');
-    }
-  }
-
-  // Connector action detail type (from connectors/{serviceId}/{actionId} endpoint)
-  const connectorActionOp =
-    spec.paths['/developer/v2/helpers/connectors/{serviceId}/{actionId}']?.get;
-  if (connectorActionOp) {
-    const actionSchema =
-      connectorActionOp.responses['200']?.content?.['application/json']?.schema
-        ?.properties?.action;
-
-    if (actionSchema) {
-      chunks.push(
-        '/** Full configuration details for a connector action. */',
-      );
-      chunks.push(
-        `export interface ConnectorActionDetail ${schemaToTs(actionSchema, '')}`,
-      );
-      chunks.push('');
-    }
-  }
-
-  // Connection type (from connections endpoint)
-  const connectionsOp = spec.paths['/developer/v2/helpers/connections']?.get;
-  if (connectionsOp) {
-    const connectionSchema =
-      connectionsOp.responses['200']?.content?.['application/json']?.schema
-        ?.properties?.connections?.items;
-
-    if (connectionSchema) {
-      chunks.push(
-        '/** An OAuth connection to a third-party service. */',
-      );
-      chunks.push(
-        `export interface Connection ${schemaToTs(connectionSchema, '')}`,
-      );
-      chunks.push('');
-    }
-  }
-
-  // Step cost estimate type (from step-cost-estimate endpoint)
-  const stepCostOp =
-    spec.paths['/developer/v2/helpers/step-cost-estimate']?.post;
-  if (stepCostOp) {
-    const estimateSchema =
-      stepCostOp.responses['200']?.content?.['application/json']?.schema
-        ?.properties?.estimates?.items;
-
-    if (estimateSchema) {
-      chunks.push('/** A single cost estimate entry for a step. */');
-      chunks.push(
-        `export interface StepCostEstimateEntry ${schemaToTs(estimateSchema, '')}`,
-      );
-      chunks.push('');
-    }
-  }
-
-  // Model type enum
-  chunks.push('/** Supported model type categories for filtering. */');
-  chunks.push(
-    `export type ModelType = "llm_chat" | "image_generation" | "video_generation" | "video_analysis" | "text_to_speech" | "vision" | "transcription";`,
-  );
-  chunks.push('');
-
-  // Interface with all helper methods
-  chunks.push('export interface HelperMethods {');
-  chunks.push('  /**');
-  chunks.push('   * List all available AI models.');
-  chunks.push('   *');
-  chunks.push(
-    '   * Returns models across all categories (chat, image generation, video, etc.).',
-  );
-  chunks.push('   * Use `listModelsByType()` to filter by category.');
-  chunks.push('   */');
-  chunks.push('  listModels(): Promise<{ models: MindStudioModel[] }>;');
-  chunks.push('');
-  chunks.push('  /**');
-  chunks.push('   * List AI models filtered by type.');
-  chunks.push('   *');
-  chunks.push(
-    '   * @param modelType - The category to filter by (e.g. "llm_chat", "image_generation").',
-  );
-  chunks.push('   */');
-  chunks.push(
-    '  listModelsByType(modelType: ModelType): Promise<{ models: MindStudioModel[] }>;',
-  );
-  chunks.push('');
-  chunks.push('  /**');
-  chunks.push(
-    '   * List all available AI models (summary). Returns only id, name, type, and tags.',
-  );
-  chunks.push('   *');
-  chunks.push(
-    '   * Suitable for display or consumption inside a model context window.',
-  );
-  chunks.push('   */');
-  chunks.push(
-    '  listModelsSummary(): Promise<{ models: MindStudioModelSummary[] }>;',
-  );
-  chunks.push('');
-  chunks.push('  /**');
-  chunks.push('   * List AI models (summary) filtered by type.');
-  chunks.push('   *');
-  chunks.push(
-    '   * @param modelType - The category to filter by (e.g. "llm_chat", "image_generation").',
-  );
-  chunks.push('   */');
-  chunks.push(
-    '  listModelsSummaryByType(modelType: ModelType): Promise<{ models: MindStudioModelSummary[] }>;',
-  );
-  chunks.push('');
-  chunks.push('  /**');
-  chunks.push(
-    '   * List all available connector services (Slack, Google, HubSpot, etc.).',
-  );
-  chunks.push('   */');
-  chunks.push(
-    '  listConnectors(): Promise<{ services: ConnectorService[] }>;',
-  );
-  chunks.push('');
-  chunks.push('  /**');
-  chunks.push('   * Get details for a single connector service.');
-  chunks.push('   *');
-  chunks.push('   * @param serviceId - The connector service ID.');
-  chunks.push('   */');
-  chunks.push(
-    '  getConnector(serviceId: string): Promise<{ service: ConnectorService }>;',
-  );
-  chunks.push('');
-  chunks.push('  /**');
-  chunks.push(
-    '   * Get the full configuration for a connector action, including input fields.',
-  );
-  chunks.push('   *');
-  chunks.push('   * @param serviceId - The connector service ID.');
-  chunks.push(
-    '   * @param actionId - The full action ID including service prefix (e.g. "slack/send-message").',
-  );
-  chunks.push('   */');
-  chunks.push(
-    '  getConnectorAction(serviceId: string, actionId: string): Promise<{ action: ConnectorActionDetail }>;',
-  );
-  chunks.push('');
-  chunks.push('  /**');
-  chunks.push(
-    '   * List OAuth connections for the organization.',
-  );
-  chunks.push('   *');
-  chunks.push(
-    '   * Returns the third-party services the caller\'s organization has OAuth connections for.',
-  );
-  chunks.push(
-    '   * Use the returned connection IDs when calling connector actions.',
-  );
-  chunks.push('   */');
-  chunks.push(
-    '  listConnections(): Promise<{ connections: Connection[] }>;',
-  );
-  chunks.push('');
-  chunks.push('  /**');
-  chunks.push(
-    '   * Estimate the cost of executing a step before running it.',
-  );
-  chunks.push('   *');
-  chunks.push(
-    '   * Pass the same step config you would use for execution.',
-  );
-  chunks.push('   *');
-  chunks.push(
-    '   * @param stepType - The step type name (e.g. "generateText").',
-  );
-  chunks.push(
-    '   * @param step - The step input parameters.',
-  );
-  chunks.push(
-    '   * @param options - Optional appId and workflowId for context-specific pricing.',
-  );
-  chunks.push('   */');
-  chunks.push(
-    '  estimateStepCost(stepType: string, step?: Record<string, unknown>, options?: { appId?: string; workflowId?: string }): Promise<{ costType?: string; estimates?: StepCostEstimateEntry[] }>;',
-  );
-  chunks.push('');
-  chunks.push('  /**');
-  chunks.push(
-    '   * Update the display name of the authenticated agent.',
-  );
-  chunks.push('   *');
-  chunks.push(
-    '   * Useful for agents to set their own name after connecting.',
-  );
-  chunks.push('   *');
-  chunks.push(
-    '   * @param displayName - The new display name.',
-  );
-  chunks.push('   */');
-  chunks.push(
-    '  changeName(displayName: string): Promise<void>;',
-  );
-  chunks.push('');
-  chunks.push('  /**');
-  chunks.push(
-    '   * Update the profile picture of the authenticated agent.',
-  );
-  chunks.push('   *');
-  chunks.push(
-    '   * Useful for agents to set their own avatar after connecting.',
-  );
-  chunks.push('   *');
-  chunks.push(
-    '   * @param profilePictureUrl - URL of the new profile picture.',
-  );
-  chunks.push('   */');
-  chunks.push(
-    '  changeProfilePicture(profilePictureUrl: string): Promise<void>;',
-  );
-  chunks.push('');
-  chunks.push('  /**');
-  chunks.push(
-    '   * Upload a file to the MindStudio CDN.',
-  );
-  chunks.push('   *');
-  chunks.push(
-    '   * Gets a signed upload URL, PUTs the file content, and returns the permanent public URL.',
-  );
-  chunks.push('   *');
-  chunks.push(
-    '   * @param content - File content as a Buffer or Uint8Array.',
-  );
-  chunks.push(
-    '   * @param options - Upload options.',
-  );
-  chunks.push(
-    '   * @param options.extension - File extension without the dot (e.g. "png", "jpg", "mp4").',
-  );
-  chunks.push(
-    '   * @param options.type - MIME type of the file (e.g. "image/png"). Determines which CDN subdomain is used.',
-  );
-  chunks.push('   */');
-  chunks.push(
-    '  uploadFile(content: Buffer | Uint8Array, options: { extension: string; type?: string }): Promise<{ url: string }>;',
-  );
-  chunks.push('}');
-  chunks.push('');
-
-  // Runtime method attachment
-  chunks.push(
-    '/** @internal Attaches helper methods to the MindStudioAgent prototype. */',
-  );
-  chunks.push(
-    'export function applyHelperMethods(AgentClass: new (...args: any[]) => any): void {',
-  );
-  chunks.push('  const proto = AgentClass.prototype;');
-  chunks.push('');
-  chunks.push('  proto.listModels = function () {');
-  chunks.push(
-    '    return this._request("GET", "/helpers/models").then((r: any) => r.data);',
-  );
-  chunks.push('  };');
-  chunks.push('');
-  chunks.push('  proto.listModelsByType = function (modelType: string) {');
-  chunks.push(
-    '    return this._request("GET", `/helpers/models/${modelType}`).then((r: any) => r.data);',
-  );
-  chunks.push('  };');
-  chunks.push('');
-  chunks.push('  proto.listModelsSummary = function () {');
-  chunks.push(
-    '    return this._request("GET", "/helpers/models-summary").then((r: any) => r.data);',
-  );
-  chunks.push('  };');
-  chunks.push('');
-  chunks.push(
-    '  proto.listModelsSummaryByType = function (modelType: string) {',
-  );
-  chunks.push(
-    '    return this._request("GET", `/helpers/models-summary/${modelType}`).then((r: any) => r.data);',
-  );
-  chunks.push('  };');
-  chunks.push('');
-  chunks.push('  proto.listConnectors = function () {');
-  chunks.push(
-    '    return this._request("GET", "/helpers/connectors").then((r: any) => r.data);',
-  );
-  chunks.push('  };');
-  chunks.push('');
-  chunks.push('  proto.getConnector = function (serviceId: string) {');
-  chunks.push(
-    '    return this._request("GET", `/helpers/connectors/${serviceId}`).then((r: any) => r.data);',
-  );
-  chunks.push('  };');
-  chunks.push('');
-  chunks.push(
-    '  proto.getConnectorAction = function (serviceId: string, actionId: string) {',
-  );
-  chunks.push(
-    '    return this._request("GET", `/helpers/connectors/${serviceId}/${actionId}`).then((r: any) => r.data);',
-  );
-  chunks.push('  };');
-  chunks.push('');
-  chunks.push('  proto.listConnections = function () {');
-  chunks.push(
-    '    return this._request("GET", "/helpers/connections").then((r: any) => r.data);',
-  );
-  chunks.push('  };');
-  chunks.push('');
-  chunks.push(
-    '  proto.estimateStepCost = function (stepType: string, step?: Record<string, unknown>, options?: { appId?: string; workflowId?: string }) {',
-  );
-  chunks.push(
-    '    return this._request("POST", "/helpers/step-cost-estimate", { step: { type: stepType, ...step }, ...options }).then((r: any) => r.data);',
-  );
-  chunks.push('  };');
-  chunks.push('');
-  chunks.push('  proto.changeName = function (displayName: string) {');
-  chunks.push(
-    '    return this._request("POST", "/account/change-name", { displayName }).then(() => {});',
-  );
-  chunks.push('  };');
-  chunks.push('');
-  chunks.push('  proto.changeProfilePicture = function (profilePictureUrl: string) {');
-  chunks.push(
-    '    return this._request("POST", "/account/change-profile-picture", { profilePictureUrl }).then(() => {});',
-  );
-  chunks.push('  };');
-  chunks.push('');
-  chunks.push('  proto.uploadFile = async function (content: Buffer | Uint8Array, options: { extension: string; type?: string }) {');
-  chunks.push('    const { data } = await this._request("POST", "/account/upload", { extension: options.extension, ...(options.type != null && { type: options.type }) });');
-  chunks.push('    const { uploadUrl, url } = data as { uploadUrl: string; url: string };');
-  chunks.push('    const buf = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer;');
-  chunks.push('    const res = await fetch(uploadUrl, {');
-  chunks.push('      method: "PUT",');
-  chunks.push('      body: buf,');
-  chunks.push('      headers: options.type ? { "Content-Type": options.type } : {},');
-  chunks.push('    });');
-  chunks.push('    if (!res.ok) throw new Error(`Upload failed: ${res.status} ${res.statusText}`);');
-  chunks.push('    return { url };');
-  chunks.push('  };');
-  chunks.push('}');
-  chunks.push('');
-
-  return chunks.join('\n');
-}
-
-// ---------------------------------------------------------------------------
 // Generate src/generated/snippets.ts
 // ---------------------------------------------------------------------------
 
@@ -1426,35 +1030,35 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('## Recommended workflow');
   lines.push('');
   lines.push(
-    'There are 150+ methods available. Do NOT try to read or load them all at once. Follow this discovery flow:',
+    'There are 150+ actions available. Do NOT try to read or load them all at once. Follow this discovery flow:',
   );
   lines.push('');
   lines.push(
     '1. **Identify yourself** — Call `changeName` to set your display name (use your name or whatever your user calls you). If you have a profile picture or icon, call `uploadFile` to upload it, then `changeProfilePicture` with the returned URL. This helps users identify your requests in their logs.',
   );
   lines.push(
-    '2. **Discover** — Call `listSteps` (MCP tool) or `mindstudio list --summary` (CLI) to get a compact `{ method: description }` map of everything available (~3k tokens).',
+    '2. **Discover** — Call `listActions` (MCP tool) or `mindstudio list-actions --summary` (CLI) to get a compact `{ action: description }` map of everything available (~3k tokens).',
   );
   lines.push(
-    '3. **Drill in** — Once you identify the right method, look up its full signature in the Methods reference below, or call `mindstudio info <method>` (CLI) for parameter details.',
+    '3. **Drill in** — Once you identify the right action, look up its full signature in the reference below, or call `mindstudio info <action>` (CLI) for parameter details.',
   );
   lines.push(
-    '4. **Call it** — Invoke the method with the required parameters. All step methods share the same calling convention (see below).',
+    '4. **Call it** — Invoke the action with the required parameters. All actions share the same calling convention (see below).',
   );
   lines.push('');
   lines.push('For specific use cases:');
   lines.push('');
   lines.push(
-    '- **Third-party integrations** (Slack, Google, HubSpot, etc.): Call `listConnectors()` to browse services → `getConnectorAction(serviceId, actionId)` for input fields → execute via `runFromConnectorRegistry`. Requires an OAuth connection set up in MindStudio first — call `listConnections()` to check available connections.',
+    '- **OAuth third-party integrations** (Slack, Google, HubSpot, etc.): These are optional OAuth connectors from the MindStudio Connector Registry — for most tasks, use actions directly instead. If you need a third-party integration: call `listConnectors()` to browse services → `getConnectorAction(serviceId, actionId)` for input fields → execute via `runFromConnectorRegistry`. Requires an OAuth connection set up in MindStudio first — call `listConnections()` to check available connections.',
   );
   lines.push(
     '- **Pre-built agents**: Call `listAgents()` to see what\'s available → `runAgent({ appId })` to execute one. **Important:** Not all agents are configured for API use. Do not try to run an agent just because it appears in the list — only run agents the user specifically asks you to run.',
   );
   lines.push(
-    '- **Model selection**: Call `listModelsSummary()` or `listModelsSummaryByType("llm_chat")` to browse models, then pass the model ID as `modelOverride.model` to methods like `generateText`. Use the summary endpoints (not `listModels`) to keep token usage low.',
+    '- **Model selection**: Call `listModelsSummary()` or `listModelsSummaryByType("llm_chat")` to browse models, then pass the model ID as `modelOverride.model` to actions like `generateText`. Use the summary endpoints (not `listModels`) to keep token usage low.',
   );
   lines.push(
-    '- **Cost estimation**: AI-powered steps (text generation, image generation, video, audio, etc.) cost money. Call `estimateStepCost(stepType, stepInput)` before running these and confirm with the user before proceeding — unless they\'ve explicitly given permission to go ahead. Non-AI steps (data lookups, connectors, etc.) are generally free.',
+    '- **Cost estimation**: AI-powered actions (text generation, image generation, video, audio, etc.) cost money. Call `estimateStepCost(stepType, stepInput)` before running these and confirm with the user before proceeding — unless they\'ve explicitly given permission to go ahead. Non-AI actions (data lookups, OAuth connectors, etc.) are generally free.',
   );
   lines.push('');
 
@@ -1717,7 +1321,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   // --- Low-level access ---
   lines.push('## Low-level access');
   lines.push('');
-  lines.push('For step types not covered by generated methods:');
+  lines.push('For action types not covered by generated methods:');
   lines.push('```typescript');
   lines.push(
     "const result = await agent.executeStep('stepType', { ...params });",
@@ -1859,7 +1463,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('#### `listConnectors()`');
   lines.push(
-    'List available connector services (Slack, Google, HubSpot, etc.) and their actions.',
+    'List available OAuth connector services (Slack, Google, HubSpot, etc.) and their actions. These are third-party integrations — for most tasks, use actions directly instead.',
   );
   lines.push('');
   lines.push('Output:');
@@ -1875,7 +1479,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('```');
   lines.push('');
   lines.push('#### `getConnector(serviceId)`');
-  lines.push('Get details for a single connector service by ID.');
+  lines.push('Get details for a single OAuth connector service by ID.');
   lines.push('');
   lines.push('Output:');
   lines.push('```typescript');
@@ -1891,7 +1495,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('#### `getConnectorAction(serviceId, actionId)`');
   lines.push(
-    'Get the full configuration for a connector action, including all input fields needed to call it via `runFromConnectorRegistry`. Connectors are sourced from the open-source MindStudio Connector Registry (MSCR) with 850+ connector actions across third-party services.',
+    'Get the full configuration for an OAuth connector action, including all input fields needed to call it via `runFromConnectorRegistry`. OAuth connectors are sourced from the open-source MindStudio Connector Registry (MSCR) with 850+ actions across third-party services.',
   );
   lines.push('');
   lines.push('Output:');
@@ -1911,7 +1515,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('#### `listConnections()`');
   lines.push(
-    'List OAuth connections for the organization. Use the returned connection IDs when calling connector actions. Connectors require the user to connect to the third-party service in MindStudio before they can be used.',
+    'List OAuth connections for the organization (authenticated third-party service links). Use the returned connection IDs when calling OAuth connector actions. Connectors require the user to connect to the third-party service in MindStudio before they can be used.',
   );
   lines.push('');
   lines.push('Output:');
@@ -1936,8 +1540,8 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('```');
   lines.push('');
-  lines.push('- `stepType`: string — The step method name (e.g. `"generateText"`).');
-  lines.push('- `step`: object — Optional step input parameters for more accurate estimates.');
+  lines.push('- `stepType`: string — The action name (e.g. `"generateText"`).');
+  lines.push('- `step`: object — Optional action input parameters for more accurate estimates.');
   lines.push(
     '- `options`: `{ appId?: string, workflowId?: string }` — Optional context for pricing.',
   );
@@ -2009,7 +1613,6 @@ async function main() {
   // Generate files
   const typesContent = generateTypes(steps, spec.definitions);
   const stepsContent = generateSteps(steps);
-  const helpersContent = generateHelpers(spec);
   const snippetsContent = generateSnippets(steps);
   const metadataContent = generateMetadata(steps, spec.definitions);
   const llmsTxtContent = generateLlmsTxt(steps);
@@ -2019,9 +1622,6 @@ async function main() {
 
   writeFileSync(resolve(GENERATED_DIR, 'steps.ts'), stepsContent);
   console.log(`Wrote src/generated/steps.ts`);
-
-  writeFileSync(resolve(GENERATED_DIR, 'helpers.ts'), helpersContent);
-  console.log(`Wrote src/generated/helpers.ts`);
 
   writeFileSync(resolve(GENERATED_DIR, 'snippets.ts'), snippetsContent);
   console.log(`Wrote src/generated/snippets.ts`);

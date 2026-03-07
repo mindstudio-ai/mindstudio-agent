@@ -3,44 +3,62 @@ import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { extname } from 'node:path';
 
-const HELP = `Usage: mindstudio <command | method> [options]
+const HELP = `Usage: mindstudio <command> [options]
 
-Commands:
-  login                       Authenticate with MindStudio (opens browser)
-  logout                      Clear stored credentials
-  whoami                      Show current authentication status
-  upload <filepath>             Upload a file to the MindStudio CDN
-  <method> [json | --flags]   Execute a step method (shorthand for exec)
-  exec <method> [json | --flags]   Execute a step method
-  list [--json] [--summary]   List available methods (--summary for compact JSON)
-  info <method>               Show method details (params, types, output)
-  agents [--json]             List pre-built agents in your organization
-  run <appId> [json | --flags]  Run a pre-built agent and wait for result
-  mcp                         Start MCP server (JSON-RPC over stdio)
+Run actions:
+  <action> [json | --flags]            Run an action directly
+  run <action> [json | --flags]        Run an action (explicit form)
+  estimate-cost <action> [json]        Estimate cost before running
+
+Discover:
+  list-actions [--json] [--summary]    List all available actions
+  info <action>                        Show action details and parameters
+  list-models [--type <t>] [--summary] List available AI models
+
+Pre-built agents:
+  agents [--json]                      List agents in your organization
+  run-agent <appId> [json | --flags]   Run an agent and wait for result
+
+Account:
+  login                                Authenticate with MindStudio
+  logout                               Clear stored credentials
+  whoami                               Show current user and organization
+  change-name <name>                   Update your display name
+  change-profile-picture <url>         Update your profile picture
+  upload <filepath>                    Upload a file to the MindStudio CDN
+
+OAuth integrations:
+  list-connectors [<id> [<actionId>]]  Browse OAuth connector services
+  list-connections                     List your OAuth connections
+
+Other:
+  mcp                                  Start MCP server (JSON-RPC over stdio)
 
 Options:
-  --api-key <key>          API key (or set MINDSTUDIO_API_KEY env)
-  --base-url <url>         API base URL
-  --app-id <id>            App ID for thread context
-  --thread-id <id>         Thread ID for state persistence
-  --output-key <key>       Extract a single field from the result
-  --no-meta                Strip $-prefixed metadata from output
-  --workflow <name>        Workflow to execute (run command)
-  --version <ver>          App version override, e.g. "draft" (run command)
-  --json                   Output as JSON (list/agents only)
-  --help                   Show this help
+  --api-key <key>    API key (or set MINDSTUDIO_API_KEY env var)
+  --base-url <url>   API base URL override
+  --app-id <id>      App ID for thread context
+  --thread-id <id>   Thread ID for state persistence
+  --output-key <key> Extract a single field from the result
+  --no-meta          Strip $-prefixed metadata from output
+  --workflow <name>  Workflow to execute (run-agent only)
+  --version <ver>    App version, e.g. "draft" (run-agent only)
+  --json             Output as JSON
+  --summary          Compact output (list-actions, list-models)
+  --type <type>      Filter by model type (list-models)
+  --help             Show this help
 
 Examples:
-  mindstudio login
   mindstudio generate-image --prompt "a sunset"
-  mindstudio generate-image --prompt "a sunset" --output-key imageUrl
   mindstudio generate-text --message "hello" --no-meta
-  mindstudio generate-image '{"prompt":"a sunset"}'
+  mindstudio generate-image '{"prompt":"a sunset"}' --output-key imageUrl
   echo '{"query":"test"}' | mindstudio search-google
+  mindstudio estimate-cost generate-image --prompt "a sunset"
+  mindstudio list-actions --summary
   mindstudio info generate-image
-  mindstudio list --json
+  mindstudio list-models --type image_generation
+  mindstudio run-agent <appId> --query "hello"
   mindstudio agents
-  mindstudio run <appId> --query "hello"
   mindstudio mcp
 `;
 
@@ -126,31 +144,28 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf-8').trim();
 }
 
-const HELPER_NAMES = new Set([
-  'listModels',
-  'listModelsByType',
-  'listModelsSummary',
-  'listModelsSummaryByType',
-  'listConnectors',
-  'getConnector',
-  'getConnectorAction',
-  'listConnections',
-  'estimateStepCost',
-  'changeName',
-  'changeProfilePicture',
-]);
-
 const BUILTIN_COMMANDS = new Set([
-  'exec',
-  'list',
+  'run',
+  'list-actions',
   'info',
   'mcp',
   'agents',
-  'run',
+  'run-agent',
   'upload',
   'login',
   'logout',
   'whoami',
+  'list-models',
+  'list-models-by-type',
+  'list-models-summary',
+  'list-models-summary-by-type',
+  'list-connectors',
+  'get-connector',
+  'get-connector-action',
+  'list-connections',
+  'estimate-cost',
+  'change-name',
+  'change-profile-picture',
 ]);
 
 /**
@@ -177,34 +192,18 @@ function resolveMethodOrFail(name: string, metadataKeys: Set<string>): string {
 
   const suggestion = bestDist <= 3 ? ` Did you mean '${bestMatch}'?` : '';
   fatal(
-    `Unknown method: ${name}.${suggestion} Run 'mindstudio list' to see available methods.`,
+    `Unknown action: ${name}.${suggestion} Run 'mindstudio list-actions' to see available actions.`,
   );
 }
 
 async function getAllMethodKeys(): Promise<Set<string>> {
   const { stepMetadata } = await import('./generated/metadata.js');
-  return new Set([...Object.keys(stepMetadata), ...HELPER_NAMES]);
+  return new Set(Object.keys(stepMetadata));
 }
 
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
-
-const HELPER_DESCRIPTIONS: Record<string, string> = {
-  listModels: 'List all available AI models.',
-  listModelsByType: 'List AI models filtered by type.',
-  listModelsSummary: 'List all AI models (summary: id, name, type, tags).',
-  listModelsSummaryByType: 'List AI models (summary) filtered by type.',
-  listConnectors: 'List available connector services and their actions.',
-  getConnector: 'Get details for a connector service.',
-  getConnectorAction: 'Get full configuration for a connector action.',
-  listConnections: 'List OAuth connections for the organization.',
-  estimateStepCost: 'Estimate the cost of executing a step before running it.',
-  changeName: 'Update the display name of the authenticated agent.',
-  changeProfilePicture: 'Update the profile picture of the authenticated agent.',
-  listAgents: 'List all pre-built agents in the organization.',
-  runAgent: 'Run a pre-built agent and wait for the result.',
-};
 
 function buildSummary(
   stepMetadata: Record<string, { description: string }>,
@@ -212,9 +211,6 @@ function buildSummary(
   const summary: Record<string, string> = {};
   for (const [name, meta] of Object.entries(stepMetadata)) {
     summary[name] = meta.description;
-  }
-  for (const [name, desc] of Object.entries(HELPER_DESCRIPTIONS)) {
-    summary[name] = desc;
   }
   return summary;
 }
@@ -252,77 +248,6 @@ async function cmdList(asJson: boolean, asSummary: boolean): Promise<void> {
 async function cmdInfo(rawMethod: string): Promise<void> {
   const allKeys = await getAllMethodKeys();
   const method = resolveMethodOrFail(rawMethod, allKeys);
-
-  // Helpers — show hardcoded info
-  if (HELPER_NAMES.has(method)) {
-    const helpers: Record<
-      string,
-      { desc: string; input: string; output: string }
-    > = {
-      listModels: {
-        desc: 'List all available AI models.',
-        input: '(none)',
-        output: '{ models: MindStudioModel[] }',
-      },
-      listModelsByType: {
-        desc: 'List AI models filtered by type.',
-        input: 'modelType: string (required)',
-        output: '{ models: MindStudioModel[] }',
-      },
-      listModelsSummary: {
-        desc: 'List all AI models (summary: id, name, type, tags).',
-        input: '(none)',
-        output: '{ models: MindStudioModelSummary[] }',
-      },
-      listModelsSummaryByType: {
-        desc: 'List AI models (summary) filtered by type.',
-        input: 'modelType: string (required)',
-        output: '{ models: MindStudioModelSummary[] }',
-      },
-      listConnectors: {
-        desc: 'List available connector services and their actions.',
-        input: '(none)',
-        output: '{ services: ConnectorService[] }',
-      },
-      getConnector: {
-        desc: 'Get details for a connector service.',
-        input: 'serviceId: string (required)',
-        output: '{ service: ConnectorService }',
-      },
-      getConnectorAction: {
-        desc: 'Get full configuration for a connector action.',
-        input: 'serviceId: string, actionId: string (both required)',
-        output: '{ action: ConnectorActionDetail }',
-      },
-      listConnections: {
-        desc: 'List OAuth connections for the organization.',
-        input: '(none)',
-        output: '{ connections: Connection[] }',
-      },
-      estimateStepCost: {
-        desc: 'Estimate the cost of executing a step before running it.',
-        input:
-          'stepType: string (required), step: object, appId?: string, workflowId?: string',
-        output: '{ costType?: string, estimates?: StepCostEstimateEntry[] }',
-      },
-      changeName: {
-        desc: 'Update the display name of the authenticated agent.',
-        input: 'displayName: string (required)',
-        output: '(none)',
-      },
-      changeProfilePicture: {
-        desc: 'Update the profile picture of the authenticated agent.',
-        input: 'profilePictureUrl: string (required)',
-        output: '(none)',
-      },
-    };
-    const h = helpers[method];
-    process.stderr.write(`\n  ${camelToKebab(method)}\n\n`);
-    process.stderr.write(`  ${h.desc}\n\n`);
-    process.stderr.write(`  Input:  ${h.input}\n`);
-    process.stderr.write(`  Output: ${h.output}\n\n`);
-    return;
-  }
 
   const { stepMetadata } = await import('./generated/metadata.js');
   const meta = stepMetadata[method];
@@ -406,65 +331,24 @@ async function cmdExec(
   await import('./generated/steps.js').then((m) =>
     m.applyStepMethods(MindStudioAgent),
   );
-  await import('./generated/helpers.js').then((m) =>
-    m.applyHelperMethods(MindStudioAgent),
-  );
 
   const agent = new MindStudioAgent({
     apiKey: options.apiKey,
     baseUrl: options.baseUrl,
   }) as any;
 
-  let result: unknown;
-
-  if (method === 'listModels') {
-    result = await agent.listModels();
-  } else if (method === 'listModelsByType') {
-    result = await agent.listModelsByType(input.modelType as string);
-  } else if (method === 'listModelsSummary') {
-    result = await agent.listModelsSummary();
-  } else if (method === 'listModelsSummaryByType') {
-    result = await agent.listModelsSummaryByType(input.modelType as string);
-  } else if (method === 'listConnectors') {
-    result = await agent.listConnectors();
-  } else if (method === 'getConnector') {
-    result = await agent.getConnector(input.serviceId as string);
-  } else if (method === 'getConnectorAction') {
-    result = await agent.getConnectorAction(
-      input.serviceId as string,
-      input.actionId as string,
+  const { stepMetadata } = await import('./generated/metadata.js');
+  const meta = stepMetadata[method];
+  if (!meta) {
+    fatal(
+      `Unknown action: ${method}. Run 'mindstudio list-actions' to see available actions.`,
     );
-  } else if (method === 'listConnections') {
-    result = await agent.listConnections();
-  } else if (method === 'estimateStepCost') {
-    result = await agent.estimateStepCost(
-      input.stepType as string,
-      input.step as Record<string, unknown> | undefined,
-      {
-        appId: input.appId as string | undefined,
-        workflowId: input.workflowId as string | undefined,
-      },
-    );
-  } else if (method === 'changeName') {
-    await agent.changeName(input.displayName as string);
-    result = { success: true };
-  } else if (method === 'changeProfilePicture') {
-    await agent.changeProfilePicture(input.profilePictureUrl as string);
-    result = { success: true };
-  } else {
-    const { stepMetadata } = await import('./generated/metadata.js');
-    const meta = stepMetadata[method];
-    if (!meta) {
-      fatal(
-        `Unknown method: ${method}. Run 'mindstudio list' to see available methods.`,
-      );
-    }
-
-    result = await agent.executeStep(meta.stepType, input, {
-      appId: options.appId,
-      threadId: options.threadId,
-    });
   }
+
+  const result = await agent.executeStep(meta.stepType, input, {
+    appId: options.appId,
+    threadId: options.threadId,
+  });
 
   // Apply output options
   if (options.outputKey) {
@@ -514,6 +398,95 @@ async function cmdAgents(
       process.stdout.write(`${app.name.padEnd(maxLen)}  ${app.id}  ${desc}\n`);
     }
   }
+}
+
+function createAgent(options: { apiKey?: string; baseUrl?: string }) {
+  // Lazy import to avoid loading client for help/login
+  return import('./client.js').then(
+    ({ MindStudioAgent }) =>
+      new MindStudioAgent({
+        apiKey: options.apiKey,
+        baseUrl: options.baseUrl,
+      }),
+  );
+}
+
+function jsonOut(data: unknown): void {
+  process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+}
+
+async function cmdListModels(options: {
+  apiKey?: string;
+  baseUrl?: string;
+  type?: string;
+  summary?: boolean;
+}): Promise<void> {
+  const agent = await createAgent(options);
+  if (options.summary) {
+    const result = options.type
+      ? await agent.listModelsSummaryByType(options.type as any)
+      : await agent.listModelsSummary();
+    jsonOut(result);
+  } else {
+    const result = options.type
+      ? await agent.listModelsByType(options.type as any)
+      : await agent.listModels();
+    jsonOut(result);
+  }
+}
+
+async function cmdListConnectors(
+  args: string[],
+  options: { apiKey?: string; baseUrl?: string },
+): Promise<void> {
+  const agent = await createAgent(options);
+  if (args.length >= 2) {
+    const result = await agent.getConnectorAction(args[0], args[1]);
+    jsonOut(result);
+  } else if (args.length === 1) {
+    const result = await agent.getConnector(args[0]);
+    jsonOut(result);
+  } else {
+    const result = await agent.listConnectors();
+    jsonOut(result);
+  }
+}
+
+async function cmdListConnections(options: {
+  apiKey?: string;
+  baseUrl?: string;
+}): Promise<void> {
+  const agent = await createAgent(options);
+  const result = await agent.listConnections();
+  jsonOut(result);
+}
+
+async function cmdEstimateStepCost(
+  method: string,
+  input: Record<string, unknown>,
+  options: { apiKey?: string; baseUrl?: string },
+): Promise<void> {
+  const agent = await createAgent(options);
+  const result = await agent.estimateStepCost(method, input);
+  jsonOut(result);
+}
+
+async function cmdChangeName(
+  name: string,
+  options: { apiKey?: string; baseUrl?: string },
+): Promise<void> {
+  const agent = await createAgent(options);
+  await agent.changeName(name);
+  process.stderr.write(`  Display name updated to: ${name}\n`);
+}
+
+async function cmdChangeProfilePicture(
+  url: string,
+  options: { apiKey?: string; baseUrl?: string },
+): Promise<void> {
+  const agent = await createAgent(options);
+  await agent.changeProfilePicture(url);
+  process.stderr.write(`  Profile picture updated.\n`);
 }
 
 async function cmdRun(
@@ -589,9 +562,6 @@ async function cmdUpload(
   const mimeType = MIME_TYPES[ext];
 
   const { MindStudioAgent } = await import('./client.js');
-  await import('./generated/helpers.js').then((m) =>
-    m.applyHelperMethods(MindStudioAgent),
-  );
 
   const agent = new MindStudioAgent({
     apiKey: options.apiKey,
@@ -775,6 +745,8 @@ async function cmdLogin(options: { baseUrl?: string }): Promise<void> {
     process.env.REMOTE_HOSTNAME ??
     DEFAULT_BASE_URL;
 
+  // Clear the screen to avoid duplicate output from install/prepare scripts
+  process.stderr.write('\x1b[2J\x1b[H');
   process.stderr.write('\n');
   printLogo();
   process.stderr.write('\n');
@@ -934,7 +906,7 @@ async function cmdWhoami(options: {
   process.stderr.write(`  ${ansi.gray('Auth:')} ${source!}\n`);
   for (const line of detail) process.stderr.write(line + '\n');
 
-  // Verify the key works by calling listAgents
+  // Verify the key works by calling getUserInfo
   process.stderr.write(`  ${ansi.gray('Verifying...')} `);
   try {
     const { MindStudioAgent } = await import('./client.js');
@@ -942,10 +914,54 @@ async function cmdWhoami(options: {
       apiKey: options.apiKey,
       baseUrl: options.baseUrl,
     });
-    const result = await agent.listAgents();
+    const info = await agent.getUserInfo();
     process.stderr.write(
-      `\r\x1b[K  ${ansi.greenBold('\u25CF')} ${ansi.green('Connected')} ${ansi.gray('\u2014')} ${result.orgName} ${ansi.gray('(' + result.orgId + ')')}\n`,
+      `\r\x1b[K  ${ansi.greenBold('\u25CF')} ${ansi.green('Connected')}\n\n`,
     );
+
+    // User info
+    process.stderr.write(`  ${ansi.bold('User')}\n`);
+    process.stderr.write(
+      `  ${ansi.gray('Name:')}  ${info.displayName}\n`,
+    );
+    process.stderr.write(
+      `  ${ansi.gray('ID:')}    ${ansi.gray(info.userId)}\n`,
+    );
+
+    // Organization info
+    process.stderr.write(`\n  ${ansi.bold('Organization')}\n`);
+    process.stderr.write(
+      `  ${ansi.gray('Name:')}  ${info.organizationName}\n`,
+    );
+    process.stderr.write(
+      `  ${ansi.gray('ID:')}    ${ansi.gray(info.organizationId)}\n`,
+    );
+
+    // Members table
+    if (info.members && info.members.length > 0) {
+      process.stderr.write(`\n  ${ansi.bold('Members')}\n`);
+      const nameWidth = Math.max(
+        4,
+        ...info.members.map((m) => m.displayName.length),
+      );
+      const roleWidth = Math.max(
+        4,
+        ...info.members.map((m) => m.role.length),
+      );
+      process.stderr.write(
+        `  ${ansi.gray('Name'.padEnd(nameWidth))}  ${ansi.gray('Role'.padEnd(roleWidth))}  ${ansi.gray('Type')}\n`,
+      );
+      process.stderr.write(
+        `  ${ansi.gray('\u2500'.repeat(nameWidth))}  ${ansi.gray('\u2500'.repeat(roleWidth))}  ${ansi.gray('\u2500'.repeat(5))}\n`,
+      );
+      for (const member of info.members) {
+        const type = member.isAgent ? ansi.cyan('agent') : 'user';
+        process.stderr.write(
+          `  ${member.displayName.padEnd(nameWidth)}  ${ansi.gray(member.role.padEnd(roleWidth))}  ${type}\n`,
+        );
+      }
+    }
+    process.stderr.write('\n');
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(
@@ -992,10 +1008,10 @@ function findMethodSplit(argv: string[]): {
   rawMethod: string;
   stepArgv: string[];
 } | null {
-  // Determine if the first positional is `exec` or a direct method name.
+  // Determine if the first positional is `run` or a direct method name.
   // Walk argv skipping global flags to find the first positional.
   let startIdx = 0;
-  let hasExec = false;
+  let hasRun = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -1006,11 +1022,11 @@ function findMethodSplit(argv: string[]): {
     }
 
     // First positional
-    if (arg === 'exec') {
-      hasExec = true;
+    if (arg === 'run') {
+      hasRun = true;
       startIdx = i + 1;
     } else {
-      // Direct method name (no exec prefix)
+      // Direct method name (no run prefix)
       startIdx = i;
     }
     break;
@@ -1025,8 +1041,8 @@ function findMethodSplit(argv: string[]): {
       continue;
     }
 
-    // This positional is the method name (or the method itself if no exec)
-    if (hasExec || i === startIdx) {
+    // This positional is the method name (or the method itself if no run)
+    if (hasRun || i === startIdx) {
       return { rawMethod: arg, stepArgv: argv.slice(i + 1) };
     }
     break;
@@ -1053,6 +1069,7 @@ async function main(): Promise<void> {
       'no-meta': { type: 'boolean', default: false },
       workflow: { type: 'string' },
       version: { type: 'string' },
+      type: { type: 'string' },
       json: { type: 'boolean', default: false },
       summary: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
@@ -1116,7 +1133,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    if (command === 'list') {
+    if (command === 'list-actions') {
       await cmdList(values.json as boolean, values.summary as boolean);
       return;
     }
@@ -1129,13 +1146,13 @@ async function main(): Promise<void> {
       return;
     }
 
-    if (command === 'run') {
+    if (command === 'run-agent') {
       const appId = positionals[1];
       if (!appId)
-        fatal('Missing app ID. Usage: mindstudio run <appId> [json | --flags]');
+        fatal('Missing app ID. Usage: mindstudio run-agent <appId> [json | --flags]');
 
       // Parse input from remaining args
-      const runArgv = process.argv.slice(process.argv.indexOf('run') + 2);
+      const runArgv = process.argv.slice(process.argv.indexOf('run-agent') + 2);
       // Filter out global flags from runArgv
       const stepArgs: string[] = [];
       for (let i = 0; i < runArgv.length; i++) {
@@ -1205,6 +1222,102 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (
+      command === 'list-models' ||
+      command === 'list-models-by-type' ||
+      command === 'list-models-summary' ||
+      command === 'list-models-summary-by-type'
+    ) {
+      const authOpts = {
+        apiKey: values['api-key'] as string | undefined,
+        baseUrl: values['base-url'] as string | undefined,
+      };
+      // Normalize: list-models --type x, list-models --summary, or the explicit variants
+      let type: string | undefined;
+      let summary = false;
+      if (command === 'list-models-by-type' || command === 'list-models-summary-by-type') {
+        type = positionals[1];
+        if (!type)
+          fatal(`Missing model type. Usage: mindstudio ${command} <type>`);
+      }
+      if (command === 'list-models-summary' || command === 'list-models-summary-by-type') {
+        summary = true;
+      }
+      // Also allow --type and --summary on the base command
+      if (command === 'list-models') {
+        const typeFlag = values.type as string | undefined;
+        if (typeFlag) type = typeFlag;
+        if (values.summary) summary = true;
+      }
+      await cmdListModels({ ...authOpts, type, summary });
+      return;
+    }
+
+    if (command === 'list-connectors') {
+      await cmdListConnectors(positionals.slice(1), {
+        apiKey: values['api-key'] as string | undefined,
+        baseUrl: values['base-url'] as string | undefined,
+      });
+      return;
+    }
+
+    if (command === 'list-connections') {
+      await cmdListConnections({
+        apiKey: values['api-key'] as string | undefined,
+        baseUrl: values['base-url'] as string | undefined,
+      });
+      return;
+    }
+
+    if (command === 'estimate-cost') {
+      const stepMethod = positionals[1];
+      if (!stepMethod)
+        fatal(
+          'Missing action name. Usage: mindstudio estimate-cost <action> [json | --flags]',
+        );
+      const costArgv = positionals.slice(2);
+      let costInput: Record<string, unknown>;
+      const firstArg = costArgv[0];
+      if (firstArg && firstArg.startsWith('{')) {
+        try {
+          costInput = parseJson5(firstArg) as Record<string, unknown>;
+        } catch {
+          fatal(`Invalid JSON input: ${firstArg}`);
+        }
+      } else {
+        costInput = parseStepFlags(costArgv);
+      }
+      await cmdEstimateStepCost(stepMethod, costInput, {
+        apiKey: values['api-key'] as string | undefined,
+        baseUrl: values['base-url'] as string | undefined,
+      });
+      return;
+    }
+
+    if (command === 'change-name') {
+      const name = positionals[1];
+      if (!name)
+        fatal('Missing name. Usage: mindstudio change-name <name>');
+      await cmdChangeName(name, {
+        apiKey: values['api-key'] as string | undefined,
+        baseUrl: values['base-url'] as string | undefined,
+      });
+      return;
+    }
+
+    if (command === 'change-profile-picture') {
+      const url = positionals[1];
+      if (!url)
+        fatal(
+          'Missing URL. Usage: mindstudio change-profile-picture <url>',
+        );
+      await cmdChangeProfilePicture(url, {
+        apiKey: values['api-key'] as string | undefined,
+        baseUrl: values['base-url'] as string | undefined,
+      });
+      return;
+    }
+
     if (command === 'mcp') {
       const { startMcpServer } = await import('./mcp.js');
       await startMcpServer({
@@ -1217,15 +1330,15 @@ async function main(): Promise<void> {
     if (command === 'info') {
       const rawMethod = positionals[1];
       if (!rawMethod)
-        fatal('Missing method name. Usage: mindstudio info <method>');
+        fatal('Missing action name. Usage: mindstudio info <action>');
       await cmdInfo(rawMethod);
       return;
     }
 
-    // exec (explicit or implicit — any unknown command is treated as a method)
+    // run (explicit or implicit — any unknown command is treated as a method)
     const split = findMethodSplit(process.argv.slice(2));
     if (!split)
-      fatal('Missing method name. Usage: mindstudio <method> [json | --flags]');
+      fatal('Missing action name. Usage: mindstudio <action> [json | --flags]');
 
     const { rawMethod, stepArgv } = split;
     const allKeys = await getAllMethodKeys();

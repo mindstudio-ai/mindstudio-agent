@@ -7,8 +7,17 @@ import type {
   StepExecutionOptions,
   StepExecutionResult,
   ListAgentsResult,
+  UserInfoResult,
   RunAgentOptions,
   RunAgentResult,
+  MindStudioModel,
+  MindStudioModelSummary,
+  ModelType,
+  ConnectorService,
+  ConnectorActionDetail,
+  Connection,
+  StepCostEstimateEntry,
+  UploadFileResult,
 } from './types.js';
 
 const DEFAULT_BASE_URL = 'https://v1.mindstudio-api.com';
@@ -142,6 +151,23 @@ export class MindStudioAgent {
   }
 
   /**
+   * Get the authenticated user's identity and organization info.
+   *
+   * ```ts
+   * const info = await agent.getUserInfo();
+   * console.log(info.displayName, info.organizationName);
+   * ```
+   */
+  async getUserInfo(): Promise<UserInfoResult> {
+    const { data } = await request<UserInfoResult>(
+      this._httpConfig,
+      'GET',
+      '/account/userinfo',
+    );
+    return data;
+  }
+
+  /**
    * List all pre-built agents in the organization.
    *
    * ```ts
@@ -238,9 +264,187 @@ export class MindStudioAgent {
     }
   }
 
-  /** @internal Used by generated helper methods. */
+  /** @internal Used by generated action methods. */
   _request<T>(method: 'GET' | 'POST', path: string, body?: unknown) {
     return request<T>(this._httpConfig, method, path, body);
+  }
+
+  // -------------------------------------------------------------------------
+  // Helper methods — models
+  // -------------------------------------------------------------------------
+
+  /** List all available AI models. */
+  async listModels(): Promise<{ models: MindStudioModel[] }> {
+    const { data } = await request<{ models: MindStudioModel[] }>(
+      this._httpConfig,
+      'GET',
+      '/helpers/models',
+    );
+    return data;
+  }
+
+  /** List AI models filtered by type. */
+  async listModelsByType(
+    modelType: ModelType,
+  ): Promise<{ models: MindStudioModel[] }> {
+    const { data } = await request<{ models: MindStudioModel[] }>(
+      this._httpConfig,
+      'GET',
+      `/helpers/models/${modelType}`,
+    );
+    return data;
+  }
+
+  /** List all available AI models (summary). Returns only id, name, type, and tags. */
+  async listModelsSummary(): Promise<{ models: MindStudioModelSummary[] }> {
+    const { data } = await request<{ models: MindStudioModelSummary[] }>(
+      this._httpConfig,
+      'GET',
+      '/helpers/models-summary',
+    );
+    return data;
+  }
+
+  /** List AI models (summary) filtered by type. */
+  async listModelsSummaryByType(
+    modelType: ModelType,
+  ): Promise<{ models: MindStudioModelSummary[] }> {
+    const { data } = await request<{ models: MindStudioModelSummary[] }>(
+      this._httpConfig,
+      'GET',
+      `/helpers/models-summary/${modelType}`,
+    );
+    return data;
+  }
+
+  // -------------------------------------------------------------------------
+  // Helper methods — OAuth connectors & connections
+  // -------------------------------------------------------------------------
+
+  /**
+   * List available OAuth connector services (Slack, Google, HubSpot, etc.).
+   *
+   * These are third-party integrations from the MindStudio Connector Registry.
+   * For most tasks, use actions directly instead.
+   */
+  async listConnectors(): Promise<{ services: ConnectorService[] }> {
+    const { data } = await request<{ services: ConnectorService[] }>(
+      this._httpConfig,
+      'GET',
+      '/helpers/connectors',
+    );
+    return data;
+  }
+
+  /** Get details for a single OAuth connector service. */
+  async getConnector(
+    serviceId: string,
+  ): Promise<{ service: ConnectorService }> {
+    const { data } = await request<{ service: ConnectorService }>(
+      this._httpConfig,
+      'GET',
+      `/helpers/connectors/${serviceId}`,
+    );
+    return data;
+  }
+
+  /** Get the full configuration for an OAuth connector action, including input fields. */
+  async getConnectorAction(
+    serviceId: string,
+    actionId: string,
+  ): Promise<{ action: ConnectorActionDetail }> {
+    const { data } = await request<{ action: ConnectorActionDetail }>(
+      this._httpConfig,
+      'GET',
+      `/helpers/connectors/${serviceId}/${actionId}`,
+    );
+    return data;
+  }
+
+  /** List OAuth connections for the organization. These are authenticated third-party service links. */
+  async listConnections(): Promise<{ connections: Connection[] }> {
+    const { data } = await request<{ connections: Connection[] }>(
+      this._httpConfig,
+      'GET',
+      '/helpers/connections',
+    );
+    return data;
+  }
+
+  // -------------------------------------------------------------------------
+  // Helper methods — cost estimation
+  // -------------------------------------------------------------------------
+
+  /** Estimate the cost of executing an action before running it. */
+  async estimateStepCost(
+    stepType: string,
+    step?: Record<string, unknown>,
+    options?: { appId?: string; workflowId?: string },
+  ): Promise<{ costType?: string; estimates?: StepCostEstimateEntry[] }> {
+    const { data } = await request<{
+      costType?: string;
+      estimates?: StepCostEstimateEntry[];
+    }>(this._httpConfig, 'POST', '/helpers/step-cost-estimate', {
+      step: { type: stepType, ...step },
+      ...options,
+    });
+    return data;
+  }
+
+  // -------------------------------------------------------------------------
+  // Account methods
+  // -------------------------------------------------------------------------
+
+  /** Update the display name of the authenticated user/agent. */
+  async changeName(displayName: string): Promise<void> {
+    await request(this._httpConfig, 'POST', '/account/change-name', {
+      name: displayName,
+    });
+  }
+
+  /** Update the profile picture of the authenticated user/agent. */
+  async changeProfilePicture(url: string): Promise<void> {
+    await request(this._httpConfig, 'POST', '/account/change-profile-picture', {
+      url,
+    });
+  }
+
+  /**
+   * Upload a file to the MindStudio CDN.
+   *
+   * Gets a signed upload URL, PUTs the file content, and returns the
+   * permanent public URL.
+   */
+  async uploadFile(
+    content: Buffer | Uint8Array,
+    options: { extension: string; type?: string },
+  ): Promise<UploadFileResult> {
+    const { data } = await request<{ uploadUrl: string; url: string }>(
+      this._httpConfig,
+      'POST',
+      '/account/upload',
+      {
+        extension: options.extension,
+        ...(options.type != null && { type: options.type }),
+      },
+    );
+    const buf = content.buffer.slice(
+      content.byteOffset,
+      content.byteOffset + content.byteLength,
+    ) as ArrayBuffer;
+    const res = await fetch(data.uploadUrl, {
+      method: 'PUT',
+      body: buf,
+      headers: options.type ? { 'Content-Type': options.type } : {},
+    });
+    if (!res.ok) {
+      throw new MindStudioError(
+        `Upload failed: ${res.status} ${res.statusText}`,
+        'upload_error',
+        res.status,
+      );
+    }
+    return { url: data.url };
   }
 }
 
@@ -248,11 +452,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Attach generated methods to the prototype
+// Attach generated step methods to the prototype
 import { applyStepMethods } from './generated/steps.js';
-import { applyHelperMethods } from './generated/helpers.js';
 applyStepMethods(MindStudioAgent);
-applyHelperMethods(MindStudioAgent);
 
 function resolveToken(
   provided?: string,

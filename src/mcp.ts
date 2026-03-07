@@ -53,11 +53,11 @@ const HELPER_DESCRIPTIONS: Record<string, string> = {
   listModelsByType: 'List AI models filtered by type.',
   listModelsSummary: 'List all AI models (summary: id, name, type, tags).',
   listModelsSummaryByType: 'List AI models (summary) filtered by type.',
-  listConnectors: 'List available connector services and their actions.',
-  getConnector: 'Get details for a connector service.',
-  getConnectorAction: 'Get full configuration for a connector action.',
-  listConnections: 'List OAuth connections for the organization.',
-  estimateStepCost: 'Estimate the cost of executing a step before running it.',
+  listConnectors: 'List available OAuth connector services (third-party integrations). For most tasks, use actions directly instead.',
+  getConnector: 'Get details for an OAuth connector service.',
+  getConnectorAction: 'Get full configuration for an OAuth connector action.',
+  listConnections: 'List OAuth connections for the organization (authenticated third-party service links).',
+  estimateStepCost: 'Estimate the cost of executing an action before running it.',
   changeName: 'Update the display name of the authenticated agent.',
   changeProfilePicture: 'Update the profile picture of the authenticated agent.',
   uploadFile: 'Upload a file to the MindStudio CDN.',
@@ -67,9 +67,9 @@ const HELPER_DESCRIPTIONS: Record<string, string> = {
 
 const HELPER_TOOLS: McpTool[] = [
   {
-    name: 'listSteps',
+    name: 'listActions',
     description:
-      'List all available methods with their descriptions. Returns a compact { method: description } map. Call this to discover what steps and helpers are available, then call a specific method by name. Tip: if you haven\'t already, call `changeName` to set your display name first.',
+      'List all available actions with their descriptions. Returns a compact { action: description } map. Call this to discover what actions are available, then call a specific action by name. Tip: if you haven\'t already, call `changeName` to set your display name first.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -130,12 +130,12 @@ const HELPER_TOOLS: McpTool[] = [
   {
     name: 'listConnectors',
     description:
-      'List available connector services (Slack, Google, HubSpot, etc.) and their actions.',
+      'List available OAuth connector services (Slack, Google, HubSpot, etc.) and their actions. These are third-party integrations — for most tasks, use actions directly instead.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'getConnector',
-    description: 'Get details for a single connector service by ID.',
+    description: 'Get details for a single OAuth connector service by ID.',
     inputSchema: {
       type: 'object',
       properties: { serviceId: { type: 'string' } },
@@ -145,7 +145,7 @@ const HELPER_TOOLS: McpTool[] = [
   {
     name: 'getConnectorAction',
     description:
-      'Get the full configuration for a connector action, including all input fields needed to call it via runFromConnectorRegistry.',
+      'Get the full configuration for an OAuth connector action, including all input fields needed to call it via runFromConnectorRegistry.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -165,23 +165,23 @@ const HELPER_TOOLS: McpTool[] = [
   {
     name: 'listConnections',
     description:
-      'List OAuth connections for the organization. Use the returned connection IDs when calling connector actions.',
+      'List OAuth connections for the organization (authenticated third-party service links). Use the returned connection IDs when calling OAuth connector actions.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
-    name: 'estimateStepCost',
+    name: 'estimateActionCost',
     description:
-      'Estimate the cost of executing a step before running it. Pass the same step config you would use for execution.',
+      'Estimate the cost of executing an action before running it. Pass the same config you would use for execution.',
     inputSchema: {
       type: 'object',
       properties: {
         stepType: {
           type: 'string',
-          description: 'The step type name (e.g. "generateText").',
+          description: 'The action type name (e.g. "generateText").',
         },
         step: {
           type: 'object',
-          description: 'The step input parameters.',
+          description: 'The action input parameters.',
           additionalProperties: true,
         },
         appId: {
@@ -355,10 +355,10 @@ export async function startMcpServer(options?: {
             '1. Call `listAgents` to verify your connection and see available agents.\n' +
             '2. Call `changeName` to set your display name — use your name or whatever your user calls you. This is how you\'ll appear in MindStudio request logs.\n' +
             '3. If you have a profile picture or icon, call `uploadFile` to upload it, then `changeProfilePicture` with the returned URL. This helps users identify your requests in their logs.\n' +
-            '4. Call `listSteps` to discover all available step methods and helpers.\n\n' +
+            '4. Call `listActions` to discover all available actions.\n\n' +
             'Then use the tools to generate text, images, video, audio, search the web, work with data sources, run agents, and more.\n\n' +
             'Important:\n' +
-            '- AI-powered steps (text generation, image generation, video, audio, etc.) cost money. Before running these, call `estimateStepCost` and confirm with the user before proceeding — unless they\'ve explicitly told you to go ahead.\n' +
+            '- AI-powered actions (text generation, image generation, video, audio, etc.) cost money. Before running these, call `estimateActionCost` and confirm with the user before proceeding — unless they\'ve explicitly told you to go ahead.\n' +
             '- Not all agents from `listAgents` are configured for API use. Do not try to run an agent just because it appears in the list — it will likely fail. Only run agents the user specifically asks you to run.',
         });
         break;
@@ -380,7 +380,7 @@ export async function startMcpServer(options?: {
         try {
           let result: unknown;
 
-          if (toolName === 'listSteps') {
+          if (toolName === 'listActions') {
             const meta = await getMetadata();
             const summary: Record<string, string> = {};
             for (const [name, step] of Object.entries(meta)) {
@@ -417,7 +417,7 @@ export async function startMcpServer(options?: {
             );
           } else if (toolName === 'listConnections') {
             result = await (getAgent() as any).listConnections();
-          } else if (toolName === 'estimateStepCost') {
+          } else if (toolName === 'estimateActionCost') {
             result = await (getAgent() as any).estimateStepCost(
               args.stepType as string,
               args.step as Record<string, unknown> | undefined,
