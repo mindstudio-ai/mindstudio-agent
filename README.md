@@ -8,11 +8,31 @@ Generate text, images, video, and audio. Scrape the web. Search Google. Post to 
 
 ## Install
 
+### CLI / MCP (standalone binary)
+
+No dependencies required — downloads a standalone binary:
+
+**macOS / Linux:**
+```bash
+curl -fsSL https://msagent.ai/install.sh | bash
+mindstudio login
+```
+
+**Windows (PowerShell):**
+```
+irm https://msagent.ai/install.ps1 | iex
+mindstudio login
+```
+
+To update, run the same command again. To uninstall, `rm /usr/local/bin/mindstudio` (macOS/Linux) or delete `%USERPROFILE%\.mindstudio\bin\mindstudio.exe` (Windows).
+
+### SDK (npm)
+
 ```bash
 npm install @mindstudio-ai/agent
 ```
 
-Requires Node.js 18+.
+Requires Node.js 18+. Also installs the CLI as `mindstudio`.
 
 ## Quick start
 
@@ -77,6 +97,22 @@ npx @mindstudio-ai/agent generate-text --message "Hello"
 
 Add to your MCP client config (Claude Code, Cursor, VS Code, etc.):
 
+**With standalone binary** (recommended — faster startup, no Node required):
+```json
+{
+  "mcpServers": {
+    "mindstudio": {
+      "command": "mindstudio",
+      "args": ["mcp"],
+      "env": {
+        "MINDSTUDIO_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+**With npx** (no install needed):
 ```json
 {
   "mcpServers": {
@@ -454,14 +490,14 @@ Start manually:
 mindstudio mcp
 ```
 
-Or configure your MCP client:
+Or configure your MCP client (standalone binary or npx):
 
 ```json
 {
   "mcpServers": {
     "mindstudio": {
-      "command": "npx",
-      "args": ["-y", "@mindstudio-ai/agent", "mcp"],
+      "command": "mindstudio",
+      "args": ["mcp"],
       "env": {
         "MINDSTUDIO_API_KEY": "your-api-key"
       }

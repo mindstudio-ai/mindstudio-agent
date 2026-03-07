@@ -1,6 +1,6 @@
 {
   "name": "@mindstudio-ai/agent",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "TypeScript SDK for MindStudio direct step execution",
   "type": "module",
   "main": "./dist/index.js",
@@ -25,6 +25,7 @@
     "dev": "tsup --watch",
     "codegen": "tsx scripts/codegen.ts",
     "typecheck": "tsc --noEmit",
+    "postinstall": "node dist/postinstall.js || true",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },

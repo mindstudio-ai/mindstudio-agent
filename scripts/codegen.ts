@@ -784,6 +784,66 @@ function generateHelpers(spec: OpenAPISpec): string {
   chunks.push(
     '  estimateStepCost(stepType: string, step?: Record<string, unknown>, options?: { appId?: string; workflowId?: string }): Promise<{ costType?: string; estimates?: StepCostEstimateEntry[] }>;',
   );
+  chunks.push('');
+  chunks.push('  /**');
+  chunks.push(
+    '   * Update the display name of the authenticated agent.',
+  );
+  chunks.push('   *');
+  chunks.push(
+    '   * Useful for agents to set their own name after connecting.',
+  );
+  chunks.push('   *');
+  chunks.push(
+    '   * @param displayName - The new display name.',
+  );
+  chunks.push('   */');
+  chunks.push(
+    '  changeName(displayName: string): Promise<void>;',
+  );
+  chunks.push('');
+  chunks.push('  /**');
+  chunks.push(
+    '   * Update the profile picture of the authenticated agent.',
+  );
+  chunks.push('   *');
+  chunks.push(
+    '   * Useful for agents to set their own avatar after connecting.',
+  );
+  chunks.push('   *');
+  chunks.push(
+    '   * @param profilePictureUrl - URL of the new profile picture.',
+  );
+  chunks.push('   */');
+  chunks.push(
+    '  changeProfilePicture(profilePictureUrl: string): Promise<void>;',
+  );
+  chunks.push('');
+  chunks.push('  /**');
+  chunks.push(
+    '   * Upload a file to the MindStudio CDN.',
+  );
+  chunks.push('   *');
+  chunks.push(
+    '   * Gets a signed upload URL, PUTs the file content, and returns the permanent public URL.',
+  );
+  chunks.push('   *');
+  chunks.push(
+    '   * @param content - File content as a Buffer or Uint8Array.',
+  );
+  chunks.push(
+    '   * @param options - Upload options.',
+  );
+  chunks.push(
+    '   * @param options.extension - File extension without the dot (e.g. "png", "jpg", "mp4").',
+  );
+  chunks.push(
+    '   * @param options.type - MIME type of the file (e.g. "image/png"). Determines which CDN subdomain is used.',
+  );
+  chunks.push('   */');
+  chunks.push(
+    '  uploadFile(content: Buffer | Uint8Array, options: { extension: string; type?: string }): Promise<{ url: string }>;',
+  );
   chunks.push('}');
   chunks.push('');
 
@@ -854,6 +914,31 @@ function generateHelpers(spec: OpenAPISpec): string {
   chunks.push(
     '    return this._request("POST", "/helpers/step-cost-estimate", { step: { type: stepType, ...step }, ...options }).then((r: any) => r.data);',
   );
+  chunks.push('  };');
+  chunks.push('');
+  chunks.push('  proto.changeName = function (displayName: string) {');
+  chunks.push(
+    '    return this._request("POST", "/account/change-name", { displayName }).then(() => {});',
+  );
+  chunks.push('  };');
+  chunks.push('');
+  chunks.push('  proto.changeProfilePicture = function (profilePictureUrl: string) {');
+  chunks.push(
+    '    return this._request("POST", "/account/change-profile-picture", { profilePictureUrl }).then(() => {});',
+  );
+  chunks.push('  };');
+  chunks.push('');
+  chunks.push('  proto.uploadFile = async function (content: Buffer | Uint8Array, options: { extension: string; type?: string }) {');
+  chunks.push('    const { data } = await this._request("POST", "/account/upload", { extension: options.extension, ...(options.type != null && { type: options.type }) });');
+  chunks.push('    const { uploadUrl, url } = data as { uploadUrl: string; url: string };');
+  chunks.push('    const buf = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer;');
+  chunks.push('    const res = await fetch(uploadUrl, {');
+  chunks.push('      method: "PUT",');
+  chunks.push('      body: buf,');
+  chunks.push('      headers: options.type ? { "Content-Type": options.type } : {},');
+  chunks.push('    });');
+  chunks.push('    if (!res.ok) throw new Error(`Upload failed: ${res.status} ${res.statusText}`);');
+  chunks.push('    return { url };');
   chunks.push('  };');
   chunks.push('}');
   chunks.push('');
@@ -1345,13 +1430,16 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push(
-    '1. **Discover** — Call `listSteps` (MCP tool) or `mindstudio list --summary` (CLI) to get a compact `{ method: description }` map of everything available (~3k tokens).',
+    '1. **Identify yourself** — Call `changeName` to set your display name (use your name or whatever your user calls you). If you have a profile picture or icon, call `uploadFile` to upload it, then `changeProfilePicture` with the returned URL. This helps users identify your requests in their logs.',
   );
   lines.push(
-    '2. **Drill in** — Once you identify the right method, look up its full signature in the Methods reference below, or call `mindstudio info <method>` (CLI) for parameter details.',
+    '2. **Discover** — Call `listSteps` (MCP tool) or `mindstudio list --summary` (CLI) to get a compact `{ method: description }` map of everything available (~3k tokens).',
   );
   lines.push(
-    '3. **Call it** — Invoke the method with the required parameters. All step methods share the same calling convention (see below).',
+    '3. **Drill in** — Once you identify the right method, look up its full signature in the Methods reference below, or call `mindstudio info <method>` (CLI) for parameter details.',
+  );
+  lines.push(
+    '4. **Call it** — Invoke the method with the required parameters. All step methods share the same calling convention (see below).',
   );
   lines.push('');
   lines.push('For specific use cases:');
@@ -1373,6 +1461,12 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   // --- Install ---
   lines.push('## Install');
   lines.push('');
+  lines.push('Standalone binary (CLI/MCP, no dependencies):');
+  lines.push('```bash');
+  lines.push('curl -fsSL https://msagent.ai/install.sh | bash');
+  lines.push('```');
+  lines.push('');
+  lines.push('npm (SDK + CLI):');
   lines.push('```bash');
   lines.push('npm install @mindstudio-ai/agent');
   lines.push('```');
@@ -1459,13 +1553,13 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('mindstudio mcp');
   lines.push('```');
   lines.push('');
-  lines.push('MCP client config:');
+  lines.push('MCP client config (standalone binary — recommended):');
   lines.push('```json');
   lines.push('{');
   lines.push('  "mcpServers": {');
   lines.push('    "mindstudio": {');
-  lines.push('      "command": "npx",');
-  lines.push('      "args": ["-y", "@mindstudio-ai/agent", "mcp"],');
+  lines.push('      "command": "mindstudio",');
+  lines.push('      "args": ["mcp"],');
   lines.push('      "env": { "MINDSTUDIO_API_KEY": "your-api-key" }');
   lines.push('    }');
   lines.push('  }');
@@ -1862,6 +1956,40 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('  }[]');
   lines.push('}');
   lines.push('```');
+  lines.push('');
+  lines.push('#### `changeName(displayName)`');
+  lines.push(
+    'Update the display name of the authenticated agent. Useful for agents to set their own name after connecting.',
+  );
+  lines.push('');
+  lines.push('```typescript');
+  lines.push("await agent.changeName('My Agent');");
+  lines.push('```');
+  lines.push('');
+  lines.push('#### `changeProfilePicture(profilePictureUrl)`');
+  lines.push(
+    'Update the profile picture of the authenticated agent. Useful for agents to set their own avatar after connecting.',
+  );
+  lines.push('');
+  lines.push('```typescript');
+  lines.push("await agent.changeProfilePicture('https://example.com/avatar.png');");
+  lines.push('```');
+  lines.push('');
+  lines.push('#### `uploadFile(content, options)`');
+  lines.push(
+    'Upload a file to the MindStudio CDN. Gets a signed upload URL, PUTs the file content, and returns the permanent public URL.',
+  );
+  lines.push('');
+  lines.push('```typescript');
+  lines.push("import { readFileSync } from 'fs';");
+  lines.push("const { url } = await agent.uploadFile(readFileSync('photo.png'), { extension: 'png', type: 'image/png' });");
+  lines.push('```');
+  lines.push('');
+  lines.push('- `content`: `Buffer | Uint8Array` — The file content.');
+  lines.push('- `options.extension`: string — File extension without the dot (e.g. `"png"`, `"jpg"`, `"mp4"`).');
+  lines.push('- `options.type`: string (optional) — MIME type (e.g. `"image/png"`). Determines which CDN subdomain is used.');
+  lines.push('');
+  lines.push('Output: `{ url: string }` — The permanent public CDN URL.');
   lines.push('');
 
   return lines.join('\n');

@@ -1,4 +1,4 @@
-name: Publish to npm
+name: Release
 
 on:
   workflow_dispatch:
@@ -18,8 +18,10 @@ permissions:
   contents: write
 
 jobs:
-  publish:
+  publish-npm:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -33,16 +35,111 @@ jobs:
       - name: Bump version
         run: npm version ${{ inputs.bump }} --no-git-tag-version
 
+      - name: Get version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
       - run: npm run build
 
       - run: npm publish --access public
 
       - name: Commit, tag, and push
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION="v${{ steps.version.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
-          git commit -m "v${VERSION}"
-          git tag "v${VERSION}"
-          git push origin HEAD "v${VERSION}"
+          git commit -m "${VERSION}"
+          git tag "${VERSION}"
+          git push origin HEAD "${VERSION}"
+
+  build-binaries:
+    needs: publish-npm
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: bun-darwin-arm64
+            artifact: mindstudio-darwin-arm64
+          - os: macos-latest
+            target: bun-darwin-x64
+            artifact: mindstudio-darwin-x64
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            artifact: mindstudio-linux-x64
+          - os: ubuntu-latest
+            target: bun-windows-x64
+            artifact: mindstudio-windows-x64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: oven-sh/setup-bun@v2
+
+      # Install deps + run codegen + tsup build (generates src/generated/*)
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+
+      - name: Build standalone binary
+        run: |
+          bun build src/cli.ts \
+            --compile \
+            --target=${{ matrix.target }} \
+            --outfile=${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    needs: [publish-npm, build-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: binaries
+          merge-multiple: true
+
+      - name: Tag and create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v${{ needs.publish-npm.outputs.version }}"
+
+          # Make binaries executable
+          chmod +x binaries/mindstudio-*
+
+          # Create release (tag already exists from publish-npm)
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --generate-notes \
+            binaries/mindstudio-*
+
+      - name: Upload to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          VERSION="v${{ needs.publish-npm.outputs.version }}"
+          BUCKET="${{ secrets.AWS_S3_BUCKET }}"
+
+          # Upload versioned binaries
+          aws s3 cp binaries/ "s3://${BUCKET}/agent/${VERSION}/" --recursive
+
+          # Also copy as "latest" for the install script
+          aws s3 cp binaries/ "s3://${BUCKET}/agent/latest/" --recursive
+
+          # Upload the install scripts
+          aws s3 cp install.sh "s3://${BUCKET}/agent/install.sh" --content-type "text/plain"
+          aws s3 cp install.ps1 "s3://${BUCKET}/agent/install.ps1" --content-type "text/plain"
