@@ -18,6 +18,10 @@ import type {
   Connection,
   StepCostEstimateEntry,
   UploadFileResult,
+  BatchStepInput,
+  BatchStepResult,
+  ExecuteStepBatchOptions,
+  ExecuteStepBatchResult,
 } from './types.js';
 
 const DEFAULT_BASE_URL = 'https://v1.mindstudio-api.com';
@@ -148,6 +152,92 @@ export class MindStudioAgent {
           ? (JSON.parse(billingEvents) as Array<Record<string, unknown>>)
           : undefined,
     } as StepExecutionResult<TOutput>;
+  }
+
+  /**
+   * Execute multiple steps in parallel in a single request.
+   *
+   * All steps run in parallel on the server. Results are returned in the same
+   * order as the input. Individual step failures do not affect other steps —
+   * partial success is possible.
+   *
+   * ```ts
+   * const { results } = await agent.executeStepBatch([
+   *   { stepType: 'generateImage', step: { prompt: 'a sunset' } },
+   *   { stepType: 'textToSpeech', step: { text: 'Hello world' } },
+   * ]);
+   * ```
+   */
+  async executeStepBatch(
+    steps: BatchStepInput[],
+    options?: ExecuteStepBatchOptions,
+  ): Promise<ExecuteStepBatchResult> {
+    const threadId =
+      options?.threadId ?? (this._reuseThreadId ? this._threadId : undefined);
+
+    const { data } = await request<{
+      results: Array<{
+        stepType: string;
+        output?: Record<string, unknown>;
+        outputUrl?: string;
+        billingCost?: number;
+        error?: string;
+      }>;
+      totalBillingCost?: number;
+      appId?: string;
+      threadId?: string;
+    }>(this._httpConfig, 'POST', '/steps/execute-batch', {
+      steps,
+      ...(options?.appId != null && { appId: options.appId }),
+      ...(threadId != null && { threadId }),
+    });
+
+    // Resolve S3 outputs in parallel
+    const results: BatchStepResult[] = await Promise.all(
+      data.results.map(async (r) => {
+        if (r.output != null) {
+          return {
+            stepType: r.stepType,
+            output: r.output,
+            billingCost: r.billingCost,
+            error: r.error,
+          };
+        }
+        if (r.outputUrl) {
+          const res = await fetch(r.outputUrl);
+          if (!res.ok) {
+            return {
+              stepType: r.stepType,
+              error: `Failed to fetch output from S3: ${res.status} ${res.statusText}`,
+            };
+          }
+          const envelope = (await res.json()) as {
+            value: Record<string, unknown>;
+          };
+          return {
+            stepType: r.stepType,
+            output: envelope.value,
+            billingCost: r.billingCost,
+          };
+        }
+        return {
+          stepType: r.stepType,
+          billingCost: r.billingCost,
+          error: r.error,
+        };
+      }),
+    );
+
+    if (this._reuseThreadId && data.threadId) {
+      this._threadId = data.threadId;
+    }
+
+    return {
+      results,
+      totalBillingCost: data.totalBillingCost,
+      appId: data.appId,
+      threadId: data.threadId,
+    };
   }
 
   /**
