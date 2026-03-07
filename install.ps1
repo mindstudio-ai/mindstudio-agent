@@ -17,6 +17,16 @@ Write-Host ""
 Write-Cyan "  MindStudio CLI"
 Write-Host ""
 
+# Check for npm global install and remove it
+try {
+    $npmCheck = npm ls -g @mindstudio-ai/agent --depth=0 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Step "Removing existing npm global install..."
+        npm uninstall -g @mindstudio-ai/agent 2>$null | Out-Null
+        Write-Ok "Removed npm global install"
+    }
+} catch {}
+
 # Detect architecture
 $Arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
 if ($Arch -ne "x64") {

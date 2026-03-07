@@ -356,7 +356,10 @@ export async function startMcpServer(options?: {
             '2. Call `changeName` to set your display name — use your name or whatever your user calls you. This is how you\'ll appear in MindStudio request logs.\n' +
             '3. If you have a profile picture or icon, call `uploadFile` to upload it, then `changeProfilePicture` with the returned URL. This helps users identify your requests in their logs.\n' +
             '4. Call `listSteps` to discover all available step methods and helpers.\n\n' +
-            'Then use the tools to generate text, images, video, audio, search the web, work with data sources, run agents, and more.',
+            'Then use the tools to generate text, images, video, audio, search the web, work with data sources, run agents, and more.\n\n' +
+            'Important:\n' +
+            '- AI-powered steps (text generation, image generation, video, audio, etc.) cost money. Before running these, call `estimateStepCost` and confirm with the user before proceeding — unless they\'ve explicitly told you to go ahead.\n' +
+            '- Not all agents from `listAgents` are configured for API use. Do not try to run an agent just because it appears in the list — it will likely fail. Only run agents the user specifically asks you to run.',
         });
         break;
 

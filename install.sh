@@ -44,6 +44,13 @@ fail() {
 
 logo
 
+# Check for npm global install and remove it
+if npm ls -g @mindstudio-ai/agent --depth=0 >/dev/null 2>&1; then
+  step "Removing existing npm global install..."
+  npm uninstall -g @mindstudio-ai/agent >/dev/null 2>&1 || true
+  success "Removed npm global install"
+fi
+
 # Detect OS
 OS="$(uname -s)"
 case "$OS" in

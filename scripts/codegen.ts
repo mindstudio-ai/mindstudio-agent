@@ -1448,13 +1448,13 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     '- **Third-party integrations** (Slack, Google, HubSpot, etc.): Call `listConnectors()` to browse services → `getConnectorAction(serviceId, actionId)` for input fields → execute via `runFromConnectorRegistry`. Requires an OAuth connection set up in MindStudio first — call `listConnections()` to check available connections.',
   );
   lines.push(
-    '- **Pre-built agents**: Call `listAgents()` to see what\'s available → `runAgent({ appId })` to execute one. Agents are full workflows built in MindStudio — they can combine multiple steps, have custom logic, and maintain their own state.',
+    '- **Pre-built agents**: Call `listAgents()` to see what\'s available → `runAgent({ appId })` to execute one. **Important:** Not all agents are configured for API use. Do not try to run an agent just because it appears in the list — only run agents the user specifically asks you to run.',
   );
   lines.push(
     '- **Model selection**: Call `listModelsSummary()` or `listModelsSummaryByType("llm_chat")` to browse models, then pass the model ID as `modelOverride.model` to methods like `generateText`. Use the summary endpoints (not `listModels`) to keep token usage low.',
   );
   lines.push(
-    '- **Cost estimation**: Call `estimateStepCost(stepType, stepInput)` before expensive calls to preview pricing.',
+    '- **Cost estimation**: AI-powered steps (text generation, image generation, video, audio, etc.) cost money. Call `estimateStepCost(stepType, stepInput)` before running these and confirm with the user before proceeding — unless they\'ve explicitly given permission to go ahead. Non-AI steps (data lookups, connectors, etc.) are generally free.',
   );
   lines.push('');
 
