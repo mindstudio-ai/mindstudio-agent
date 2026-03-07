@@ -29,6 +29,10 @@ export type {
   Connection,
   StepCostEstimateEntry,
   UploadFileResult,
+  BatchStepInput,
+  BatchStepResult,
+  ExecuteStepBatchOptions,
+  ExecuteStepBatchResult,
 } from './types.js';
 
 // Re-export all generated types

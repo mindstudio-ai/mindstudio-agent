@@ -63,6 +63,7 @@ const HELPER_DESCRIPTIONS: Record<string, string> = {
   uploadFile: 'Upload a file to the MindStudio CDN.',
   listAgents: 'List all pre-built agents in the organization.',
   runAgent: 'Run a pre-built agent and wait for the result.',
+  executeBatch: 'Execute multiple actions in parallel in a single request.',
 };
 
 const HELPER_TOOLS: McpTool[] = [
@@ -239,6 +240,39 @@ const HELPER_TOOLS: McpTool[] = [
         },
       },
       required: ['filePath'],
+    },
+  },
+  {
+    name: 'executeBatch',
+    description:
+      'Execute multiple actions in parallel in a single request. All steps run in parallel on the server. Results are returned in the same order as the input. Individual step failures do not affect other steps — partial success is possible. Maximum 50 steps per batch.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'array',
+          description: 'Array of steps to execute.',
+          minItems: 1,
+          maxItems: 50,
+          items: {
+            type: 'object',
+            properties: {
+              stepType: {
+                type: 'string',
+                description:
+                  'The action type name (e.g. "generateImage", "textToSpeech").',
+              },
+              step: {
+                type: 'object',
+                description: 'Action input parameters.',
+                additionalProperties: true,
+              },
+            },
+            required: ['stepType', 'step'],
+          },
+        },
+      },
+      required: ['steps'],
     },
   },
   {
@@ -446,6 +480,13 @@ export async function startMcpServer(options?: {
               extension: ext,
               ...(mimeType && { type: mimeType }),
             });
+          } else if (toolName === 'executeBatch') {
+            result = await getAgent().executeStepBatch(
+              args.steps as Array<{
+                stepType: string;
+                step: Record<string, unknown>;
+              }>,
+            );
           } else if (toolName === 'listAgents') {
             result = await getAgent().listAgents();
           } else if (toolName === 'runAgent') {

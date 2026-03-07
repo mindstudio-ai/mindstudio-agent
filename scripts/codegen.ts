@@ -1329,6 +1329,48 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('```');
   lines.push('');
 
+  // --- Batch execution ---
+  lines.push('## Batch execution');
+  lines.push('');
+  lines.push(
+    'Execute multiple steps in parallel in a single request. Maximum 50 steps per batch.',
+  );
+  lines.push(
+    'Individual step failures do not affect other steps — partial success is possible.',
+  );
+  lines.push('');
+  lines.push('```typescript');
+  lines.push('const result = await agent.executeStepBatch([');
+  lines.push(
+    "  { stepType: 'generateImage', step: { prompt: 'a sunset' } },",
+  );
+  lines.push(
+    "  { stepType: 'textToSpeech', step: { text: 'hello world' } },",
+  );
+  lines.push('], { appId?, threadId? });');
+  lines.push('');
+  lines.push('// Result:');
+  lines.push('result.results;          // BatchStepResult[] — same order as input');
+  lines.push('result.results[0].stepType;  // string');
+  lines.push('result.results[0].output;    // object | undefined (step output on success)');
+  lines.push('result.results[0].error;     // string | undefined (error message on failure)');
+  lines.push(
+    'result.results[0].billingCost; // number | undefined (cost on success)',
+  );
+  lines.push('result.totalBillingCost;  // number | undefined');
+  lines.push('result.appId;            // string');
+  lines.push('result.threadId;         // string');
+  lines.push('```');
+  lines.push('');
+  lines.push('CLI:');
+  lines.push('```bash');
+  lines.push(
+    `mindstudio batch '[{"stepType":"generateImage","step":{"prompt":"a cat"}}]'`,
+  );
+  lines.push('cat steps.json | mindstudio batch');
+  lines.push('```');
+  lines.push('');
+
   // --- Method catalog ---
   lines.push('## Methods');
   lines.push('');

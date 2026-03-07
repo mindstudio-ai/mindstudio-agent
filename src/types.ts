@@ -282,6 +282,50 @@ export interface RunAgentOptions {
   pollIntervalMs?: number;
 }
 
+// ---------------------------------------------------------------------------
+// Batch execution types
+// ---------------------------------------------------------------------------
+
+/** A single step in a batch request. */
+export interface BatchStepInput {
+  /** The step type to execute (e.g. "generateImage", "userMessage"). */
+  stepType: string;
+  /** Step configuration — same format as the single execute endpoint. */
+  step: Record<string, unknown>;
+}
+
+/** Result for a single step in a batch response. */
+export interface BatchStepResult {
+  /** The step type that was executed. */
+  stepType: string;
+  /** Step output data. Present on success. */
+  output?: Record<string, unknown>;
+  /** Cost of this step in billing units. Present on success. */
+  billingCost?: number;
+  /** Error message. Present when this step failed. */
+  error?: string;
+}
+
+/** Options for {@link MindStudioAgent.executeStepBatch}. */
+export interface ExecuteStepBatchOptions {
+  /** App ID to execute within. If omitted, a service account app is used. */
+  appId?: string;
+  /** Thread ID for state persistence. If omitted, an ephemeral thread is created. */
+  threadId?: string;
+}
+
+/** Result of {@link MindStudioAgent.executeStepBatch}. */
+export interface ExecuteStepBatchResult {
+  /** Results in the same order as the input steps. */
+  results: BatchStepResult[];
+  /** Sum of billingCost across all successful steps. */
+  totalBillingCost?: number;
+  /** The app ID used for execution. */
+  appId?: string;
+  /** The thread ID used for execution. */
+  threadId?: string;
+}
+
 /** Result of a successful agent run. */
 export interface RunAgentResult {
   /** Whether the run succeeded. */

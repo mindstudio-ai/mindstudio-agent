@@ -15,6 +15,9 @@ Discover:
   info <action>                        Show action details and parameters
   list-models [--type <t>] [--summary] List available AI models
 
+Batch:
+  batch [json]                         Execute multiple actions in parallel
+
 Pre-built agents:
   agents [--json]                      List agents in your organization
   run-agent <appId> [json | --flags]   Run an agent and wait for result
@@ -57,6 +60,7 @@ Examples:
   mindstudio list-actions --summary
   mindstudio info generate-image
   mindstudio list-models --type image_generation
+  mindstudio batch '[{"stepType":"generateImage","step":{"prompt":"a cat"}}]'
   mindstudio run-agent <appId> --query "hello"
   mindstudio agents
   mindstudio mcp
@@ -133,6 +137,11 @@ function printHelp(): void {
 
 function fatal(message: string): never {
   process.stderr.write(JSON.stringify({ error: { message } }) + '\n');
+  process.exit(1);
+}
+
+function usageBlock(lines: string[]): never {
+  process.stderr.write('\n' + lines.map((l) => '  ' + l).join('\n') + '\n\n');
   process.exit(1);
 }
 
@@ -529,6 +538,70 @@ async function cmdRun(
       if (!k.startsWith('$')) filtered[k] = v;
     }
     process.stdout.write(JSON.stringify(filtered, null, 2) + '\n');
+  } else {
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  }
+}
+
+async function cmdBatch(
+  input: unknown,
+  options: {
+    apiKey?: string;
+    baseUrl?: string;
+    appId?: string;
+    threadId?: string;
+    noMeta?: boolean;
+  },
+): Promise<void> {
+  // Validate input shape
+  if (!Array.isArray(input)) {
+    fatal(
+      'Batch input must be a JSON array of { stepType, step } objects.\n' +
+        'Example: mindstudio batch \'[{"stepType":"generateImage","step":{"prompt":"a cat"}}]\'',
+    );
+  }
+
+  for (let i = 0; i < input.length; i++) {
+    const item = input[i] as Record<string, unknown>;
+    if (!item || typeof item !== 'object' || !item.stepType || !item.step) {
+      fatal(
+        `Invalid step at index ${i}: each entry must have "stepType" and "step" fields.`,
+      );
+    }
+  }
+
+  // Resolve method aliases so users can use the friendly names
+  const { stepMetadata } = await import('./generated/metadata.js');
+  const metaByName = new Map(
+    Object.entries(stepMetadata).map(([name, m]) => [name, m]),
+  );
+
+  const steps = (input as Array<{ stepType: string; step: Record<string, unknown> }>).map(
+    (item, i) => {
+      // Try exact match first, then kebab→camel
+      let meta = metaByName.get(item.stepType);
+      if (!meta) {
+        const camel = item.stepType.replace(/-([a-z])/g, (_, c: string) =>
+          c.toUpperCase(),
+        );
+        meta = metaByName.get(camel);
+      }
+      if (meta) {
+        return { stepType: meta.stepType, step: item.step };
+      }
+      // Fall through — let the API validate unknown step types
+      return { stepType: item.stepType, step: item.step };
+    },
+  );
+
+  const agent = await createAgent(options);
+  const result = await agent.executeStepBatch(steps, {
+    appId: options.appId,
+    threadId: options.threadId,
+  });
+
+  if (options.noMeta) {
+    process.stdout.write(JSON.stringify(result.results, null, 2) + '\n');
   } else {
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   }
@@ -1146,10 +1219,87 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (command === 'batch') {
+      // Input: JSON array as arg, or stdin
+      let input: unknown;
+      const firstArg = positionals[1];
+
+      if (firstArg && firstArg.startsWith('[')) {
+        try {
+          input = parseJson5(firstArg);
+        } catch {
+          fatal(`Invalid JSON input: ${firstArg}`);
+        }
+      } else if (!process.stdin.isTTY) {
+        const raw = (await readStdin()).trim();
+        if (raw) {
+          try {
+            input = parseJson5(raw);
+          } catch {
+            fatal(`Invalid JSON on stdin: ${raw}`);
+          }
+        }
+      }
+
+      if (input === undefined) {
+        usageBlock([
+          'batch — Execute multiple actions in parallel',
+          '',
+          'Usage:',
+          '  mindstudio batch \'[{ "stepType": "<action>", "step": { ... } }, ...]\'',
+          '  cat steps.json | mindstudio batch',
+          '',
+          'Each entry needs "stepType" (action name) and "step" (input object).',
+          'Maximum 50 steps per batch. Results come back in the same order.',
+          'Individual failures don\'t affect other steps.',
+          '',
+          'Options:',
+          '  --app-id <id>      App ID for thread context',
+          '  --thread-id <id>   Thread ID for state persistence',
+          '  --no-meta          Strip top-level metadata from output',
+          '',
+          'Examples:',
+          '  mindstudio batch \'[',
+          '    { "stepType": "generateImage", "step": { "prompt": "a sunset" } },',
+          '    { "stepType": "textToSpeech", "step": { "text": "hello world" } }',
+          '  ]\'',
+          '',
+          '  echo \'[{"stepType":"searchGoogle","step":{"query":"cats"}}]\' | mindstudio batch',
+        ]);
+      }
+
+      await cmdBatch(input, {
+        apiKey: values['api-key'] as string | undefined,
+        baseUrl: values['base-url'] as string | undefined,
+        appId: values['app-id'] as string | undefined,
+        threadId: values['thread-id'] as string | undefined,
+        noMeta: values['no-meta'] as boolean | undefined,
+      });
+      return;
+    }
+
     if (command === 'run-agent') {
       const appId = positionals[1];
       if (!appId)
-        fatal('Missing app ID. Usage: mindstudio run-agent <appId> [json | --flags]');
+        usageBlock([
+          'run-agent — Run a pre-built agent and wait for the result',
+          '',
+          'Usage:',
+          '  mindstudio run-agent <appId> [json | --flags]',
+          '',
+          'Options:',
+          '  --workflow <name>  Workflow to execute (default: app default)',
+          '  --version <ver>    App version, e.g. "draft" (default: "live")',
+          '  --output-key <key> Extract a single field from the result',
+          '  --no-meta          Strip metadata from output',
+          '',
+          'Examples:',
+          '  mindstudio run-agent abc123 --query "hello"',
+          '  mindstudio run-agent abc123 \'{"query": "hello"}\'',
+          '  mindstudio run-agent abc123 --workflow summarize --version draft',
+          '',
+          'Tip: run "mindstudio agents" to list available agent IDs.',
+        ]);
 
       // Parse input from remaining args
       const runArgv = process.argv.slice(process.argv.indexOf('run-agent') + 2);
@@ -1214,7 +1364,18 @@ async function main(): Promise<void> {
     if (command === 'upload') {
       const filePath = positionals[1];
       if (!filePath)
-        fatal('Missing file path. Usage: mindstudio upload <filepath>');
+        usageBlock([
+          'upload — Upload a file to the MindStudio CDN',
+          '',
+          'Usage:',
+          '  mindstudio upload <filepath>',
+          '',
+          'Returns the permanent public URL for the uploaded file.',
+          '',
+          'Examples:',
+          '  mindstudio upload photo.png',
+          '  mindstudio upload /path/to/document.pdf',
+        ]);
       await cmdUpload(filePath, {
         apiKey: values['api-key'] as string | undefined,
         baseUrl: values['base-url'] as string | undefined,
@@ -1238,7 +1399,20 @@ async function main(): Promise<void> {
       if (command === 'list-models-by-type' || command === 'list-models-summary-by-type') {
         type = positionals[1];
         if (!type)
-          fatal(`Missing model type. Usage: mindstudio ${command} <type>`);
+          usageBlock([
+            `${command} — List AI models filtered by type`,
+            '',
+            'Usage:',
+            `  mindstudio ${command} <type>`,
+            '',
+            'Types:',
+            '  llm_chat, image_generation, video_generation,',
+            '  video_analysis, text_to_speech, vision, transcription',
+            '',
+            'Examples:',
+            `  mindstudio ${command} image_generation`,
+            `  mindstudio ${command} llm_chat`,
+          ]);
       }
       if (command === 'list-models-summary' || command === 'list-models-summary-by-type') {
         summary = true;
@@ -1272,9 +1446,18 @@ async function main(): Promise<void> {
     if (command === 'estimate-cost') {
       const stepMethod = positionals[1];
       if (!stepMethod)
-        fatal(
-          'Missing action name. Usage: mindstudio estimate-cost <action> [json | --flags]',
-        );
+        usageBlock([
+          'estimate-cost — Estimate the cost of an action before running it',
+          '',
+          'Usage:',
+          '  mindstudio estimate-cost <action> [json | --flags]',
+          '',
+          'Examples:',
+          '  mindstudio estimate-cost generate-image --prompt "a sunset"',
+          '  mindstudio estimate-cost generate-text \'{"message": "hello"}\'',
+          '',
+          'Tip: run "mindstudio list-actions" to see available actions.',
+        ]);
       const costArgv = positionals.slice(2);
       let costInput: Record<string, unknown>;
       const firstArg = costArgv[0];
@@ -1297,7 +1480,15 @@ async function main(): Promise<void> {
     if (command === 'change-name') {
       const name = positionals[1];
       if (!name)
-        fatal('Missing name. Usage: mindstudio change-name <name>');
+        usageBlock([
+          'change-name — Update your display name',
+          '',
+          'Usage:',
+          '  mindstudio change-name <name>',
+          '',
+          'Examples:',
+          '  mindstudio change-name "My Agent"',
+        ]);
       await cmdChangeName(name, {
         apiKey: values['api-key'] as string | undefined,
         baseUrl: values['base-url'] as string | undefined,
@@ -1308,9 +1499,17 @@ async function main(): Promise<void> {
     if (command === 'change-profile-picture') {
       const url = positionals[1];
       if (!url)
-        fatal(
-          'Missing URL. Usage: mindstudio change-profile-picture <url>',
-        );
+        usageBlock([
+          'change-profile-picture — Update your profile picture',
+          '',
+          'Usage:',
+          '  mindstudio change-profile-picture <url>',
+          '',
+          'Examples:',
+          '  mindstudio change-profile-picture https://example.com/avatar.png',
+          '',
+          'Tip: use "mindstudio upload" to host an image first.',
+        ]);
       await cmdChangeProfilePicture(url, {
         apiKey: values['api-key'] as string | undefined,
         baseUrl: values['base-url'] as string | undefined,
@@ -1330,7 +1529,21 @@ async function main(): Promise<void> {
     if (command === 'info') {
       const rawMethod = positionals[1];
       if (!rawMethod)
-        fatal('Missing action name. Usage: mindstudio info <action>');
+        usageBlock([
+          'info — Show action details and parameters',
+          '',
+          'Usage:',
+          '  mindstudio info <action>',
+          '',
+          'Shows the description, input parameters (with types and',
+          'defaults), and output fields for an action.',
+          '',
+          'Examples:',
+          '  mindstudio info generate-image',
+          '  mindstudio info search-google',
+          '',
+          'Tip: run "mindstudio list-actions" to see available actions.',
+        ]);
       await cmdInfo(rawMethod);
       return;
     }
@@ -1338,7 +1551,28 @@ async function main(): Promise<void> {
     // run (explicit or implicit — any unknown command is treated as a method)
     const split = findMethodSplit(process.argv.slice(2));
     if (!split)
-      fatal('Missing action name. Usage: mindstudio <action> [json | --flags]');
+      usageBlock([
+        'Run an action directly',
+        '',
+        'Usage:',
+        '  mindstudio <action> [json | --flags]',
+        '  mindstudio run <action> [json | --flags]',
+        '',
+        'Input can be inline JSON, --flags, or piped via stdin.',
+        '',
+        'Options:',
+        '  --app-id <id>      App ID for thread context',
+        '  --thread-id <id>   Thread ID for state persistence',
+        '  --output-key <key> Extract a single field from the result',
+        '  --no-meta          Strip $-prefixed metadata from output',
+        '',
+        'Examples:',
+        '  mindstudio generate-image --prompt "a sunset"',
+        '  mindstudio search-google \'{"query": "cats"}\'',
+        '  echo \'{"message":"hello"}\' | mindstudio generate-text',
+        '',
+        'Tip: run "mindstudio list-actions" to see available actions.',
+      ]);
 
     const { rawMethod, stepArgv } = split;
     const allKeys = await getAllMethodKeys();

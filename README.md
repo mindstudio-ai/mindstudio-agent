@@ -264,6 +264,47 @@ const result = await agent.runAgent({
 
 `runAgent()` uses async polling internally — it submits the run, then polls until complete or failed. The poll interval defaults to 1 second and can be configured with `pollIntervalMs`.
 
+## Batch execution
+
+Execute multiple steps in parallel in a single request. All steps run server-side in parallel — results come back in the same order as the input. Individual failures don't affect other steps.
+
+```typescript
+const { results, totalBillingCost } = await agent.executeStepBatch([
+  { stepType: 'generateImage', step: { prompt: 'A mountain landscape' } },
+  { stepType: 'textToSpeech', step: { text: 'Welcome to the app' } },
+  { stepType: 'searchGoogle', step: { query: 'TypeScript best practices' } },
+]);
+
+// Each result has: stepType, output?, billingCost?, error?
+for (const r of results) {
+  if (r.error) {
+    console.error(`${r.stepType} failed: ${r.error}`);
+  } else {
+    console.log(`${r.stepType}:`, r.output);
+  }
+}
+```
+
+Maximum 50 steps per batch. Supports `appId` and `threadId` options for thread context.
+
+From the CLI:
+
+```bash
+# Inline JSON array
+mindstudio batch '[
+  {"stepType": "generateImage", "step": {"prompt": "a sunset"}},
+  {"stepType": "searchGoogle", "step": {"query": "cats"}}
+]'
+
+# Piped from a file
+cat steps.json | mindstudio batch
+
+# Strip metadata
+mindstudio batch --no-meta '[...]'
+```
+
+Run `mindstudio batch` with no arguments for full usage help.
+
 ## Thread persistence
 
 Steps execute within threads. Pass `$threadId` and `$appId` from a previous call to maintain state:
@@ -374,6 +415,10 @@ import type {
   ListAgentsResult,
   RunAgentOptions,
   RunAgentResult,
+  BatchStepInput,
+  BatchStepResult,
+  ExecuteStepBatchOptions,
+  ExecuteStepBatchResult,
 } from '@mindstudio-ai/agent';
 ```
 
@@ -411,6 +456,7 @@ Commands:
   whoami                           Show current authentication status
   <method> [json | --flags]        Execute a step method
   exec <method> [json | --flags]   Execute a step method (same as above)
+  batch [json]                     Execute multiple steps in parallel
   list [--json]                    List available methods
   info <method>                    Show method details (params, types, output)
   agents [--json]                  List pre-built agents in your organization

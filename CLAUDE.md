@@ -13,7 +13,7 @@ src/
   mcp.ts                # Minimal MCP server (JSON-RPC 2.0 over stdio, zero deps)
   http.ts               # Fetch wrapper with concurrency queuing and 429 retry
   errors.ts             # MindStudioError class
-  types.ts              # AgentOptions, StepExecutionOptions, StepExecutionResult, StepExecutionMeta, agent run/list types
+  types.ts              # AgentOptions, StepExecutionOptions, StepExecutionResult, StepExecutionMeta, batch types, agent run/list types
   rate-limit.ts         # Concurrency semaphore + call cap tracking
   generated/            # AUTO-GENERATED at build time — do not edit by hand
     types.ts            # Step input/output interfaces, StepName union, StepInputMap/StepOutputMap
@@ -51,12 +51,13 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
 - `mindstudio list [--json] [--summary]` — list available methods (`--summary` for compact `{method: description}` JSON, `--json` for full schemas)
 - `mindstudio agents [--json]` — list pre-built agents in the organization
 - `mindstudio run <appId> [json | --flags]` — run a pre-built agent (async poll, returns result)
+- `mindstudio batch [json]` — execute multiple steps in parallel (`POST /developer/v2/steps/execute-batch`). Input is a JSON array of `{ stepType, step }` objects (max 50). Supports `--app-id`, `--thread-id`, `--no-meta`. Input via arg or stdin pipe.
 - `mindstudio mcp` — start MCP server (JSON-RPC 2.0 over stdio)
 - Auth via `mindstudio login`, `--api-key` flag, or `MINDSTUDIO_API_KEY` env var
 - MCP server creates one agent per session with `reuseThreadId: true`
 - CLI supports `--app-id` and `--thread-id` for thread persistence across calls
 - Both CLI and MCP consume `src/generated/metadata.ts` for method schemas and descriptions
-- MCP exposes `listSteps` (compact discovery), `listAgents`, `runAgent`, and all helper methods (`listModels`, `listModelsByType`, `listModelsSummary`, `listModelsSummaryByType`, `listConnectors`, `getConnector`, `getConnectorAction`, `listConnections`, `estimateStepCost`) as tools alongside all step methods
+- MCP exposes `listSteps` (compact discovery), `listAgents`, `runAgent`, `executeBatch`, and all helper methods (`listModels`, `listModelsByType`, `listModelsSummary`, `listModelsSummaryByType`, `listConnectors`, `getConnector`, `getConnectorAction`, `listConnections`, `estimateStepCost`) as tools alongside all step methods
 - `tsup.config.ts` uses an array of two configs: library build (dts, sourcemap) + CLI build (shebang, no dts)
 
 ## Architecture notes
@@ -82,6 +83,8 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
   - Connectors are sourced from the open-source [MindStudio Connector Registry (MSCR)](https://github.com/mindstudio-ai/mscr) with 850+ connector actions across third-party services. Connector actions are executed via the `runFromConnectorRegistry` step and require the user to connect to the third-party service in MindStudio first.
   - `estimateStepCost(stepType, step?, options?)` — `POST /developer/v2/helpers/step-cost-estimate` (returns `{ costType?, estimates? }` with per-event pricing info)
 - **Agent methods** (`listAgents`, `runAgent`) are hand-written on `MindStudioAgent` (not generated). `listAgents()` calls `GET /developer/v2/agents/load`. `runAgent()` posts to `POST /developer/v2/agents/run` with `async: true`, then polls `GET /developer/v2/agents/run/poll/:callbackToken` until complete/error. Poll requests bypass the rate limiter (no auth needed, token is the secret). Default poll interval is 1s, configurable via `pollIntervalMs`.
+- **Batch execution** (`executeStepBatch`) is hand-written on `MindStudioAgent`. POSTs to `POST /developer/v2/steps/execute-batch` with `{ steps: [{ stepType, step }], appId?, threadId? }`. Max 50 steps per batch. Steps run in parallel server-side. Results come back in input order. Individual failures don't affect other steps. S3 output URLs are resolved in parallel. Returns `{ results: BatchStepResult[], totalBillingCost?, appId?, threadId? }`. Types: `BatchStepInput`, `BatchStepResult`, `ExecuteStepBatchOptions`, `ExecuteStepBatchResult`.
+- **CLI command help** — commands that require arguments (`batch`, `run-agent`, `upload`, `estimate-cost`, `change-name`, `change-profile-picture`, `info`, and the catch-all action runner) display rich usage help via `usageBlock()` when called without required args, instead of terse error messages.
 
 ## Rate limiting
 
