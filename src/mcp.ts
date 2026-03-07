@@ -452,8 +452,11 @@ export async function startMcpServer(options?: {
           } else if (toolName === 'listConnections') {
             result = await (getAgent() as any).listConnections();
           } else if (toolName === 'estimateActionCost') {
+            const meta = await getMetadata();
+            const rawType = args.stepType as string;
+            const resolved = meta[rawType]?.stepType ?? rawType;
             result = await (getAgent() as any).estimateStepCost(
-              args.stepType as string,
+              resolved,
               args.step as Record<string, unknown> | undefined,
               {
                 appId: args.appId as string | undefined,
