@@ -1,4 +1,3 @@
-import { hostname } from 'node:os';
 import { request, type HttpClientConfig } from './http.js';
 import { MindStudioError } from './errors.js';
 import { RateLimiter, type AuthType } from './rate-limit.js';
@@ -71,10 +70,6 @@ export class MindStudioAgent {
       token,
       rateLimiter: new RateLimiter(authType),
       maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
-      agentName:
-        options.agentName ??
-        process.env.MINDSTUDIO_AGENT_NAME ??
-        hostname(),
     };
   }
 

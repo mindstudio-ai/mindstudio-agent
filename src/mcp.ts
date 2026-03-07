@@ -11,10 +11,29 @@
  */
 
 import { createInterface } from 'node:readline';
+import { readFileSync } from 'node:fs';
+import { extname } from 'node:path';
 import { MindStudioAgent } from './client.js';
 import type { StepMetadata } from './generated/metadata.js';
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
+
+const MIME_TYPES: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  pdf: 'application/pdf',
+  json: 'application/json',
+  txt: 'text/plain',
+  csv: 'text/csv',
+};
 
 interface JsonRpcRequest {
   jsonrpc: '2.0';
@@ -39,6 +58,9 @@ const HELPER_DESCRIPTIONS: Record<string, string> = {
   getConnectorAction: 'Get full configuration for a connector action.',
   listConnections: 'List OAuth connections for the organization.',
   estimateStepCost: 'Estimate the cost of executing a step before running it.',
+  changeName: 'Update the display name of the authenticated agent.',
+  changeProfilePicture: 'Update the profile picture of the authenticated agent.',
+  uploadFile: 'Upload a file to the MindStudio CDN.',
   listAgents: 'List all pre-built agents in the organization.',
   runAgent: 'Run a pre-built agent and wait for the result.',
 };
@@ -47,7 +69,7 @@ const HELPER_TOOLS: McpTool[] = [
   {
     name: 'listSteps',
     description:
-      'List all available methods with their descriptions. Returns a compact { method: description } map. Use this first to discover what steps and helpers are available, then call a specific method by name.',
+      'List all available methods with their descriptions. Returns a compact { method: description } map. Call this to discover what steps and helpers are available, then call a specific method by name. Tip: if you haven\'t already, call `changeName` to set your display name first.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -175,6 +197,51 @@ const HELPER_TOOLS: McpTool[] = [
     },
   },
   {
+    name: 'changeName',
+    description:
+      'Update the display name of the authenticated agent. Useful for agents to set their own name after connecting.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        displayName: {
+          type: 'string',
+          description: 'The new display name.',
+        },
+      },
+      required: ['displayName'],
+    },
+  },
+  {
+    name: 'changeProfilePicture',
+    description:
+      'Update the profile picture of the authenticated agent. Useful for agents to set their own avatar after connecting.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        profilePictureUrl: {
+          type: 'string',
+          description: 'URL of the new profile picture.',
+        },
+      },
+      required: ['profilePictureUrl'],
+    },
+  },
+  {
+    name: 'uploadFile',
+    description:
+      'Upload a local file to the MindStudio CDN. Returns the permanent public URL.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        filePath: {
+          type: 'string',
+          description: 'Absolute or relative path to the file to upload.',
+        },
+      },
+      required: ['filePath'],
+    },
+  },
+  {
     name: 'listAgents',
     description:
       'List all pre-built agents in the organization along with org metadata.',
@@ -230,12 +297,10 @@ function sendError(
 export async function startMcpServer(options?: {
   apiKey?: string;
   baseUrl?: string;
-  agentName?: string;
 }): Promise<void> {
   let agent: MindStudioAgent | null = null;
   let metadata: Record<string, StepMetadata> | null = null;
   let tools: McpTool[] | null = null;
-  let mcpClientName: string | undefined;
 
   async function getMetadata(): Promise<Record<string, StepMetadata>> {
     if (!metadata) {
@@ -250,7 +315,6 @@ export async function startMcpServer(options?: {
       agent = new MindStudioAgent({
         apiKey: options?.apiKey,
         baseUrl: options?.baseUrl,
-        agentName: options?.agentName ?? mcpClientName,
         reuseThreadId: true,
       });
     }
@@ -278,8 +342,6 @@ export async function startMcpServer(options?: {
 
     switch (method) {
       case 'initialize':
-        mcpClientName =
-          (params as { clientInfo?: { name?: string } })?.clientInfo?.name;
         sendResult(id!, {
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: { tools: {} },
@@ -287,6 +349,14 @@ export async function startMcpServer(options?: {
             name: 'mindstudio-agent',
             version: process.env.PACKAGE_VERSION ?? '0.0.0',
           },
+          instructions:
+            'Welcome to MindStudio — a platform with 200+ AI models, 850+ third-party integrations, and pre-built agents.\n\n' +
+            'Getting started:\n' +
+            '1. Call `listAgents` to verify your connection and see available agents.\n' +
+            '2. Call `changeName` to set your display name — use your name or whatever your user calls you. This is how you\'ll appear in MindStudio request logs.\n' +
+            '3. If you have a profile picture or icon, call `uploadFile` to upload it, then `changeProfilePicture` with the returned URL. This helps users identify your requests in their logs.\n' +
+            '4. Call `listSteps` to discover all available step methods and helpers.\n\n' +
+            'Then use the tools to generate text, images, video, audio, search the web, work with data sources, run agents, and more.',
         });
         break;
 
@@ -353,6 +423,26 @@ export async function startMcpServer(options?: {
                 workflowId: args.workflowId as string | undefined,
               },
             );
+          } else if (toolName === 'changeName') {
+            await (getAgent() as any).changeName(
+              args.displayName as string,
+            );
+            result = { success: true };
+          } else if (toolName === 'changeProfilePicture') {
+            await (getAgent() as any).changeProfilePicture(
+              args.profilePictureUrl as string,
+            );
+            result = { success: true };
+          } else if (toolName === 'uploadFile') {
+            const filePath = args.filePath as string;
+            const ext = extname(filePath).slice(1).toLowerCase();
+            if (!ext) throw new Error('Cannot determine file extension from path.');
+            const content = readFileSync(filePath);
+            const mimeType = MIME_TYPES[ext];
+            result = await (getAgent() as any).uploadFile(content, {
+              extension: ext,
+              ...(mimeType && { type: mimeType }),
+            });
           } else if (toolName === 'listAgents') {
             result = await getAgent().listAgents();
           } else if (toolName === 'runAgent') {

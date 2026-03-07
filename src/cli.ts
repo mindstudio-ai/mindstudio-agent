@@ -1,5 +1,7 @@
 import { parseArgs } from 'node:util';
 import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { extname } from 'node:path';
 
 const HELP = `Usage: mindstudio <command | method> [options]
 
@@ -7,6 +9,7 @@ Commands:
   login                       Authenticate with MindStudio (opens browser)
   logout                      Clear stored credentials
   whoami                      Show current authentication status
+  upload <filepath>             Upload a file to the MindStudio CDN
   <method> [json | --flags]   Execute a step method (shorthand for exec)
   exec <method> [json | --flags]   Execute a step method
   list [--json] [--summary]   List available methods (--summary for compact JSON)
@@ -18,7 +21,6 @@ Commands:
 Options:
   --api-key <key>          API key (or set MINDSTUDIO_API_KEY env)
   --base-url <url>         API base URL
-  --agent-name <name>      Name shown in request logs (or set MINDSTUDIO_AGENT_NAME)
   --app-id <id>            App ID for thread context
   --thread-id <id>         Thread ID for state persistence
   --output-key <key>       Extract a single field from the result
@@ -134,11 +136,21 @@ const HELPER_NAMES = new Set([
   'getConnectorAction',
   'listConnections',
   'estimateStepCost',
+  'changeName',
+  'changeProfilePicture',
 ]);
 
 const BUILTIN_COMMANDS = new Set([
-  'exec', 'list', 'info', 'mcp', 'agents', 'run',
-  'login', 'logout', 'whoami',
+  'exec',
+  'list',
+  'info',
+  'mcp',
+  'agents',
+  'run',
+  'upload',
+  'login',
+  'logout',
+  'whoami',
 ]);
 
 /**
@@ -146,10 +158,7 @@ const BUILTIN_COMMANDS = new Set([
  * Accepts both kebab-case and camelCase, returns the camelCase key.
  * On failure, suggests the closest match.
  */
-function resolveMethodOrFail(
-  name: string,
-  metadataKeys: Set<string>,
-): string {
+function resolveMethodOrFail(name: string, metadataKeys: Set<string>): string {
   if (metadataKeys.has(name)) return name;
   const camel = kebabToCamel(name);
   if (metadataKeys.has(camel)) return camel;
@@ -166,8 +175,7 @@ function resolveMethodOrFail(
     }
   }
 
-  const suggestion =
-    bestDist <= 3 ? ` Did you mean '${bestMatch}'?` : '';
+  const suggestion = bestDist <= 3 ? ` Did you mean '${bestMatch}'?` : '';
   fatal(
     `Unknown method: ${name}.${suggestion} Run 'mindstudio list' to see available methods.`,
   );
@@ -192,6 +200,8 @@ const HELPER_DESCRIPTIONS: Record<string, string> = {
   getConnectorAction: 'Get full configuration for a connector action.',
   listConnections: 'List OAuth connections for the organization.',
   estimateStepCost: 'Estimate the cost of executing a step before running it.',
+  changeName: 'Update the display name of the authenticated agent.',
+  changeProfilePicture: 'Update the profile picture of the authenticated agent.',
   listAgents: 'List all pre-built agents in the organization.',
   runAgent: 'Run a pre-built agent and wait for the result.',
 };
@@ -209,16 +219,11 @@ function buildSummary(
   return summary;
 }
 
-async function cmdList(
-  asJson: boolean,
-  asSummary: boolean,
-): Promise<void> {
+async function cmdList(asJson: boolean, asSummary: boolean): Promise<void> {
   const { stepMetadata } = await import('./generated/metadata.js');
 
   if (asSummary) {
-    process.stdout.write(
-      JSON.stringify(buildSummary(stepMetadata)) + '\n',
-    );
+    process.stdout.write(JSON.stringify(buildSummary(stepMetadata)) + '\n');
   } else if (asJson) {
     const entries = Object.entries(stepMetadata).map(([name, meta]) => ({
       method: camelToKebab(name),
@@ -250,16 +255,66 @@ async function cmdInfo(rawMethod: string): Promise<void> {
 
   // Helpers — show hardcoded info
   if (HELPER_NAMES.has(method)) {
-    const helpers: Record<string, { desc: string; input: string; output: string }> = {
-      listModels: { desc: 'List all available AI models.', input: '(none)', output: '{ models: MindStudioModel[] }' },
-      listModelsByType: { desc: 'List AI models filtered by type.', input: 'modelType: string (required)', output: '{ models: MindStudioModel[] }' },
-      listModelsSummary: { desc: 'List all AI models (summary: id, name, type, tags).', input: '(none)', output: '{ models: MindStudioModelSummary[] }' },
-      listModelsSummaryByType: { desc: 'List AI models (summary) filtered by type.', input: 'modelType: string (required)', output: '{ models: MindStudioModelSummary[] }' },
-      listConnectors: { desc: 'List available connector services and their actions.', input: '(none)', output: '{ services: ConnectorService[] }' },
-      getConnector: { desc: 'Get details for a connector service.', input: 'serviceId: string (required)', output: '{ service: ConnectorService }' },
-      getConnectorAction: { desc: 'Get full configuration for a connector action.', input: 'serviceId: string, actionId: string (both required)', output: '{ action: ConnectorActionDetail }' },
-      listConnections: { desc: 'List OAuth connections for the organization.', input: '(none)', output: '{ connections: Connection[] }' },
-      estimateStepCost: { desc: 'Estimate the cost of executing a step before running it.', input: 'stepType: string (required), step: object, appId?: string, workflowId?: string', output: '{ costType?: string, estimates?: StepCostEstimateEntry[] }' },
+    const helpers: Record<
+      string,
+      { desc: string; input: string; output: string }
+    > = {
+      listModels: {
+        desc: 'List all available AI models.',
+        input: '(none)',
+        output: '{ models: MindStudioModel[] }',
+      },
+      listModelsByType: {
+        desc: 'List AI models filtered by type.',
+        input: 'modelType: string (required)',
+        output: '{ models: MindStudioModel[] }',
+      },
+      listModelsSummary: {
+        desc: 'List all AI models (summary: id, name, type, tags).',
+        input: '(none)',
+        output: '{ models: MindStudioModelSummary[] }',
+      },
+      listModelsSummaryByType: {
+        desc: 'List AI models (summary) filtered by type.',
+        input: 'modelType: string (required)',
+        output: '{ models: MindStudioModelSummary[] }',
+      },
+      listConnectors: {
+        desc: 'List available connector services and their actions.',
+        input: '(none)',
+        output: '{ services: ConnectorService[] }',
+      },
+      getConnector: {
+        desc: 'Get details for a connector service.',
+        input: 'serviceId: string (required)',
+        output: '{ service: ConnectorService }',
+      },
+      getConnectorAction: {
+        desc: 'Get full configuration for a connector action.',
+        input: 'serviceId: string, actionId: string (both required)',
+        output: '{ action: ConnectorActionDetail }',
+      },
+      listConnections: {
+        desc: 'List OAuth connections for the organization.',
+        input: '(none)',
+        output: '{ connections: Connection[] }',
+      },
+      estimateStepCost: {
+        desc: 'Estimate the cost of executing a step before running it.',
+        input:
+          'stepType: string (required), step: object, appId?: string, workflowId?: string',
+        output: '{ costType?: string, estimates?: StepCostEstimateEntry[] }',
+      },
+      changeName: {
+        desc: 'Update the display name of the authenticated agent.',
+        input: 'displayName: string (required)',
+        output: '(none)',
+      },
+      changeProfilePicture: {
+        desc: 'Update the profile picture of the authenticated agent.',
+        input: 'profilePictureUrl: string (required)',
+        output: '(none)',
+      },
     };
     const h = helpers[method];
     process.stderr.write(`\n  ${camelToKebab(method)}\n\n`);
@@ -326,10 +381,12 @@ async function cmdInfo(rawMethod: string): Promise<void> {
 }
 
 function formatPropType(prop: Record<string, unknown>): string {
-  if (prop.enum) return (prop.enum as unknown[]).map((v) => JSON.stringify(v)).join(' | ');
+  if (prop.enum)
+    return (prop.enum as unknown[]).map((v) => JSON.stringify(v)).join(' | ');
   if (prop.type === 'array') return 'array';
   if (prop.type === 'object') return 'object';
-  if (typeof prop.type === 'string') return prop.type === 'integer' ? 'number' : prop.type;
+  if (typeof prop.type === 'string')
+    return prop.type === 'integer' ? 'number' : prop.type;
   return 'string';
 }
 
@@ -339,7 +396,6 @@ async function cmdExec(
   options: {
     apiKey?: string;
     baseUrl?: string;
-    agentName?: string;
     appId?: string;
     threadId?: string;
     outputKey?: string;
@@ -357,7 +413,6 @@ async function cmdExec(
   const agent = new MindStudioAgent({
     apiKey: options.apiKey,
     baseUrl: options.baseUrl,
-    agentName: options.agentName,
   }) as any;
 
   let result: unknown;
@@ -369,9 +424,7 @@ async function cmdExec(
   } else if (method === 'listModelsSummary') {
     result = await agent.listModelsSummary();
   } else if (method === 'listModelsSummaryByType') {
-    result = await agent.listModelsSummaryByType(
-      input.modelType as string,
-    );
+    result = await agent.listModelsSummaryByType(input.modelType as string);
   } else if (method === 'listConnectors') {
     result = await agent.listConnectors();
   } else if (method === 'getConnector') {
@@ -392,6 +445,12 @@ async function cmdExec(
         workflowId: input.workflowId as string | undefined,
       },
     );
+  } else if (method === 'changeName') {
+    await agent.changeName(input.displayName as string);
+    result = { success: true };
+  } else if (method === 'changeProfilePicture') {
+    await agent.changeProfilePicture(input.profilePictureUrl as string);
+    result = { success: true };
   } else {
     const { stepMetadata } = await import('./generated/metadata.js');
     const meta = stepMetadata[method];
@@ -428,13 +487,12 @@ async function cmdExec(
 
 async function cmdAgents(
   asJson: boolean,
-  options: { apiKey?: string; baseUrl?: string; agentName?: string },
+  options: { apiKey?: string; baseUrl?: string },
 ): Promise<void> {
   const { MindStudioAgent } = await import('./client.js');
   const agent = new MindStudioAgent({
     apiKey: options.apiKey,
     baseUrl: options.baseUrl,
-    agentName: options.agentName,
   });
 
   const result = await agent.listAgents();
@@ -453,9 +511,7 @@ async function cmdAgents(
     );
     for (const app of result.apps) {
       const desc = app.description || '(no description)';
-      process.stdout.write(
-        `${app.name.padEnd(maxLen)}  ${app.id}  ${desc}\n`,
-      );
+      process.stdout.write(`${app.name.padEnd(maxLen)}  ${app.id}  ${desc}\n`);
     }
   }
 }
@@ -466,7 +522,6 @@ async function cmdRun(
   options: {
     apiKey?: string;
     baseUrl?: string;
-    agentName?: string;
     workflow?: string;
     version?: string;
     outputKey?: string;
@@ -477,7 +532,6 @@ async function cmdRun(
   const agent = new MindStudioAgent({
     apiKey: options.apiKey,
     baseUrl: options.baseUrl,
-    agentName: options.agentName,
   });
 
   const result = await agent.runAgent({
@@ -505,6 +559,51 @@ async function cmdRun(
   } else {
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   }
+}
+
+const MIME_TYPES: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  pdf: 'application/pdf',
+  json: 'application/json',
+  txt: 'text/plain',
+  csv: 'text/csv',
+};
+
+async function cmdUpload(
+  filePath: string,
+  options: { apiKey?: string; baseUrl?: string },
+): Promise<void> {
+  const ext = extname(filePath).slice(1).toLowerCase();
+  if (!ext) fatal('Cannot determine file extension. Please provide a file with an extension.');
+
+  const content = readFileSync(filePath);
+  const mimeType = MIME_TYPES[ext];
+
+  const { MindStudioAgent } = await import('./client.js');
+  await import('./generated/helpers.js').then((m) =>
+    m.applyHelperMethods(MindStudioAgent),
+  );
+
+  const agent = new MindStudioAgent({
+    apiKey: options.apiKey,
+    baseUrl: options.baseUrl,
+  }) as any;
+
+  const { url } = await agent.uploadFile(content, {
+    extension: ext,
+    ...(mimeType && { type: mimeType }),
+  });
+
+  process.stdout.write(url + '\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -581,9 +680,7 @@ async function checkForUpdate(): Promise<string | null> {
       _updateCheck: { latestVersion, checkedAt: Date.now() },
     });
 
-    return isNewerVersion(currentVersion, latestVersion)
-      ? latestVersion
-      : null;
+    return isNewerVersion(currentVersion, latestVersion) ? latestVersion : null;
   } catch {
     return null;
   }
@@ -661,8 +758,14 @@ function maskKey(key: string): string {
 const DEFAULT_BASE_URL = 'https://v1.mindstudio-api.com';
 
 const SPINNER_FRAMES = [
-  '\u28FE', '\u28FD', '\u28FB', '\u28BF', '\u287F',
-  '\u28DF', '\u28EF', '\u28F7',
+  '\u28FE',
+  '\u28FD',
+  '\u28FB',
+  '\u28BF',
+  '\u287F',
+  '\u28DF',
+  '\u28EF',
+  '\u28F7',
 ];
 
 async function cmdLogin(options: { baseUrl?: string }): Promise<void> {
@@ -677,7 +780,7 @@ async function cmdLogin(options: { baseUrl?: string }): Promise<void> {
   process.stderr.write('\n');
   const ver = process.env.PACKAGE_VERSION ?? '';
   process.stderr.write(
-    `  ${ansi.bold('MindStudio')} ${ansi.gray('CLI')}${ver ? ' ' + ansi.gray('v' + ver) : ''}\n`,
+    `  ${ansi.bold('MindStudio Agent')} ${ver ? ' ' + ansi.gray('v' + ver) : ''}\n`,
   );
   process.stderr.write(
     `  ${ansi.gray('Connect your MindStudio account to get started.')}\n\n`,
@@ -688,12 +791,10 @@ async function cmdLogin(options: { baseUrl?: string }): Promise<void> {
   await waitForKeypress();
   // Move up 4 lines and clear from cursor down
   process.stderr.write('\x1b[4A\r\x1b[J');
-  process.stderr.write(
-    `  ${ansi.gray('Requesting authorization...')}\n`,
-  );
+  process.stderr.write(`  ${ansi.gray('Requesting authorization...')}\n`);
 
   const authRes = await fetch(
-    `${baseUrl}/developer/v2/request-auth-url`,
+    `${baseUrl}/developer/v2/request-auth-url?agent=true`,
     {
       headers: {
         'Content-Type': 'application/json',
@@ -716,7 +817,7 @@ async function cmdLogin(options: { baseUrl?: string }): Promise<void> {
   openBrowser(url);
   process.stderr.write(
     `  ${ansi.cyanBright('Opening browser to authenticate...')}\n\n` +
-      `  ${ansi.gray('If the browser didn\'t open, visit:')}\n` +
+      `  ${ansi.gray("If the browser didn't open, visit:")}\n` +
       `  ${ansi.cyan(url)}\n\n`,
   );
 
@@ -746,9 +847,7 @@ async function cmdLogin(options: { baseUrl?: string }): Promise<void> {
 
     if (!pollRes.ok) {
       process.stderr.write('\n');
-      fatal(
-        `Poll request failed: ${pollRes.status} ${pollRes.statusText}`,
-      );
+      fatal(`Poll request failed: ${pollRes.status} ${pollRes.statusText}`);
     }
 
     const result = (await pollRes.json()) as {
@@ -785,14 +884,11 @@ async function cmdLogin(options: { baseUrl?: string }): Promise<void> {
 }
 
 async function cmdLogout(): Promise<void> {
-  const { loadConfig, clearConfig, getConfigPath } = await import(
-    './config.js'
-  );
+  const { loadConfig, clearConfig, getConfigPath } =
+    await import('./config.js');
   const config = loadConfig();
   if (!config.apiKey) {
-    process.stderr.write(
-      `  ${ansi.gray('Not currently logged in.')}\n`,
-    );
+    process.stderr.write(`  ${ansi.gray('Not currently logged in.')}\n`);
     return;
   }
   clearConfig();
@@ -881,7 +977,6 @@ function parseStepFlags(argv: string[]): Record<string, unknown> {
 const GLOBAL_STRING_FLAGS = new Set([
   '--api-key',
   '--base-url',
-  '--agent-name',
   '--app-id',
   '--thread-id',
   '--output-key',
@@ -952,7 +1047,6 @@ async function main(): Promise<void> {
     options: {
       'api-key': { type: 'string' },
       'base-url': { type: 'string' },
-      'agent-name': { type: 'string' },
       'app-id': { type: 'string' },
       'thread-id': { type: 'string' },
       'output-key': { type: 'string' },
@@ -1023,10 +1117,7 @@ async function main(): Promise<void> {
     }
 
     if (command === 'list') {
-      await cmdList(
-        values.json as boolean,
-        values.summary as boolean,
-      );
+      await cmdList(values.json as boolean, values.summary as boolean);
       return;
     }
 
@@ -1034,7 +1125,6 @@ async function main(): Promise<void> {
       await cmdAgents(values.json as boolean, {
         apiKey: values['api-key'] as string | undefined,
         baseUrl: values['base-url'] as string | undefined,
-        agentName: values['agent-name'] as string | undefined,
       });
       return;
     }
@@ -1045,16 +1135,22 @@ async function main(): Promise<void> {
         fatal('Missing app ID. Usage: mindstudio run <appId> [json | --flags]');
 
       // Parse input from remaining args
-      const runArgv = process.argv.slice(
-        process.argv.indexOf('run') + 2,
-      );
+      const runArgv = process.argv.slice(process.argv.indexOf('run') + 2);
       // Filter out global flags from runArgv
       const stepArgs: string[] = [];
       for (let i = 0; i < runArgv.length; i++) {
         const arg = runArgv[i];
-        if (GLOBAL_STRING_FLAGS.has(arg) || arg === '--workflow' || arg === '--version') {
+        if (
+          GLOBAL_STRING_FLAGS.has(arg) ||
+          arg === '--workflow' ||
+          arg === '--version'
+        ) {
           i++; // skip value
-        } else if (arg === '--no-meta' || arg === '--json' || arg === '--help') {
+        } else if (
+          arg === '--no-meta' ||
+          arg === '--json' ||
+          arg === '--help'
+        ) {
           // skip boolean global flags
         } else if (arg === appId) {
           // skip the appId positional
@@ -1090,11 +1186,21 @@ async function main(): Promise<void> {
       await cmdRun(appId, variables, {
         apiKey: values['api-key'] as string | undefined,
         baseUrl: values['base-url'] as string | undefined,
-        agentName: values['agent-name'] as string | undefined,
         workflow: values.workflow as string | undefined,
         version: values.version as string | undefined,
         outputKey: values['output-key'] as string | undefined,
         noMeta: values['no-meta'] as boolean | undefined,
+      });
+      return;
+    }
+
+    if (command === 'upload') {
+      const filePath = positionals[1];
+      if (!filePath)
+        fatal('Missing file path. Usage: mindstudio upload <filepath>');
+      await cmdUpload(filePath, {
+        apiKey: values['api-key'] as string | undefined,
+        baseUrl: values['base-url'] as string | undefined,
       });
       return;
     }
@@ -1104,7 +1210,6 @@ async function main(): Promise<void> {
       await startMcpServer({
         apiKey: values['api-key'] as string | undefined,
         baseUrl: values['base-url'] as string | undefined,
-        agentName: values['agent-name'] as string | undefined,
       });
       return;
     }
@@ -1120,9 +1225,7 @@ async function main(): Promise<void> {
     // exec (explicit or implicit — any unknown command is treated as a method)
     const split = findMethodSplit(process.argv.slice(2));
     if (!split)
-      fatal(
-        'Missing method name. Usage: mindstudio <method> [json | --flags]',
-      );
+      fatal('Missing method name. Usage: mindstudio <method> [json | --flags]');
 
     const { rawMethod, stepArgv } = split;
     const allKeys = await getAllMethodKeys();
@@ -1158,7 +1261,6 @@ async function main(): Promise<void> {
     await cmdExec(method, input, {
       apiKey: values['api-key'] as string | undefined,
       baseUrl: values['base-url'] as string | undefined,
-      agentName: values['agent-name'] as string | undefined,
       appId: values['app-id'] as string | undefined,
       threadId: values['thread-id'] as string | undefined,
       outputKey: values['output-key'] as string | undefined,

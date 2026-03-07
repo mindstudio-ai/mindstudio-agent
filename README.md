@@ -8,11 +8,31 @@ Generate text, images, video, and audio. Scrape the web. Search Google. Post to 
 
 ## Install
 
+### CLI / MCP (standalone binary)
+
+No dependencies required — downloads a standalone binary:
+
+**macOS / Linux:**
+```bash
+curl -fsSL https://msagent.ai/install.sh | bash
+mindstudio login
+```
+
+**Windows (PowerShell):**
+```
+irm https://msagent.ai/install.ps1 | iex
+mindstudio login
+```
+
+To update, run the same command again. To uninstall, `rm /usr/local/bin/mindstudio` (macOS/Linux) or delete `%USERPROFILE%\.mindstudio\bin\mindstudio.exe` (Windows).
+
+### SDK (npm)
+
 ```bash
 npm install @mindstudio-ai/agent
 ```
 
-Requires Node.js 18+.
+Requires Node.js 18+. Also installs the CLI as `mindstudio`.
 
 ## Quick start
 
@@ -77,6 +97,22 @@ npx @mindstudio-ai/agent generate-text --message "Hello"
 
 Add to your MCP client config (Claude Code, Cursor, VS Code, etc.):
 
+**With standalone binary** (recommended — faster startup, no Node required):
+```json
+{
+  "mcpServers": {
+    "mindstudio": {
+      "command": "mindstudio",
+      "args": ["mcp"],
+      "env": {
+        "MINDSTUDIO_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+**With npx** (no install needed):
 ```json
 {
   "mcpServers": {
@@ -274,11 +310,6 @@ const agent = new MindStudioAgent({
   // Auto-reuse the first returned thread ID for all subsequent calls (default: false)
   // Or set MINDSTUDIO_REUSE_THREAD_ID=true env var
   reuseThreadId: true,
-
-  // A name that shows up in your MindStudio request logs — your app name,
-  // your bot's persona, or anything you want ("Tim's AI Clone" works too)
-  // Or set MINDSTUDIO_AGENT_NAME env var. Defaults to os.hostname().
-  agentName: 'my-app',
 });
 ```
 
@@ -389,7 +420,6 @@ Commands:
 Options:
   --api-key <key>          API key (or set MINDSTUDIO_API_KEY env)
   --base-url <url>         API base URL
-  --agent-name <name>      Name shown in request logs (or set MINDSTUDIO_AGENT_NAME)
   --app-id <id>            App ID for thread context
   --thread-id <id>         Thread ID for state persistence
   --output-key <key>       Extract a single field from the result
@@ -460,14 +490,14 @@ Start manually:
 mindstudio mcp
 ```
 
-Or configure your MCP client:
+Or configure your MCP client (standalone binary or npx):
 
 ```json
 {
   "mcpServers": {
     "mindstudio": {
-      "command": "npx",
-      "args": ["-y", "@mindstudio-ai/agent", "mcp"],
+      "command": "mindstudio",
+      "args": ["mcp"],
       "env": {
         "MINDSTUDIO_API_KEY": "your-api-key"
       }
@@ -479,7 +509,6 @@ Or configure your MCP client:
 The MCP server:
 - Uses stdio transport (JSON-RPC 2.0)
 - Creates one agent per session with automatic thread reuse
-- Automatically identifies the connecting client (e.g. "claude-desktop", "cursor") via the `X-Agent-Name` header for request logging
 - Returns structured JSON results for each tool call
 - Has zero additional dependencies
 

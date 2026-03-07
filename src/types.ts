@@ -28,18 +28,6 @@ export interface AgentOptions {
   maxRetries?: number;
 
   /**
-   * A name to identify this agent in request logs (sent as `X-Agent-Name`).
-   * Can be anything — your app name, your bot's persona, or just something
-   * fun like "Tim's AI Clone". Shows up in your MindStudio logs so you can
-   * tell where requests are coming from.
-   *
-   * If omitted, the SDK checks (in order):
-   * 1. `MINDSTUDIO_AGENT_NAME` environment variable
-   * 2. `os.hostname()` (system hostname)
-   */
-  agentName?: string;
-
-  /**
    * When true, the thread ID from the first API response is automatically
    * reused for all subsequent calls (unless an explicit `threadId` is passed).
    * Useful for local debugging to simulate custom function sandbox behavior.
