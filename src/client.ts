@@ -20,6 +20,7 @@ import type {
   Connection,
   StepCostEstimateEntry,
   UploadFileResult,
+  ResolvedUser,
   AppContextResult,
   BatchStepInput,
   BatchStepResult,
@@ -772,6 +773,72 @@ export class MindStudioAgent {
       ago: (ms: number) => Date.now() - ms,
       fromNow: (ms: number) => Date.now() + ms,
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // Helper methods — user resolution
+  // -------------------------------------------------------------------------
+
+  /**
+   * Resolve a single user ID to display info (name, email, profile picture).
+   *
+   * Use this when you have a `User`-typed field value and need the person's
+   * display name, email, or avatar. Returns null if the user ID is not found.
+   *
+   * Also available as a top-level import:
+   * ```ts
+   * import { resolveUser } from '@mindstudio-ai/agent';
+   * ```
+   *
+   * @param userId - The user ID to resolve (a `User` branded string or plain UUID)
+   * @returns Resolved user info, or null if not found
+   *
+   * @example
+   * ```ts
+   * const user = await agent.resolveUser(order.requestedBy);
+   * if (user) {
+   *   console.log(user.name);              // "Jane Smith"
+   *   console.log(user.email);             // "jane@example.com"
+   *   console.log(user.profilePictureUrl); // "https://..." or null
+   * }
+   * ```
+   */
+  async resolveUser(userId: string): Promise<ResolvedUser | null> {
+    const { users } = await this.resolveUsers([userId]);
+    return users[0] ?? null;
+  }
+
+  /**
+   * Resolve multiple user IDs to display info in a single request.
+   * Maximum 100 user IDs per request.
+   *
+   * Use this for batch resolution when you have multiple user references
+   * to display (e.g. all approvers on a purchase order, all team members).
+   *
+   * @param userIds - Array of user IDs to resolve (max 100)
+   * @returns Object with `users` array of resolved user info
+   *
+   * @example
+   * ```ts
+   * // Resolve all approvers at once
+   * const approverIds = approvals.map(a => a.assignedTo);
+   * const { users } = await agent.resolveUsers(approverIds);
+   *
+   * for (const u of users) {
+   *   console.log(`${u.name} (${u.email})`);
+   * }
+   * ```
+   */
+  async resolveUsers(
+    userIds: string[],
+  ): Promise<{ users: ResolvedUser[] }> {
+    const { data } = await request<{ users: ResolvedUser[] }>(
+      this._httpConfig,
+      'POST',
+      '/helpers/resolve-users',
+      { userIds },
+    );
+    return data;
   }
 
   // -------------------------------------------------------------------------

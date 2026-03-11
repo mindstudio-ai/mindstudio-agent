@@ -97,62 +97,173 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
 - **Batch execution** (`executeStepBatch`) is hand-written on `MindStudioAgent`. POSTs to `POST /developer/v2/steps/execute-batch` with `{ steps: [{ stepType, step }], appId?, threadId? }`. Max 50 steps per batch. Steps run in parallel server-side. Results come back in input order. Individual failures don't affect other steps. S3 output URLs are resolved in parallel. Returns `{ results: BatchStepResult[], totalBillingCost?, appId?, threadId? }`. Types: `BatchStepInput`, `BatchStepResult`, `ExecuteStepBatchOptions`, `ExecuteStepBatchResult`.
 - **CLI command help** — commands that require arguments (`batch`, `run-agent`, `upload`, `estimate-cost`, `change-name`, `change-profile-picture`, `info`, and the catch-all action runner) display rich usage help via `usageBlock()` when called without required args, instead of terse error messages.
 
-## `db` and `auth` namespaces (apps v2)
+## `db`, `auth`, and `resolveUser` (apps v2)
 
-The SDK exposes `db` and `auth` for MindStudio's managed SQLite databases and role-based access control. Both are available as top-level imports (bound to the lazy singleton) and as instance properties.
+The SDK exposes `db`, `auth`, `Roles`, and `resolveUser` for MindStudio's managed SQLite databases, role-based access control, and user resolution. All are available as top-level imports (bound to the lazy singleton) and as instance properties.
 
-### Usage patterns
+See `src/db/README.md` and `src/auth/README.md` for full API references with examples.
+
+### Imports
 
 ```typescript
-// Top-level imports (simple case)
-import { db, auth, Roles } from '@mindstudio-ai/agent';
-const Orders = db.defineTable<Order>('orders');
+import { db, auth, Roles, resolveUser, User } from '@mindstudio-ai/agent';
+```
+
+All five are the primary imports for building data-driven apps. `db` and `auth` are proxies bound to the lazy `mindstudio` singleton. `Roles` is a standalone string proxy. `resolveUser` is a convenience wrapper. `User` is a branded string type for user ID columns.
+
+### Defining tables
+
+Tables are TypeScript interfaces + a `db.defineTable()` call. Define them at module scope — `defineTable()` is lazy (no HTTP until queries execute).
+
+```typescript
+import { db, User } from '@mindstudio-ai/agent';
+
+interface PurchaseOrder {
+  // System fields — required in the interface, managed by platform
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+  lastUpdatedBy: string;
+
+  // Your fields
+  vendorId: string;
+  requestedBy: User;
+  totalAmountCents: number;
+  status: 'pending_approval' | 'approved' | 'active' | 'rejected' | 'closed';
+  lineItems: LineItem[];      // nested objects stored as JSON
+  notes?: string;             // optional fields are nullable columns
+}
+
+export const PurchaseOrders = db.defineTable<PurchaseOrder>('purchase_orders');
+```
+
+System columns (`id`, `createdAt`, `updatedAt`, `lastUpdatedBy`) must be in the interface but are auto-managed — excluded from `push()` and `update()` inputs.
+
+For apps with multiple databases: `db.defineTable<T>('name', { database: 'db-name-or-id' })`.
+
+### Reading data
+
+```typescript
+// Get by ID
+const order = await PurchaseOrders.get(orderId);
+
+// Filter — compiles to SQL WHERE when possible
+const active = await PurchaseOrders.filter(o => o.status === 'active');
+
+// Chain operations (lazy until await)
+const recentPending = await PurchaseOrders
+  .filter(o => o.status === 'pending_approval')
+  .sortBy(o => o.createdAt)
+  .reverse()
+  .take(50);
+
+// Find one
+const order = await PurchaseOrders.findOne(o => o.vendorId === vendorId);
+
+// Aggregations
+const total = await PurchaseOrders.count();
+const pendingCount = await PurchaseOrders.count(o => o.status === 'pending_approval');
+const hasActive = await PurchaseOrders.some(o => o.status === 'active');
+const allClosed = await PurchaseOrders.every(o => o.status === 'closed');
+const empty = await PurchaseOrders.isEmpty();
+const cheapest = await PurchaseOrders.min(o => o.totalAmountCents);
+const biggest = await PurchaseOrders.max(o => o.totalAmountCents);
+
+// Grouping
+const byStatus = await PurchaseOrders.groupBy(o => o.status);
+// Map { 'pending_approval' => [...], 'approved' => [...] }
+
+// Pagination
+const page2 = await PurchaseOrders.sortBy(o => o.createdAt).reverse().skip(50).take(50);
+```
+
+**Filter predicates** that compile to SQL (efficient): field comparisons (`===`, `!==`, `<`, `>`, `<=`, `>=`), null checks, `&&`/`||`, `!`, `.includes()` for IN/LIKE, boolean fields. Anything else falls back to JS (works correctly, just scans all rows).
+
+### Writing data
+
+```typescript
+// Insert — system fields auto-populated, returns created row
+const po = await PurchaseOrders.push({
+  vendorId: vendor.id,
+  requestedBy: auth.userId,
+  totalAmountCents: 50000,
+  status: 'pending_approval',
+  lineItems: [{ description: 'Laptops', amountCents: 50000, quantity: 5 }],
+});
+console.log(po.id, po.createdAt); // system fields populated
+
+// Insert multiple
+const orders = await PurchaseOrders.push([item1, item2, item3]);
+
+// Partial update — returns updated row
+await PurchaseOrders.update(po.id, { status: 'approved' });
+
+// Delete
+await PurchaseOrders.remove(po.id);
+const removed = await PurchaseOrders.removeAll(o => o.status === 'rejected');
+await PurchaseOrders.clear();
+```
+
+### Time helpers
+
+All timestamps are unix ms. Use `db` helpers for readable time math:
+
+```typescript
+db.now()                          // current unix timestamp (ms)
+db.days(n) / db.hours(n) / db.minutes(n)  // duration in ms
+db.ago(db.days(2))                // 2 days ago as unix timestamp
+db.fromNow(db.hours(48))         // 48 hours from now
+db.ago(db.days(7) + db.hours(12)) // 7.5 days ago (composable)
+```
+
+### Auth and roles
+
+```typescript
+import { auth, Roles } from '@mindstudio-ai/agent';
+
+// Current user
+const userId = auth.userId;
+const myRoles = auth.roles;         // readonly string[]
+
+// Check roles (OR logic — true if user has ANY of the listed roles)
+if (auth.hasRole(Roles.admin, Roles.approver)) { ... }
+
+// Gate access — throws 403 if user lacks all listed roles
 auth.requireRole(Roles.admin);
 
-// Instance properties (multi-instance)
-const agent = new MindStudioAgent({ appId: 'xxx' });
-const Orders = agent.db.defineTable<Order>('orders');
+// Look up users by role
+const reviewers = auth.getUsersByRole(Roles.grc);
+```
+
+`Roles` is a proxy: `Roles.admin === "admin"`. Any property works.
+
+### Resolving users
+
+The `User` type is a branded string (UUID). When you need display info:
+
+```typescript
+import { resolveUser } from '@mindstudio-ai/agent';
+
+const user = await resolveUser(order.requestedBy);
+// { id, name, email?, profilePictureUrl? } or null
+
+// Batch resolution (max 100)
+const { users } = await agent.resolveUsers(['user-1', 'user-2']);
 ```
 
 ### Context resolution
 
-`db` and `auth` require app context (role assignments + database metadata). Context is resolved from (in order):
-1. **Sandbox globals** (`globalThis.ai.auth`, `globalThis.ai.databases`) — sync, no HTTP
-2. **HTTP**: `GET /developer/v2/helpers/app-context?appId={appId}` — cached for instance lifetime
+`db` and `auth` require app context (role assignments + database metadata):
 
-`appId` resolution: constructor `appId` → `MINDSTUDIO_APP_ID` env → auto-detected from first `executeStep` response header (`x-mindstudio-app-id`).
+- **Inside MindStudio sandbox** (CALLBACK_TOKEN auth): automatic — context resolved from token or `globalThis.ai` globals.
+- **Outside sandbox** (API key): `GET /developer/v2/helpers/app-context?appId={appId}`, cached for instance lifetime. `appId` resolved from constructor → `MINDSTUDIO_APP_ID` env → auto-detected from first `executeStep` response header.
+- `db` operations auto-hydrate on first query. `auth` is sync — in sandbox it's automatic; outside, call `await agent.ensureContext()` first or use after any `db` operation.
 
-Context hydration: `db` operations auto-hydrate on first query. `auth` is sync — call `await agent.ensureContext()` first, or use after any `db` operation.
+### Internal implementation details
 
-### `auth` namespace (`src/auth.ts`)
-
-- `AuthContext` class: `userId`, `roles`, `hasRole(...roles)`, `requireRole(...roles)`, `getUsersByRole(role)`
-- `Roles` proxy: `Roles.admin === "admin"` — any string property returns itself. Typed generation from app.json comes later.
-- `requireRole()` throws `MindStudioError` with code `'forbidden'`, status 403.
-
-### `db` namespace (`src/db/`)
-
-- **`db.defineTable<T>(name)`** returns a `Table<T>` — lazy, no HTTP until queries execute.
-- **Table reads**: `get(id)`, `filter(pred)`, `findOne(pred)`, `sortBy(fn)`, `count(pred?)`, `some(pred)`, `every(pred)`, `isEmpty()`, `min(fn)`, `max(fn)`, `groupBy(fn)`
-- **Table writes**: `push(data)`, `update(id, partial)`, `remove(id)`, `removeAll(pred)`, `clear()`
-- **Query chain** (`Query<T>`): immutable, lazy, implements `PromiseLike<T[]>`. Chain methods: `filter()`, `sortBy()`, `reverse()`, `take(n)`, `skip(n)`. Terminal: `first()`, `last()`, `count()`, `some()`, `every()`, `min()`, `max()`, `groupBy()`.
-- **Time helpers**: `db.now()`, `db.days(n)`, `db.hours(n)`, `db.minutes(n)`, `db.ago(ms)`, `db.fromNow(ms)` — all return unix ms numbers.
-
-### Predicate compilation (`src/db/predicate.ts`)
-
-Filter predicates (`o => o.status === 'active'`) are compiled to SQL WHERE clauses when possible. The compiler:
-1. Extracts the arrow function source via `fn.toString()`
-2. Tokenizes into identifiers, strings, numbers, operators
-3. Recursive descent parses into a small AST
-4. Compiles AST nodes to SQL fragments
-
-Supported patterns: field comparisons (`===`, `!==`, `<`, `>`, `<=`, `>=`), null checks, `&&`/`||`, `!`, `.includes()` (LIKE/IN), nested field access (`json_extract`), boolean fields.
-
-Fallback: any unrecognized pattern → fetch all rows, filter in JS. Warning logged to stderr.
-
-### SQL generation (`src/db/sql.ts`)
-
-Uses `parameterize: false` on the `queryAppDatabase` step — builds fully-formed SQL with inline escaped values. SQLite escaping: single quotes doubled. System columns (`id`, `createdAt`, `updatedAt`, `lastUpdatedBy`) stripped from INSERT/UPDATE. User-type columns (schema `type: 'user'`) get `@@user@@` prefix on write, stripped on read.
+- **Predicate compilation** (`src/db/predicate.ts`): parses `fn.toString()` → tokenizer → recursive descent parser → SQL WHERE. Falls back to JS for unrecognized patterns.
+- **SQL generation** (`src/db/sql.ts`): uses `parameterize: false` on `queryAppDatabase` step, builds fully-formed SQL with inline escaped values. SQLite escaping (single quotes doubled). System columns stripped from writes. `@@user@@` prefix added/stripped for user-type columns.
+- **Query execution** (`src/db/query.ts`): `Query<T>` is immutable and lazy (implements `PromiseLike<T[]>`). Tries SQL fast path; if any predicate fails to compile, entire chain falls back to JS array operations on all rows.
 
 ## Rate limiting
 

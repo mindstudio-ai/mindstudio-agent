@@ -21,6 +21,7 @@ export type {
   StepExecutionResult,
   StepExecutionMeta,
   User,
+  ResolvedUser,
   AgentInfo,
   ListAgentsResult,
   UserInfoResult,
@@ -157,3 +158,17 @@ export const db: _Db = new Proxy(
     },
   },
 );
+
+/**
+ * Resolve a user ID to display info (name, email, profile picture).
+ * Bound to the default singleton.
+ *
+ * @example
+ * ```ts
+ * import { resolveUser } from '@mindstudio-ai/agent';
+ *
+ * const user = await resolveUser(order.requestedBy);
+ * if (user) console.log(user.name, user.email);
+ * ```
+ */
+export const resolveUser = (userId: string) => mindstudio.resolveUser(userId);

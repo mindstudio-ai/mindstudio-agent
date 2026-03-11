@@ -183,6 +183,21 @@ export interface UserInfoResult {
  */
 export type User = string & { readonly __brand: 'User' };
 
+/**
+ * Resolved display info for a platform user. Returned by `resolveUser()`
+ * and `resolveUsers()`.
+ */
+export interface ResolvedUser {
+  /** User ID. */
+  id: string;
+  /** Display name. */
+  name: string;
+  /** Email address, if available. */
+  email?: string | null;
+  /** Profile picture URL, if set. */
+  profilePictureUrl?: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Helper types (models, connectors, connections, cost estimates)
 // ---------------------------------------------------------------------------

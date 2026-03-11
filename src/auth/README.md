@@ -10,50 +10,131 @@ import { auth, Roles } from '@mindstudio-ai/agent';
 // Gate a route — throws 403 if user lacks the role
 auth.requireRole(Roles.admin);
 
-// Check permissions
+// Check permissions conditionally
 if (auth.hasRole(Roles.admin, Roles.approver)) {
   // user has at least one of these roles
 }
 
-// Look up who has a role
+// Get the current user's ID
+const userId = auth.userId;
+
+// Look up all users with a specific role
 const admins = auth.getUsersByRole(Roles.admin);
 ```
 
 ## API
 
-### `auth.userId`
-The current user's ID (string). Read-only.
+### `auth.userId: string`
+The current user's ID. Read-only.
 
-### `auth.roles`
-The current user's roles in this app (readonly string array).
+### `auth.roles: readonly string[]`
+The current user's roles in this app. Read-only array. Empty if the user has no roles assigned.
 
 ### `auth.hasRole(...roles: string[]): boolean`
-Returns `true` if the current user has **any** of the given roles.
+Returns `true` if the current user has **any** of the given roles. Accepts one or more role names. Use `Roles.xxx` for discoverability.
+
+```ts
+// Check for a single role
+if (auth.hasRole(Roles.admin)) { ... }
+
+// Check for any of multiple roles (OR logic)
+if (auth.hasRole(Roles.admin, Roles.approver, Roles.reviewer)) { ... }
+```
 
 ### `auth.requireRole(...roles: string[]): void`
-Throws `MindStudioError` (code `'forbidden'`, status 403) if the user lacks all of the given roles. Use at the top of route handlers to gate access.
+Throws `MindStudioError` (code `'forbidden'`, status 403) if the user lacks **all** of the given roles. Use at the top of route handlers to gate access. If the user has at least one of the listed roles, execution continues normally.
+
+```ts
+// Only admins can proceed
+auth.requireRole(Roles.admin);
+
+// Admins OR approvers can proceed
+auth.requireRole(Roles.admin, Roles.approver);
+
+// Everything below this line is guaranteed to be an admin or approver
+```
 
 ### `auth.getUsersByRole(role: string): string[]`
-Returns all user IDs that have the given role in this app. Synchronous — the full role map is preloaded.
+Returns all user IDs that have the given role in this app. Synchronous — the full role map is preloaded at context hydration time.
 
-## The `Roles` proxy
+```ts
+// Get all users with the 'reviewer' role
+const reviewers = auth.getUsersByRole(Roles.reviewer);
+
+// Pick the first reviewer for assignment
+const assignee = reviewers[0];
+```
+
+## `Roles` proxy
 
 `Roles` is a convenience proxy where any property access returns the property name as a string:
 
 ```ts
 Roles.admin      // "admin"
 Roles.approver   // "approver"
-Roles.anything   // "anything"
+Roles.anything   // "anything" — any string works
 ```
 
-This gives you discoverability and typo prevention vs raw string literals. In the future, the compilation pipeline will generate a typed `Roles` object from `app.json`, giving compile-time safety. For now, any string property works.
+Use `Roles.xxx` instead of raw string literals for discoverability and typo prevention. In the future, the compilation pipeline will generate a typed `Roles` object from `app.json`, giving compile-time safety.
+
+## Common patterns
+
+### Gating a route handler
+
+```ts
+export const deleteOrder = async (input: { orderId: string }) => {
+  auth.requireRole(Roles.admin);
+  // Only admins reach this point
+  await Orders.remove(input.orderId);
+};
+```
+
+### Role-based data filtering
+
+```ts
+export const getDashboard = async () => {
+  const userId = auth.userId;
+
+  // Everyone sees their own orders
+  const myOrders = await Orders
+    .filter(o => o.requestedBy === userId)
+    .sortBy(o => o.createdAt)
+    .reverse()
+    .take(25);
+
+  // Only AP team sees pending invoices
+  let pendingInvoices;
+  if (auth.hasRole(Roles.ap, Roles.admin)) {
+    pendingInvoices = await Invoices
+      .filter(inv => inv.status === 'pending_review')
+      .sortBy(inv => inv.dueDate)
+      .take(50);
+  }
+
+  return { myOrders, pendingInvoices };
+};
+```
+
+### Assigning work by role
+
+```ts
+// Find a GRC reviewer and create an approval
+const reviewer = auth.getUsersByRole(Roles.grc)[0];
+if (reviewer) {
+  await Approvals.push({
+    entityId: vendor.id,
+    assignedTo: reviewer,
+    status: 'pending',
+  });
+}
+```
 
 ## Context hydration
 
 `auth` requires app context to be loaded before use. How this happens depends on the environment:
 
-- **Inside the MindStudio sandbox**: Automatic. The platform pre-populates `globalThis.ai.auth` before your code runs.
-- **Outside the sandbox**: Call `await agent.ensureContext()` explicitly, or perform any `db` operation first (which auto-hydrates context as a side effect).
+- **Inside the MindStudio sandbox** (managed mode): Automatic. The platform pre-populates `globalThis.ai.auth` before your code runs, or the SDK fetches context via the CALLBACK_TOKEN. No setup needed.
+- **Outside the sandbox** (API key): Call `await agent.ensureContext()` explicitly, or perform any `db` operation first (which auto-hydrates context as a side effect).
 
 If you access `auth` before context is loaded, you'll get a clear error:
 ```
@@ -62,7 +143,7 @@ Auth context not yet loaded. Call `await agent.ensureContext()` or perform any d
 
 ## How it works internally
 
-1. **Hydration**: `ensureContext()` calls `GET /developer/v2/helpers/app-context?appId={appId}` and receives `{ auth: { userId, roleAssignments[] }, databases: [...] }`. The role assignments are the full map for the app — all users, all roles.
+1. **Hydration**: The SDK calls `GET /developer/v2/helpers/app-context` (with appId or CALLBACK_TOKEN) and receives `{ auth: { userId, roleAssignments[] }, databases: [...] }`. The role assignments contain the full map for the app — all users, all roles.
 
 2. **AuthContext creation**: The `AuthContext` class filters the role assignments to extract the current user's roles, and stores the full map for `getUsersByRole()` lookups.
 
@@ -70,4 +151,6 @@ Auth context not yet loaded. Call `await agent.ensureContext()` or perform any d
 
 ## Files
 
-- `auth.ts` — `AuthContext` class and `Roles` proxy (currently at `src/auth.ts`, will move to `src/auth/` if the module grows)
+| File | Purpose |
+|------|---------|
+| `index.ts` | `AuthContext` class and `Roles` proxy |
