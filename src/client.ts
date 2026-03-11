@@ -95,6 +95,9 @@ export class MindStudioAgent {
   /** @internal Cached Db namespace instance, created during context hydration. */
   private _db: Db | undefined;
 
+  /** @internal Auth type — 'internal' for CALLBACK_TOKEN (managed mode), 'apiKey' otherwise. */
+  private _authType: AuthType;
+
   constructor(options: AgentOptions = {}) {
     const config = loadConfig();
     const { token, authType } = resolveToken(options.apiKey, config);
@@ -111,6 +114,8 @@ export class MindStudioAgent {
 
     this._appId =
       options.appId ?? process.env.MINDSTUDIO_APP_ID ?? undefined;
+
+    this._authType = authType;
 
     this._httpConfig = {
       baseUrl,
@@ -627,8 +632,24 @@ export class MindStudioAgent {
 
   /**
    * @internal Fetch and cache app context, then create auth + db instances.
+   *
+   * In managed mode (CALLBACK_TOKEN), if no appId is available, we make
+   * a lightweight executeStep call to auto-detect it from response headers
+   * before fetching context. This avoids requiring users to manually set
+   * appId in the sandbox environment.
    */
   private async _hydrateContext(): Promise<void> {
+    // If no appId yet and we're in managed mode, auto-detect it by making
+    // a lightweight step call. The platform resolves the app from the
+    // CALLBACK_TOKEN and returns the appId in response headers.
+    if (!this._appId && this._authType === 'internal') {
+      try {
+        await this.executeStep('setVariable', { value: '' });
+      } catch {
+        // Ignore errors — we just need the headers for appId auto-detect
+      }
+    }
+
     if (!this._appId) {
       throw new MindStudioError(
         'No app ID available for context resolution. Pass `appId` to the ' +
