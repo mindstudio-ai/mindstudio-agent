@@ -6,14 +6,25 @@ TypeScript SDK for MindStudio's direct step execution API. Methods and types are
 
 ```
 src/
-  index.ts              # Package entry — merges generated interfaces onto MindStudioAgent, re-exports
-  client.ts             # MindStudioAgent class (hand-written, stable)
+  index.ts              # Package entry — merges generated interfaces onto MindStudioAgent, re-exports, top-level db/auth/Roles
+  client.ts             # MindStudioAgent class (hand-written, stable) — includes db/auth getters + ensureContext
+  auth/
+    index.ts            # AuthContext class (role checking) + Roles proxy
+    README.md           # Auth namespace docs + usage examples
+  db/
+    index.ts            # createDb() factory + Db interface + time helpers (now, days, hours, minutes, ago, fromNow)
+    table.ts            # Table<T> class — typed collection API (get, filter, push, update, remove, etc.)
+    query.ts            # Query<T> class — lazy chainable builder (PromiseLike<T[]>), SQL/JS dual execution
+    predicate.ts        # Predicate compiler — arrow fn toString() → SQL WHERE clause (tokenizer + recursive descent)
+    sql.ts              # SQL string builders (SELECT, INSERT, UPDATE, DELETE) + value escaping + row deserialization
+    types.ts            # Internal types (Predicate, Accessor, TableConfig, SystemFields, PushInput, UpdateInput)
+    README.md           # DB namespace docs — architecture, API reference, execution strategy
   config.ts             # Config file read/write for ~/.mindstudio/config.json (login persistence)
   cli.ts                # CLI entry point (bin script) — login, exec, list, agents, run, mcp commands
   mcp.ts                # Minimal MCP server (JSON-RPC 2.0 over stdio, zero deps)
   http.ts               # Fetch wrapper with concurrency queuing and 429 retry
   errors.ts             # MindStudioError class
-  types.ts              # AgentOptions, StepExecutionOptions, StepExecutionResult, StepExecutionMeta, batch types, agent run/list types
+  types.ts              # AgentOptions, StepExecutionOptions, StepExecutionResult, StepExecutionMeta, User, app context types, batch types
   rate-limit.ts         # Concurrency semaphore + call cap tracking
   generated/            # AUTO-GENERATED at build time — do not edit by hand
     types.ts            # Step input/output interfaces, StepName union, StepInputMap/StepOutputMap
@@ -85,6 +96,63 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
 - **Agent methods** (`listAgents`, `runAgent`) are hand-written on `MindStudioAgent` (not generated). `listAgents()` calls `GET /developer/v2/agents/load`. `runAgent()` posts to `POST /developer/v2/agents/run` with `async: true`, then polls `GET /developer/v2/agents/run/poll/:callbackToken` until complete/error. Poll requests bypass the rate limiter (no auth needed, token is the secret). Default poll interval is 1s, configurable via `pollIntervalMs`.
 - **Batch execution** (`executeStepBatch`) is hand-written on `MindStudioAgent`. POSTs to `POST /developer/v2/steps/execute-batch` with `{ steps: [{ stepType, step }], appId?, threadId? }`. Max 50 steps per batch. Steps run in parallel server-side. Results come back in input order. Individual failures don't affect other steps. S3 output URLs are resolved in parallel. Returns `{ results: BatchStepResult[], totalBillingCost?, appId?, threadId? }`. Types: `BatchStepInput`, `BatchStepResult`, `ExecuteStepBatchOptions`, `ExecuteStepBatchResult`.
 - **CLI command help** — commands that require arguments (`batch`, `run-agent`, `upload`, `estimate-cost`, `change-name`, `change-profile-picture`, `info`, and the catch-all action runner) display rich usage help via `usageBlock()` when called without required args, instead of terse error messages.
+
+## `db` and `auth` namespaces (apps v2)
+
+The SDK exposes `db` and `auth` for MindStudio's managed SQLite databases and role-based access control. Both are available as top-level imports (bound to the lazy singleton) and as instance properties.
+
+### Usage patterns
+
+```typescript
+// Top-level imports (simple case)
+import { db, auth, Roles } from '@mindstudio-ai/agent';
+const Orders = db.defineTable<Order>('orders');
+auth.requireRole(Roles.admin);
+
+// Instance properties (multi-instance)
+const agent = new MindStudioAgent({ appId: 'xxx' });
+const Orders = agent.db.defineTable<Order>('orders');
+```
+
+### Context resolution
+
+`db` and `auth` require app context (role assignments + database metadata). Context is resolved from (in order):
+1. **Sandbox globals** (`globalThis.ai.auth`, `globalThis.ai.databases`) — sync, no HTTP
+2. **HTTP**: `GET /developer/v2/helpers/app-context?appId={appId}` — cached for instance lifetime
+
+`appId` resolution: constructor `appId` → `MINDSTUDIO_APP_ID` env → auto-detected from first `executeStep` response header (`x-mindstudio-app-id`).
+
+Context hydration: `db` operations auto-hydrate on first query. `auth` is sync — call `await agent.ensureContext()` first, or use after any `db` operation.
+
+### `auth` namespace (`src/auth.ts`)
+
+- `AuthContext` class: `userId`, `roles`, `hasRole(...roles)`, `requireRole(...roles)`, `getUsersByRole(role)`
+- `Roles` proxy: `Roles.admin === "admin"` — any string property returns itself. Typed generation from app.json comes later.
+- `requireRole()` throws `MindStudioError` with code `'forbidden'`, status 403.
+
+### `db` namespace (`src/db/`)
+
+- **`db.defineTable<T>(name)`** returns a `Table<T>` — lazy, no HTTP until queries execute.
+- **Table reads**: `get(id)`, `filter(pred)`, `findOne(pred)`, `sortBy(fn)`, `count(pred?)`, `some(pred)`, `every(pred)`, `isEmpty()`, `min(fn)`, `max(fn)`, `groupBy(fn)`
+- **Table writes**: `push(data)`, `update(id, partial)`, `remove(id)`, `removeAll(pred)`, `clear()`
+- **Query chain** (`Query<T>`): immutable, lazy, implements `PromiseLike<T[]>`. Chain methods: `filter()`, `sortBy()`, `reverse()`, `take(n)`, `skip(n)`. Terminal: `first()`, `last()`, `count()`, `some()`, `every()`, `min()`, `max()`, `groupBy()`.
+- **Time helpers**: `db.now()`, `db.days(n)`, `db.hours(n)`, `db.minutes(n)`, `db.ago(ms)`, `db.fromNow(ms)` — all return unix ms numbers.
+
+### Predicate compilation (`src/db/predicate.ts`)
+
+Filter predicates (`o => o.status === 'active'`) are compiled to SQL WHERE clauses when possible. The compiler:
+1. Extracts the arrow function source via `fn.toString()`
+2. Tokenizes into identifiers, strings, numbers, operators
+3. Recursive descent parses into a small AST
+4. Compiles AST nodes to SQL fragments
+
+Supported patterns: field comparisons (`===`, `!==`, `<`, `>`, `<=`, `>=`), null checks, `&&`/`||`, `!`, `.includes()` (LIKE/IN), nested field access (`json_extract`), boolean fields.
+
+Fallback: any unrecognized pattern → fetch all rows, filter in JS. Warning logged to stderr.
+
+### SQL generation (`src/db/sql.ts`)
+
+Uses `parameterize: false` on the `queryAppDatabase` step — builds fully-formed SQL with inline escaped values. SQLite escaping: single quotes doubled. System columns (`id`, `createdAt`, `updatedAt`, `lastUpdatedBy`) stripped from INSERT/UPDATE. User-type columns (schema `type: 'user'`) get `@@user@@` prefix on write, stripped on read.
 
 ## Rate limiting
 

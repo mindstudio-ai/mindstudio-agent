@@ -28,6 +28,19 @@ export interface AgentOptions {
   maxRetries?: number;
 
   /**
+   * App ID for auth and database context. Required when using `auth` or
+   * `db` namespaces outside the MindStudio sandbox.
+   *
+   * If omitted, the SDK checks:
+   * 1. `MINDSTUDIO_APP_ID` environment variable
+   * 2. Sandbox globals (when running inside MindStudio)
+   * 3. Auto-detected from the first `executeStep` response header
+   *
+   * Not needed for plain step execution — only for `db` and `auth`.
+   */
+  appId?: string;
+
+  /**
    * When true, the thread ID from the first API response is automatically
    * reused for all subsequent calls (unless an explicit `threadId` is passed).
    * Useful for local debugging to simulate custom function sandbox behavior.
@@ -144,6 +157,33 @@ export interface UserInfoResult {
 }
 
 // ---------------------------------------------------------------------------
+// User type — branded string for database user references
+// ---------------------------------------------------------------------------
+
+/**
+ * A reference to a MindStudio platform user. Stored as a UUID string.
+ *
+ * In the database, user values are stored with a `@@user@@` prefix
+ * (e.g. `@@user@@550e8400-...`). The SDK handles this automatically —
+ * values are clean UUIDs in application code, prefixed/stripped
+ * transparently during read/write operations.
+ *
+ * Use `resolveUser(userId)` when you need display info (name, email, etc.).
+ *
+ * @example
+ * ```ts
+ * interface Order {
+ *   id: string;
+ *   createdAt: number;
+ *   updatedAt: number;
+ *   lastUpdatedBy: string;
+ *   requestedBy: User;
+ * }
+ * ```
+ */
+export type User = string & { readonly __brand: 'User' };
+
+// ---------------------------------------------------------------------------
 // Helper types (models, connectors, connections, cost estimates)
 // ---------------------------------------------------------------------------
 
@@ -180,6 +220,50 @@ export type ModelType =
   | 'text_to_speech'
   | 'vision'
   | 'transcription';
+
+// ---------------------------------------------------------------------------
+// App context types (auth & database metadata)
+// ---------------------------------------------------------------------------
+
+/** Role assignment for a user within an app. */
+export interface AppRoleAssignment {
+  userId: string;
+  roleName: string;
+}
+
+/** Auth context for an app. */
+export interface AppAuthContext {
+  /** The authenticated user ID. */
+  userId: string;
+  /** All role assignments for this app (all users, all roles). */
+  roleAssignments: AppRoleAssignment[];
+}
+
+/** Column schema for a managed database table. */
+export interface AppDatabaseColumnSchema {
+  name: string;
+  type: 'text' | 'number' | 'boolean' | 'json' | 'user';
+  required: boolean;
+}
+
+/** Table schema within a managed database. */
+export interface AppDatabaseTable {
+  name: string;
+  schema: AppDatabaseColumnSchema[];
+}
+
+/** A managed SQLite database for an app. */
+export interface AppDatabase {
+  id: string;
+  name: string;
+  tables: AppDatabaseTable[];
+}
+
+/** Result of {@link MindStudioAgent.getAppContext}. */
+export interface AppContextResult {
+  auth: AppAuthContext;
+  databases: AppDatabase[];
+}
 
 /** An OAuth connector service with its available actions. Third-party integration from the MindStudio Connector Registry. */
 export interface ConnectorService {
