@@ -71,8 +71,8 @@ export class MindStudioAgent {
 
   /**
    * @internal App ID for context resolution. Resolved from:
-   * constructor appId → MINDSTUDIO_APP_ID env → APP_ID env (managed mode) →
-   * sandbox globals → auto-detected from first executeStep response header.
+   * constructor appId → MINDSTUDIO_APP_ID env → sandbox globals →
+   * auto-detected from first executeStep response header.
    */
   private _appId: string | undefined;
 
@@ -110,7 +110,7 @@ export class MindStudioAgent {
       /^(true|1)$/i.test(process.env.MINDSTUDIO_REUSE_THREAD_ID ?? '');
 
     this._appId =
-      options.appId ?? process.env.MINDSTUDIO_APP_ID ?? process.env.APP_ID ?? undefined;
+      options.appId ?? process.env.MINDSTUDIO_APP_ID ?? undefined;
 
     this._httpConfig = {
       baseUrl,
@@ -695,7 +695,7 @@ export class MindStudioAgent {
       databaseId,
       sql,
       parameterize: false,
-    }, this._appId ? { appId: this._appId } : undefined);
+    });
 
     return { rows: result.rows ?? [], changes: result.changes ?? 0 };
   }
