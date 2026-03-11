@@ -334,6 +334,37 @@ await agent.generateText({ message: 'My name is Alice' }); // creates a thread
 await agent.generateText({ message: 'What is my name?' }); // reuses it automatically
 ```
 
+## Managed databases and auth
+
+When running inside a MindStudio app (managed mode), the SDK provides `db`, `auth`, and `resolveUser` for working with the app's managed SQLite databases and role-based access control. These are available as top-level imports:
+
+```typescript
+import { db, auth, Roles, resolveUser, User } from '@mindstudio-ai/agent';
+
+// Define a typed table
+const Orders = db.defineTable<Order>('orders');
+
+// Query with a chainable API
+const pending = await Orders
+  .filter(o => o.status === 'pending')
+  .sortBy(o => o.createdAt)
+  .reverse()
+  .take(20);
+
+// Write
+const order = await Orders.push({ item: 'Laptop', amount: 999, status: 'pending' });
+await Orders.update(order.id, { status: 'approved' });
+
+// Role-based access control
+auth.requireRole(Roles.admin);
+const admins = auth.getUsersByRole(Roles.admin);
+
+// Resolve user display info
+const user = await resolveUser(order.requestedBy);
+```
+
+See `src/db/README.md` and `src/auth/README.md` for the full API reference.
+
 ## Configuration
 
 ```typescript
@@ -351,6 +382,10 @@ const agent = new MindStudioAgent({
   // Auto-reuse the first returned thread ID for all subsequent calls (default: false)
   // Or set MINDSTUDIO_REUSE_THREAD_ID=true env var
   reuseThreadId: true,
+
+  // App ID for managed database/auth context (managed mode only)
+  // Or set MINDSTUDIO_APP_ID env var. Auto-detected in sandbox.
+  appId: 'your-app-id',
 });
 ```
 

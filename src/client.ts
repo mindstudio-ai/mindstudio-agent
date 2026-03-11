@@ -2,6 +2,8 @@ import { request, type HttpClientConfig } from './http.js';
 import { MindStudioError } from './errors.js';
 import { RateLimiter, type AuthType } from './rate-limit.js';
 import { loadConfig, type MindStudioConfig } from './config.js';
+import { AuthContext } from './auth/index.js';
+import { createDb, Table, type Db, type DefineTableOptions } from './db/index.js';
 import type {
   AgentOptions,
   StepExecutionOptions,
@@ -18,6 +20,8 @@ import type {
   Connection,
   StepCostEstimateEntry,
   UploadFileResult,
+  ResolvedUser,
+  AppContextResult,
   BatchStepInput,
   BatchStepResult,
   ExecuteStepBatchOptions,
@@ -64,6 +68,37 @@ export class MindStudioAgent {
   /** @internal */
   private _threadId: string | undefined;
 
+  // ---- App context (db + auth) ----
+
+  /**
+   * @internal App ID for context resolution. Resolved from:
+   * constructor appId → MINDSTUDIO_APP_ID env → sandbox globals →
+   * auto-detected from first executeStep response header.
+   */
+  private _appId: string | undefined;
+
+  /**
+   * @internal Cached app context (auth + databases). Populated by
+   * ensureContext() and cached for the lifetime of the instance.
+   */
+  private _context: AppContextResult | undefined;
+
+  /**
+   * @internal Deduplication promise for ensureContext(). Ensures only one
+   * context fetch is in-flight at a time, even if multiple db/auth
+   * operations trigger it concurrently.
+   */
+  private _contextPromise: Promise<void> | undefined;
+
+  /** @internal Cached AuthContext instance, created during context hydration. */
+  private _auth: AuthContext | undefined;
+
+  /** @internal Cached Db namespace instance, created during context hydration. */
+  private _db: Db | undefined;
+
+  /** @internal Auth type — 'internal' for CALLBACK_TOKEN (managed mode), 'apiKey' otherwise. */
+  private _authType: AuthType;
+
   constructor(options: AgentOptions = {}) {
     const config = loadConfig();
     const { token, authType } = resolveToken(options.apiKey, config);
@@ -78,12 +113,24 @@ export class MindStudioAgent {
       options.reuseThreadId ??
       /^(true|1)$/i.test(process.env.MINDSTUDIO_REUSE_THREAD_ID ?? '');
 
+    this._appId =
+      options.appId ?? process.env.MINDSTUDIO_APP_ID ?? undefined;
+
+    this._authType = authType;
+
     this._httpConfig = {
       baseUrl,
       token,
       rateLimiter: new RateLimiter(authType),
       maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
     };
+
+    // Sandbox fast path: if running inside MindStudio (CALLBACK_TOKEN auth),
+    // try to hydrate context synchronously from globals. The platform
+    // pre-populates `ai.auth` and `ai.databases` before the script runs.
+    if (authType === 'internal') {
+      this._trySandboxHydration();
+    }
   }
 
   /**
@@ -133,6 +180,14 @@ export class MindStudioAgent {
     const returnedThreadId = headers.get('x-mindstudio-thread-id') ?? '';
     if (this._reuseThreadId && returnedThreadId) {
       this._threadId = returnedThreadId;
+    }
+
+    // Auto-capture appId from response headers for zero-config db/auth.
+    // If no explicit appId was set, store the one from the first API response
+    // so that subsequent ensureContext() calls can use it.
+    const returnedAppId = headers.get('x-mindstudio-app-id');
+    if (!this._appId && returnedAppId) {
+      this._appId = returnedAppId;
     }
 
     const remaining = headers.get('x-ratelimit-remaining');
@@ -478,6 +533,340 @@ export class MindStudioAgent {
       step: { type: stepType, ...step },
       ...options,
     });
+    return data;
+  }
+
+  // -------------------------------------------------------------------------
+  // db + auth namespaces
+  // -------------------------------------------------------------------------
+
+  /**
+   * The `auth` namespace — synchronous role-based access control.
+   *
+   * Provides the current user's identity and roles. All methods are
+   * synchronous since the role map is preloaded during context hydration.
+   *
+   * **Important**: Context must be hydrated before accessing `auth`.
+   * - Inside the MindStudio sandbox: automatic (populated from globals)
+   * - Outside the sandbox: call `await agent.ensureContext()` first,
+   *   or access `auth` after any `db` operation (which auto-hydrates)
+   *
+   * @throws {MindStudioError} if context has not been hydrated yet
+   *
+   * @example
+   * ```ts
+   * await agent.ensureContext();
+   * agent.auth.requireRole(Roles.admin);
+   * const admins = agent.auth.getUsersByRole(Roles.admin);
+   * ```
+   */
+  get auth(): AuthContext {
+    if (!this._auth) {
+      throw new MindStudioError(
+        'Auth context not yet loaded. Call `await agent.ensureContext()` ' +
+          'or perform any db operation first (which auto-hydrates context). ' +
+          'Inside the MindStudio sandbox, context is loaded automatically.',
+        'context_not_loaded',
+        400,
+      );
+    }
+    return this._auth;
+  }
+
+  /**
+   * The `db` namespace — chainable collection API over managed databases.
+   *
+   * Use `db.defineTable<T>(name)` to get a typed Table<T>, then call
+   * collection methods (filter, sortBy, push, update, etc.) on it.
+   *
+   * Context is auto-hydrated on first query execution — you can safely
+   * call `defineTable()` at module scope without triggering any HTTP.
+   *
+   * @example
+   * ```ts
+   * const Orders = agent.db.defineTable<Order>('orders');
+   * const active = await Orders.filter(o => o.status === 'active').take(10);
+   * ```
+   */
+  get db(): Db {
+    if (this._db) return this._db;
+
+    // Return a lazy Db proxy that auto-hydrates context on first use.
+    // defineTable() itself is synchronous (it just stores the table name),
+    // but the Table methods are all async and will trigger ensureContext().
+    return this._createLazyDb();
+  }
+
+  /**
+   * Hydrate the app context (auth + database metadata). This must be
+   * called before using `auth` synchronously. For `db`, hydration happens
+   * automatically on first query.
+   *
+   * Context is fetched once and cached for the instance's lifetime.
+   * Calling `ensureContext()` multiple times is safe (no-op after first).
+   *
+   * Context sources (checked in order):
+   * 1. Sandbox globals (`globalThis.ai.auth`, `globalThis.ai.databases`)
+   * 2. HTTP: `GET /developer/v2/helpers/app-context?appId={appId}`
+   *
+   * @throws {MindStudioError} if no `appId` is available
+   *
+   * @example
+   * ```ts
+   * await agent.ensureContext();
+   * // auth is now available synchronously
+   * agent.auth.requireRole(Roles.admin);
+   * ```
+   */
+  async ensureContext(): Promise<void> {
+    // Already hydrated — nothing to do
+    if (this._context) return;
+
+    // Deduplicate concurrent calls: if a fetch is already in-flight,
+    // all callers await the same promise
+    if (!this._contextPromise) {
+      this._contextPromise = this._hydrateContext();
+    }
+
+    await this._contextPromise;
+  }
+
+  /**
+   * @internal Fetch and cache app context, then create auth + db instances.
+   *
+   * In managed mode (CALLBACK_TOKEN), the platform resolves the app from
+   * the token — no appId needed. With an API key, appId is required.
+   */
+  private async _hydrateContext(): Promise<void> {
+    if (!this._appId && this._authType !== 'internal') {
+      throw new MindStudioError(
+        'No app ID available for context resolution. Pass `appId` to the ' +
+          'constructor, set the MINDSTUDIO_APP_ID environment variable, or ' +
+          'make a step execution call first (which auto-detects the app ID).',
+        'missing_app_id',
+        400,
+      );
+    }
+
+    const context = await this.getAppContext(this._appId);
+    this._applyContext(context);
+  }
+
+  /**
+   * @internal Apply a resolved context object — creates AuthContext and Db.
+   * Used by both the HTTP path and sandbox hydration.
+   */
+  private _applyContext(context: AppContextResult): void {
+    this._context = context;
+    this._auth = new AuthContext(context.auth);
+    this._db = createDb(
+      context.databases,
+      this._executeDbQuery.bind(this),
+    );
+  }
+
+  /**
+   * @internal Try to hydrate context synchronously from sandbox globals.
+   * Called in the constructor when CALLBACK_TOKEN auth is detected.
+   *
+   * The MindStudio sandbox pre-populates `globalThis.ai` with:
+   * - `ai.auth`: { userId, roleAssignments[] }
+   * - `ai.databases`: [{ id, name, tables[] }]
+   */
+  private _trySandboxHydration(): void {
+    const ai = (globalThis as Record<string, unknown>).ai as
+      | { auth?: AppContextResult['auth']; databases?: AppContextResult['databases'] }
+      | undefined;
+
+    if (ai?.auth && ai?.databases) {
+      this._applyContext({
+        auth: ai.auth,
+        databases: ai.databases,
+      });
+    }
+  }
+
+  /**
+   * @internal Execute a SQL query against a managed database.
+   * Used as the `executeQuery` callback for Table instances.
+   *
+   * Calls the `queryAppDatabase` step with `parameterize: false`
+   * (the SDK builds fully-formed SQL with escaped inline values).
+   */
+  private async _executeDbQuery(
+    databaseId: string,
+    sql: string,
+  ): Promise<{ rows: unknown[]; changes: number }> {
+    const result = await this.executeStep<{
+      rows: unknown[];
+      changes: number;
+    }>('queryAppDatabase', {
+      databaseId,
+      sql,
+      parameterize: false,
+    });
+
+    return { rows: result.rows ?? [], changes: result.changes ?? 0 };
+  }
+
+  /**
+   * @internal Create a lazy Db proxy that auto-hydrates context.
+   *
+   * defineTable() returns Table instances immediately (no async needed).
+   * But the Table's executeQuery callback is wrapped to call ensureContext()
+   * before the first query, so context is fetched lazily.
+   */
+  private _createLazyDb(): Db {
+    const agent = this;
+
+    return {
+      defineTable<T>(name: string, options?: DefineTableOptions) {
+        // We can't resolve the table schema yet (context hasn't been
+        // fetched), so we create a "lazy" table whose executeQuery
+        // callback calls ensureContext() before running. After hydration,
+        // the real Db (agent._db) exists with full schema info, and we
+        // delegate to it for the actual query execution.
+        //
+        // The columns array starts empty here — this is fine because no
+        // actual data flows through this Table's columns. The executeQuery
+        // callback below redirects through the fully-configured real Db
+        // after hydration, which has the correct column schema for
+        // user-type prefix handling and JSON parsing.
+
+        const databaseHint = options?.database;
+
+        return new Table<T>({
+          databaseId: '',
+          tableName: name,
+          columns: [],
+          executeQuery: async (sql: string) => {
+            await agent.ensureContext();
+            // After hydration, the real Db has full database metadata.
+            // Look up the databaseId for this table, respecting the
+            // database hint if one was provided.
+            const databases = agent._context!.databases;
+            let targetDb;
+
+            if (databaseHint) {
+              // Explicit database specified — match by name or ID
+              targetDb = databases.find(
+                (d) => d.id === databaseHint || d.name === databaseHint,
+              );
+            } else {
+              // Auto-resolve: find the database containing this table
+              targetDb = databases.find((d) =>
+                d.tables.some((t) => t.name === name),
+              );
+            }
+
+            const databaseId = targetDb?.id ?? databases[0]?.id ?? '';
+            return agent._executeDbQuery(databaseId, sql);
+          },
+        });
+      },
+
+      // Time helpers work without context
+      now: () => Date.now(),
+      days: (n: number) => n * 86_400_000,
+      hours: (n: number) => n * 3_600_000,
+      minutes: (n: number) => n * 60_000,
+      ago: (ms: number) => Date.now() - ms,
+      fromNow: (ms: number) => Date.now() + ms,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Helper methods — user resolution
+  // -------------------------------------------------------------------------
+
+  /**
+   * Resolve a single user ID to display info (name, email, profile picture).
+   *
+   * Use this when you have a `User`-typed field value and need the person's
+   * display name, email, or avatar. Returns null if the user ID is not found.
+   *
+   * Also available as a top-level import:
+   * ```ts
+   * import { resolveUser } from '@mindstudio-ai/agent';
+   * ```
+   *
+   * @param userId - The user ID to resolve (a `User` branded string or plain UUID)
+   * @returns Resolved user info, or null if not found
+   *
+   * @example
+   * ```ts
+   * const user = await agent.resolveUser(order.requestedBy);
+   * if (user) {
+   *   console.log(user.name);              // "Jane Smith"
+   *   console.log(user.email);             // "jane@example.com"
+   *   console.log(user.profilePictureUrl); // "https://..." or null
+   * }
+   * ```
+   */
+  async resolveUser(userId: string): Promise<ResolvedUser | null> {
+    const { users } = await this.resolveUsers([userId]);
+    return users[0] ?? null;
+  }
+
+  /**
+   * Resolve multiple user IDs to display info in a single request.
+   * Maximum 100 user IDs per request.
+   *
+   * Use this for batch resolution when you have multiple user references
+   * to display (e.g. all approvers on a purchase order, all team members).
+   *
+   * @param userIds - Array of user IDs to resolve (max 100)
+   * @returns Object with `users` array of resolved user info
+   *
+   * @example
+   * ```ts
+   * // Resolve all approvers at once
+   * const approverIds = approvals.map(a => a.assignedTo);
+   * const { users } = await agent.resolveUsers(approverIds);
+   *
+   * for (const u of users) {
+   *   console.log(`${u.name} (${u.email})`);
+   * }
+   * ```
+   */
+  async resolveUsers(
+    userIds: string[],
+  ): Promise<{ users: ResolvedUser[] }> {
+    const { data } = await request<{ users: ResolvedUser[] }>(
+      this._httpConfig,
+      'POST',
+      '/helpers/resolve-users',
+      { userIds },
+    );
+    return data;
+  }
+
+  // -------------------------------------------------------------------------
+  // App context
+  // -------------------------------------------------------------------------
+
+  /**
+   * Get auth and database context for an app.
+   *
+   * Returns role assignments and managed database schemas. Useful for
+   * hydrating `auth` and `db` namespaces when running outside the sandbox.
+   *
+   * When called with a CALLBACK_TOKEN (managed mode), `appId` is optional —
+   * the platform resolves the app from the token. With an API key, `appId`
+   * is required.
+   *
+   * ```ts
+   * const ctx = await agent.getAppContext('your-app-id');
+   * console.log(ctx.auth.roleAssignments, ctx.databases);
+   * ```
+   */
+  async getAppContext(appId?: string): Promise<AppContextResult> {
+    const query = appId ? `?appId=${encodeURIComponent(appId)}` : '';
+    const { data } = await request<AppContextResult>(
+      this._httpConfig,
+      'GET',
+      `/helpers/app-context${query}`,
+    );
     return data;
   }
 
