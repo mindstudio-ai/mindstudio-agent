@@ -633,24 +633,11 @@ export class MindStudioAgent {
   /**
    * @internal Fetch and cache app context, then create auth + db instances.
    *
-   * In managed mode (CALLBACK_TOKEN), if no appId is available, we make
-   * a lightweight executeStep call to auto-detect it from response headers
-   * before fetching context. This avoids requiring users to manually set
-   * appId in the sandbox environment.
+   * In managed mode (CALLBACK_TOKEN), the platform resolves the app from
+   * the token — no appId needed. With an API key, appId is required.
    */
   private async _hydrateContext(): Promise<void> {
-    // If no appId yet and we're in managed mode, auto-detect it by making
-    // a lightweight step call. The platform resolves the app from the
-    // CALLBACK_TOKEN and returns the appId in response headers.
-    if (!this._appId && this._authType === 'internal') {
-      try {
-        await this.executeStep('setVariable', { value: '' });
-      } catch {
-        // Ignore errors — we just need the headers for appId auto-detect
-      }
-    }
-
-    if (!this._appId) {
+    if (!this._appId && this._authType !== 'internal') {
       throw new MindStudioError(
         'No app ID available for context resolution. Pass `appId` to the ' +
           'constructor, set the MINDSTUDIO_APP_ID environment variable, or ' +
@@ -797,16 +784,21 @@ export class MindStudioAgent {
    * Returns role assignments and managed database schemas. Useful for
    * hydrating `auth` and `db` namespaces when running outside the sandbox.
    *
+   * When called with a CALLBACK_TOKEN (managed mode), `appId` is optional —
+   * the platform resolves the app from the token. With an API key, `appId`
+   * is required.
+   *
    * ```ts
    * const ctx = await agent.getAppContext('your-app-id');
    * console.log(ctx.auth.roleAssignments, ctx.databases);
    * ```
    */
-  async getAppContext(appId: string): Promise<AppContextResult> {
+  async getAppContext(appId?: string): Promise<AppContextResult> {
+    const query = appId ? `?appId=${encodeURIComponent(appId)}` : '';
     const { data } = await request<AppContextResult>(
       this._httpConfig,
       'GET',
-      `/helpers/app-context?appId=${encodeURIComponent(appId)}`,
+      `/helpers/app-context${query}`,
     );
     return data;
   }
