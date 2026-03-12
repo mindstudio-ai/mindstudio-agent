@@ -49,6 +49,7 @@
 import { MindStudioError } from '../errors.js';
 import type { AppDatabase, AppDatabaseColumnSchema } from '../types.js';
 import { Table } from './table.js';
+import { Query } from './query.js';
 import type { TableConfig, SqlQuery, SqlResult } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -139,6 +140,31 @@ export interface Db {
 
   /** Returns a unix timestamp for (now + duration). Use with days/hours/minutes. */
   fromNow(ms: number): number;
+
+  // --- Batch execution ---
+
+  /**
+   * Execute multiple queries in a single round trip. All queries run on
+   * the same database connection, eliminating per-query HTTP overhead.
+   *
+   * Accepts Query objects (lazy, not yet executed). Compiles them to SQL,
+   * sends all in one batch request, and returns typed results.
+   *
+   * @example
+   * ```ts
+   * const [orders, approvals, vendors] = await db.batch(
+   *   Orders.filter(o => o.status === 'active').take(10),
+   *   Approvals.filter(a => a.status === 'pending').take(25),
+   *   Vendors.sortBy(v => v.createdAt).reverse().take(5),
+   * );
+   * ```
+   */
+  batch<A>(q1: PromiseLike<A>): Promise<[A]>;
+  batch<A, B>(q1: PromiseLike<A>, q2: PromiseLike<B>): Promise<[A, B]>;
+  batch<A, B, C>(q1: PromiseLike<A>, q2: PromiseLike<B>, q3: PromiseLike<C>): Promise<[A, B, C]>;
+  batch<A, B, C, D>(q1: PromiseLike<A>, q2: PromiseLike<B>, q3: PromiseLike<C>, q4: PromiseLike<D>): Promise<[A, B, C, D]>;
+  batch<A, B, C, D, E>(q1: PromiseLike<A>, q2: PromiseLike<B>, q3: PromiseLike<C>, q4: PromiseLike<D>, q5: PromiseLike<E>): Promise<[A, B, C, D, E]>;
+  batch(...queries: PromiseLike<unknown>[]): Promise<unknown[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +210,67 @@ export function createDb(
     minutes: (n: number) => n * 60_000,
     ago: (ms: number) => Date.now() - ms,
     fromNow: (ms: number) => Date.now() + ms,
+
+    // --- Batch execution ---
+
+    batch: ((...queries: PromiseLike<unknown>[]) => {
+      return (async () => {
+      // Compile each Query into SQL (or fallback SELECT *)
+      const compiled = queries.map((q) => {
+        if (!(q instanceof Query)) {
+          throw new MindStudioError(
+            'db.batch() only accepts Query objects (from .filter(), .sortBy(), etc.)',
+            'invalid_batch_query',
+            400,
+          );
+        }
+        return (q as InstanceType<typeof Query<unknown>>)._compile();
+      });
+
+      // Group queries by databaseId for minimal HTTP calls.
+      // Most apps have one database, so this is usually one group.
+      const groups = new Map<
+        string,
+        { index: number; sqlQuery: SqlQuery }[]
+      >();
+
+      for (let i = 0; i < compiled.length; i++) {
+        const c = compiled[i];
+        const dbId = c.config.databaseId;
+        const sqlQuery = c.query ?? c.fallbackQuery!;
+
+        if (!groups.has(dbId)) groups.set(dbId, []);
+        groups.get(dbId)!.push({ index: i, sqlQuery });
+      }
+
+      // Execute one batch per database
+      const allResults: (SqlResult | undefined)[] = new Array(compiled.length);
+
+      await Promise.all(
+        Array.from(groups.entries()).map(async ([dbId, entries]) => {
+          const sqlQueries = entries.map((e) => e.sqlQuery);
+          const results = await executeBatch(dbId, sqlQueries);
+          for (let i = 0; i < entries.length; i++) {
+            allResults[entries[i].index] = results[i];
+          }
+        }),
+      );
+
+      // Process results: deserialize + apply JS fallback where needed
+      return compiled.map((c, i) => {
+        const result = allResults[i]!;
+
+        // Log warning for JS fallback queries
+        if (!c.query && c.predicates?.length) {
+          console.warn(
+            `[mindstudio] db.batch(): filter on ${c.config.tableName} could not be compiled to SQL — processing in JS`,
+          );
+        }
+
+        return Query._processResults(result, c);
+      });
+      })();
+    }) as Db['batch'],
   };
 }
 

@@ -181,7 +181,7 @@ export interface UserInfoResult {
  * }
  * ```
  */
-export type User = string & { readonly __brand: 'User' };
+export type User = string;
 
 /**
  * Resolved display info for a platform user. Returned by `resolveUser()`
