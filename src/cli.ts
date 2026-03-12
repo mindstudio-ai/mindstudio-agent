@@ -913,7 +913,9 @@ async function cmdLogin(options: { baseUrl?: string }): Promise<void> {
       saveConfig(config);
       process.stderr.write(
         `  ${ansi.greenBold('\u2714')} Authenticated successfully!\n` +
-          `  ${ansi.gray('Credentials saved to')} ${getConfigPath()}\n\n`,
+          `  ${ansi.gray('Credentials saved to')} ${getConfigPath()}\n\n` +
+          `  ${ansi.bold('Using with Claude Code?')} Run once to enable the MCP server:\n` +
+          `  ${ansi.cyan('claude mcp add mindstudio -- mindstudio mcp')}\n\n`,
       );
       return;
     }
