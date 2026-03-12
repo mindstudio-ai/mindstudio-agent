@@ -782,6 +782,14 @@ export class MindStudioAgent {
       minutes: (n: number) => n * 60_000,
       ago: (ms: number) => Date.now() - ms,
       fromNow: (ms: number) => Date.now() + ms,
+
+      // Batch needs context — hydrate first, then delegate to real db
+      batch: ((...queries: PromiseLike<unknown>[]) => {
+        return (async () => {
+          await agent.ensureContext();
+          return agent._db!.batch(...queries);
+        })();
+      }) as Db['batch'],
     };
   }
 

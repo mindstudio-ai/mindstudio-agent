@@ -45,6 +45,8 @@ import type {
   Accessor,
   TableConfig,
   CompiledPredicate,
+  SqlQuery,
+  SqlResult,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -214,6 +216,97 @@ export class Query<T> implements PromiseLike<T[]> {
   }
 
   // -------------------------------------------------------------------------
+  // Batch compilation — used by db.batch() to extract SQL without executing
+  // -------------------------------------------------------------------------
+
+  /**
+   * @internal Compile this query into a SqlQuery for batch execution.
+   *
+   * Returns the compiled SQL query (if all predicates compile to SQL),
+   * or null (if JS fallback is needed). In the fallback case, a bare
+   * `SELECT *` is returned as `fallbackQuery` so the batch can fetch
+   * all rows and this query can filter them in JS post-fetch.
+   */
+  _compile(): CompiledQuery<T> {
+    const compiled = this._compilePredicates();
+    const sortField = this._sortAccessor
+      ? extractFieldName(this._sortAccessor)
+      : undefined;
+
+    if (compiled.allSql) {
+      const query = buildSelect(this._config.tableName, {
+        where: compiled.sqlWhere || undefined,
+        orderBy: sortField ?? undefined,
+        desc: this._reversed,
+        limit: this._limit,
+        offset: this._offset,
+      });
+      return { query, fallbackQuery: null, config: this._config };
+    }
+
+    // JS fallback — need all rows
+    const fallbackQuery = buildSelect(this._config.tableName);
+    return {
+      query: null,
+      fallbackQuery,
+      config: this._config,
+      predicates: this._predicates,
+      sortAccessor: this._sortAccessor,
+      reversed: this._reversed,
+      limit: this._limit,
+      offset: this._offset,
+    };
+  }
+
+  /**
+   * @internal Process raw SQL results into typed rows. Used by db.batch()
+   * after executing the compiled query.
+   *
+   * For SQL-compiled queries: just deserialize the rows.
+   * For JS-fallback queries: filter, sort, and slice in JS.
+   */
+  static _processResults<T>(
+    result: SqlResult,
+    compiled: CompiledQuery<T>,
+  ): T[] {
+    const rows = result.rows.map(
+      (row) =>
+        deserializeRow(
+          row as Record<string, unknown>,
+          compiled.config.columns,
+        ) as T,
+    );
+
+    // SQL path — rows are already filtered/sorted/limited
+    if (compiled.query) return rows;
+
+    // JS fallback — apply predicates, sort, slice
+    let filtered: T[] = compiled.predicates
+      ? rows.filter((row) => compiled.predicates!.every((pred) => pred(row)))
+      : rows;
+
+    if (compiled.sortAccessor) {
+      const accessor = compiled.sortAccessor;
+      const reversed = compiled.reversed ?? false;
+      filtered.sort((a, b) => {
+        const aVal = accessor(a) as number | string;
+        const bVal = accessor(b) as number | string;
+        if (aVal < bVal) return reversed ? 1 : -1;
+        if (aVal > bVal) return reversed ? -1 : 1;
+        return 0;
+      });
+    }
+
+    if (compiled.offset != null || compiled.limit != null) {
+      const start = compiled.offset ?? 0;
+      const end = compiled.limit != null ? start + compiled.limit : undefined;
+      filtered = filtered.slice(start, end);
+    }
+
+    return filtered;
+  }
+
+  // -------------------------------------------------------------------------
   // PromiseLike
   // -------------------------------------------------------------------------
 
@@ -327,6 +420,29 @@ export class Query<T> implements PromiseLike<T[]> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Result of Query._compile(). Contains either a compiled SQL query
+ * (fast path) or a fallback SELECT * with JS processing metadata.
+ */
+export interface CompiledQuery<T> {
+  /** Compiled SQL query, or null if JS fallback needed. */
+  query: SqlQuery | null;
+  /** SELECT * fallback query, or null if SQL compiled. */
+  fallbackQuery: SqlQuery | null;
+  /** Table config for deserialization. */
+  config: TableConfig;
+  /** JS predicates (only for fallback). */
+  predicates?: Predicate<T>[];
+  /** Sort accessor (only for fallback). */
+  sortAccessor?: Accessor<T>;
+  /** Sort direction (only for fallback). */
+  reversed?: boolean;
+  /** Limit (only for fallback). */
+  limit?: number;
+  /** Offset (only for fallback). */
+  offset?: number;
+}
 
 export function extractFieldName<T>(accessor: Accessor<T>): string | null {
   const source = accessor.toString();

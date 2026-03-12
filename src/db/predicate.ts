@@ -712,8 +712,7 @@ class Parser {
   }
 
   /**
-   * Attempt to resolve a closure variable by invoking the original function
-   * with a recording Proxy and inspecting what values it compares against.
+   * Attempt to resolve a closure variable's value.
    *
    * This handles the common pattern:
    * ```ts
@@ -721,64 +720,30 @@ class Parser {
    * orders.filter(o => o.requestedBy === userId)
    * ```
    *
-   * The Proxy captures property accesses on the parameter and we can then
-   * extract the comparison value from the function's behavior. However,
-   * this approach has limitations — if the function throws, has side effects,
-   * or uses the variable in a non-comparison context, we fall back to JS.
+   * Closure variable resolution is fundamentally limited in JavaScript —
+   * we can't access another function's closure scope from outside without
+   * `eval`. The `===` operator can't be overridden via Proxy or
+   * Symbol.toPrimitive, so we can't intercept comparisons.
+   *
+   * For now, this falls back to JS execution. The predicate still works
+   * correctly — it just scans all rows instead of generating SQL.
+   * This is the most common reason for JS fallback in practice, since
+   * almost every real-world filter references a variable like `userId`.
+   *
+   * A future improvement could accept an explicit `vars` argument:
+   * ```ts
+   * orders.filter(o => o.requestedBy === $userId, { $userId: auth.userId })
+   * ```
    */
   private resolveClosureVariable(): unknown {
-    // We're at an identifier token that is NOT the param name and NOT a keyword.
-    // Save position so we can see what follows.
-    const identToken = this.advance();
-
-    // Check for dotted access on the closure var: closureVar.property
-    // e.g. `config.maxAmount` — we still need to resolve the full value
-    let closureExpr = identToken.value;
+    // Consume the identifier (and any dotted access like closureVar.prop)
+    this.advance();
     while (this.match('dot') && this.tokens[this.pos + 1]?.type === 'identifier') {
-      this.advance(); // dot
-      closureExpr += '.' + this.advance().value;
+      this.advance();
+      this.advance();
     }
 
-    // Try to evaluate the closure variable by calling the original function
-    // with a special Proxy and catching the comparison result
-    try {
-      // Create a proxy that returns unique marker values for field access
-      const MARKER = Symbol('field_access_marker');
-      const accessed: string[] = [];
-
-      const proxy = new Proxy(
-        {},
-        {
-          get(_, prop: string) {
-            accessed.push(prop);
-            // Return a special object that captures comparison values
-            return new Proxy(() => MARKER, {
-              get(_, nestedProp: string) {
-                accessed.push(nestedProp);
-                return MARKER;
-              },
-            });
-          },
-        },
-      );
-
-      // Call the function — it should throw or return, either way we
-      // can't reliably extract the closure value this way for complex cases.
-      // For simple cases, we try a different approach: evaluate the closure
-      // variable name directly.
-
-      // The most reliable approach for simple variables: the function's
-      // toString() already gave us the variable name. We can try to call
-      // the function with known test values and deduce the closure value
-      // from the comparison behavior. But this is fragile.
-
-      // For v1, fall back to JS for closure variables. This is the safest
-      // choice — we'll add closure resolution in a future version.
-      void proxy; // suppress unused warning
-      return PARSE_FAILED;
-    } catch {
-      return PARSE_FAILED;
-    }
+    return PARSE_FAILED;
   }
 
   /**
