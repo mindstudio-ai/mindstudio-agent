@@ -562,6 +562,11 @@ export class MindStudioAgent {
    */
   get auth(): AuthContext {
     if (!this._auth) {
+      // Try sandbox hydration lazily — global.ai may have been set after
+      // the constructor ran (e.g. ESM imports hoist before inline code)
+      this._trySandboxHydration();
+    }
+    if (!this._auth) {
       throw new MindStudioError(
         'Auth context not yet loaded. Call `await agent.ensureContext()` ' +
           'or perform any db operation first (which auto-hydrates context). ' +
@@ -589,6 +594,11 @@ export class MindStudioAgent {
    * ```
    */
   get db(): Db {
+    if (!this._db) {
+      // Try sandbox hydration lazily — global.ai may have been set after
+      // the constructor ran (e.g. ESM imports hoist before inline code)
+      this._trySandboxHydration();
+    }
     if (this._db) return this._db;
 
     // Return a lazy Db proxy that auto-hydrates context on first use.
@@ -661,7 +671,7 @@ export class MindStudioAgent {
     this._auth = new AuthContext(context.auth);
     this._db = createDb(
       context.databases,
-      this._executeDbQuery.bind(this),
+      this._executeDbBatch.bind(this),
     );
   }
 
@@ -687,33 +697,48 @@ export class MindStudioAgent {
   }
 
   /**
-   * @internal Execute a SQL query against a managed database.
-   * Used as the `executeQuery` callback for Table instances.
+   * @internal Execute a batch of SQL queries against a managed database.
+   * Used as the `executeBatch` callback for Table/Query instances.
    *
-   * Calls the `queryAppDatabase` step with `parameterize: false`
-   * (the SDK builds fully-formed SQL with escaped inline values).
+   * Calls `POST /_internal/v2/db/query` directly with the hook token
+   * (raw, no Bearer prefix). All queries run on a single SQLite connection,
+   * enabling RETURNING clauses and multi-statement batches.
    */
-  private async _executeDbQuery(
+  private async _executeDbBatch(
     databaseId: string,
-    sql: string,
-  ): Promise<{ rows: unknown[]; changes: number }> {
-    const result = await this.executeStep<{
-      rows: unknown[];
-      changes: number;
-    }>('queryAppDatabase', {
-      databaseId,
-      sql,
-      parameterize: false,
+    queries: { sql: string; params?: unknown[] }[],
+  ): Promise<{ rows: unknown[]; changes: number }[]> {
+    const url = `${this._httpConfig.baseUrl}/_internal/v2/db/query`;
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: this._httpConfig.token,
+      },
+      body: JSON.stringify({ databaseId, queries }),
     });
 
-    return { rows: result.rows ?? [], changes: result.changes ?? 0 };
+    if (!res.ok) {
+      let message = `Database query failed: ${res.status} ${res.statusText}`;
+      try {
+        const body = (await res.json()) as { error?: string };
+        if (body.error) message = body.error;
+      } catch { /* not JSON */ }
+      throw new MindStudioError(message, 'db_query_error', res.status);
+    }
+
+    const data = (await res.json()) as {
+      results: { rows: unknown[]; changes: number }[];
+    };
+    return data.results;
   }
 
   /**
    * @internal Create a lazy Db proxy that auto-hydrates context.
    *
    * defineTable() returns Table instances immediately (no async needed).
-   * But the Table's executeQuery callback is wrapped to call ensureContext()
+   * But the Table's executeBatch callback is wrapped to call ensureContext()
    * before the first query, so context is fetched lazily.
    */
   private _createLazyDb(): Db {
@@ -721,46 +746,31 @@ export class MindStudioAgent {
 
     return {
       defineTable<T>(name: string, options?: DefineTableOptions) {
-        // We can't resolve the table schema yet (context hasn't been
-        // fetched), so we create a "lazy" table whose executeQuery
-        // callback calls ensureContext() before running. After hydration,
-        // the real Db (agent._db) exists with full schema info, and we
-        // delegate to it for the actual query execution.
-        //
-        // The columns array starts empty here — this is fine because no
-        // actual data flows through this Table's columns. The executeQuery
-        // callback below redirects through the fully-configured real Db
-        // after hydration, which has the correct column schema for
-        // user-type prefix handling and JSON parsing.
-
+        // Lazy table — context hasn't been fetched yet, so executeBatch
+        // calls ensureContext() first, then delegates to the real endpoint.
         const databaseHint = options?.database;
 
         return new Table<T>({
           databaseId: '',
           tableName: name,
           columns: [],
-          executeQuery: async (sql: string) => {
+          executeBatch: async (queries) => {
             await agent.ensureContext();
-            // After hydration, the real Db has full database metadata.
-            // Look up the databaseId for this table, respecting the
-            // database hint if one was provided.
             const databases = agent._context!.databases;
             let targetDb;
 
             if (databaseHint) {
-              // Explicit database specified — match by name or ID
               targetDb = databases.find(
                 (d) => d.id === databaseHint || d.name === databaseHint,
               );
             } else {
-              // Auto-resolve: find the database containing this table
               targetDb = databases.find((d) =>
                 d.tables.some((t) => t.name === name),
               );
             }
 
             const databaseId = targetDb?.id ?? databases[0]?.id ?? '';
-            return agent._executeDbQuery(databaseId, sql);
+            return agent._executeDbBatch(databaseId, queries);
           },
         });
       },

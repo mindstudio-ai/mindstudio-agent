@@ -102,13 +102,30 @@ export interface TableConfig {
   columns: AppDatabaseColumnSchema[];
 
   /**
-   * Execute a SQL query against the managed database. This is bound to
-   * `agent.executeStep('queryAppDatabase', ...)` at creation time.
+   * Execute one or more SQL queries against the managed database in a
+   * single round trip. All queries run on the same SQLite connection,
+   * enabling RETURNING clauses and multi-statement batches.
    *
-   * @param sql - The SQL query string (fully formed, no placeholders)
-   * @returns The query result: rows for SELECT, changes count for writes
+   * Bound to the `POST /_internal/v2/db/query` endpoint at creation time.
+   *
+   * @param queries - Array of SQL queries with optional bind params
+   * @returns Array of results in the same order as the input queries
    */
-  executeQuery: (sql: string) => Promise<{ rows: unknown[]; changes: number }>;
+  executeBatch: (
+    queries: SqlQuery[],
+  ) => Promise<SqlResult[]>;
+}
+
+/** A single SQL query with optional positional bind params. */
+export interface SqlQuery {
+  sql: string;
+  params?: unknown[];
+}
+
+/** Result of a single SQL query execution. */
+export interface SqlResult {
+  rows: unknown[];
+  changes: number;
 }
 
 // ---------------------------------------------------------------------------

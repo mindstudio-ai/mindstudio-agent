@@ -95,9 +95,15 @@ npx @mindstudio-ai/agent generate-text --message "Hello"
 
 ### MCP server
 
-Add to your MCP client config (Claude Code, Cursor, VS Code, etc.):
+**Claude Code** (one-time setup):
+```bash
+claude mcp add mindstudio -- mindstudio mcp
+```
 
-**With standalone binary** (recommended — faster startup, no Node required):
+That's it — Claude Code will discover the MCP server on next launch. Auth is picked up from `mindstudio login` automatically.
+
+**Other MCP clients** (Cursor, VS Code, Windsurf, etc.) — add to your config:
+
 ```json
 {
   "mcpServers": {

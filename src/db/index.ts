@@ -49,7 +49,7 @@
 import { MindStudioError } from '../errors.js';
 import type { AppDatabase, AppDatabaseColumnSchema } from '../types.js';
 import { Table } from './table.js';
-import type { TableConfig } from './types.js';
+import type { TableConfig, SqlQuery, SqlResult } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Options for defineTable
@@ -149,7 +149,7 @@ export interface Db {
  * Create a Db namespace object from app context database metadata.
  *
  * @param databases - Database metadata from `getAppContext()` or sandbox globals
- * @param executeQuery - Bound function that executes SQL via queryAppDatabase step
+ * @param executeBatch - Bound function that executes SQL batches via POST /_internal/v2/db/query
  * @returns The Db object with defineTable() and time helpers
  *
  * @internal Called by MindStudioAgent during context hydration. Not part of
@@ -157,7 +157,7 @@ export interface Db {
  */
 export function createDb(
   databases: AppDatabase[],
-  executeQuery: (databaseId: string, sql: string) => Promise<{ rows: unknown[]; changes: number }>,
+  executeBatch: (databaseId: string, queries: SqlQuery[]) => Promise<SqlResult[]>,
 ): Db {
   return {
     defineTable<T>(name: string, options?: DefineTableOptions): Table<T> {
@@ -168,7 +168,8 @@ export function createDb(
         databaseId: resolved.databaseId,
         tableName: name,
         columns: resolved.columns,
-        executeQuery: (sql: string) => executeQuery(resolved.databaseId, sql),
+        executeBatch: (queries: SqlQuery[]) =>
+          executeBatch(resolved.databaseId, queries),
       };
 
       return new Table<T>(config);
