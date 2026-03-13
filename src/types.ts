@@ -3,10 +3,12 @@ export interface AgentOptions {
   /**
    * MindStudio API key. Used as a Bearer token for authentication.
    *
-   * If omitted, the SDK checks (in order):
+   * Note: `CALLBACK_TOKEN` (auto-set inside MindStudio) always takes
+   * priority over all other auth sources when present.
+   *
+   * If omitted (and no CALLBACK_TOKEN), the SDK checks (in order):
    * 1. `MINDSTUDIO_API_KEY` environment variable
    * 2. `~/.mindstudio/config.json` (set via `mindstudio login`)
-   * 3. `CALLBACK_TOKEN` environment variable (auto-set inside MindStudio custom functions)
    */
   apiKey?: string;
 
