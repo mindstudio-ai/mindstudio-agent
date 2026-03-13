@@ -68,6 +68,9 @@ export class MindStudioAgent {
   /** @internal */
   private _threadId: string | undefined;
 
+  /** @internal Stream ID for SSE token streaming. Set by sandbox via STREAM_ID env var. */
+  private _streamId: string | undefined;
+
   // ---- App context (db + auth) ----
 
   /**
@@ -131,6 +134,8 @@ export class MindStudioAgent {
     if (authType === 'internal') {
       this._trySandboxHydration();
     }
+
+    this._streamId = process.env.STREAM_ID ?? undefined;
   }
 
   /**
@@ -157,6 +162,7 @@ export class MindStudioAgent {
       step,
       ...(options?.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
+      ...(this._streamId != null && { streamId: this._streamId }),
     });
 
     let output: TOutput;
