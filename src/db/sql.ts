@@ -235,7 +235,12 @@ export function buildDelete(table: string, where?: string, whereParams?: unknown
 // Helpers
 // ---------------------------------------------------------------------------
 
-const SYSTEM_COLUMNS = new Set(['id', 'createdAt', 'updatedAt', 'lastUpdatedBy']);
+const SYSTEM_COLUMNS = new Set([
+  'id',
+  'created_at', 'createdAt',
+  'updated_at', 'updatedAt',
+  'last_updated_by', 'lastUpdatedBy',
+]);
 
 function stripSystemColumns(
   data: Record<string, unknown>,

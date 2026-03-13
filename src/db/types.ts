@@ -26,11 +26,18 @@ import type { AppDatabaseColumnSchema } from '../types.js';
  * Names of columns that the platform manages automatically.
  *
  * - `id`: UUID primary key, generated on INSERT
- * - `createdAt`: unix timestamp (ms), set on INSERT
- * - `updatedAt`: unix timestamp (ms), set on INSERT and every UPDATE
- * - `lastUpdatedBy`: reference to the run ID that last wrote this row
+ * - `created_at`: unix timestamp (ms), set on INSERT
+ * - `updated_at`: unix timestamp (ms), set on INSERT and every UPDATE
+ * - `last_updated_by`: reference to the run ID that last wrote this row
+ *
+ * Both snake_case (platform convention) and camelCase (legacy) are
+ * stripped to support either naming convention in table interfaces.
  */
-export type SystemFields = 'id' | 'createdAt' | 'updatedAt' | 'lastUpdatedBy';
+export type SystemFields =
+  | 'id'
+  | 'created_at' | 'createdAt'
+  | 'updated_at' | 'updatedAt'
+  | 'last_updated_by' | 'lastUpdatedBy';
 
 /**
  * Input type for `Table.push()`. Excludes system-managed fields.
