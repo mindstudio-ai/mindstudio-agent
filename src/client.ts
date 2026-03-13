@@ -382,10 +382,14 @@ export class MindStudioAgent {
       }
 
       if (!res.ok) {
+        const errorBody = await res.json().catch(() => ({}));
         throw new MindStudioError(
-          `Poll request failed: ${res.status} ${res.statusText}`,
-          'poll_error',
+          (errorBody as Record<string, string>).message ??
+            (errorBody as Record<string, string>).error ??
+            `Poll request failed: ${res.status} ${res.statusText}`,
+          (errorBody as Record<string, string>).code ?? 'poll_error',
           res.status,
+          errorBody,
         );
       }
 
@@ -721,11 +725,33 @@ export class MindStudioAgent {
 
     if (!res.ok) {
       let message = `Database query failed: ${res.status} ${res.statusText}`;
+      let code = 'db_query_error';
+
       try {
-        const body = (await res.json()) as { error?: string };
-        if (body.error) message = body.error;
-      } catch { /* not JSON */ }
-      throw new MindStudioError(message, 'db_query_error', res.status);
+        const text = await res.text();
+        try {
+          // Try parsing as JSON — API may return { error, code, message, details }
+          const body = JSON.parse(text) as Record<string, unknown>;
+          // Accept various error shapes the API might use
+          const errMsg =
+            (body.error as string) ??
+            (body.message as string) ??
+            (body.details as string);
+          if (errMsg) message = errMsg;
+          if (body.code) code = body.code as string;
+        } catch {
+          // Not JSON — use raw text if it's informative
+          if (text && text.length < 500) message = text;
+        }
+      } catch {
+        // Couldn't read response body at all
+      }
+
+      throw new MindStudioError(
+        `[db] ${message}`,
+        code,
+        res.status,
+      );
     }
 
     const data = (await res.json()) as {
@@ -935,10 +961,14 @@ export class MindStudioAgent {
       headers: options.type ? { 'Content-Type': options.type } : {},
     });
     if (!res.ok) {
+      const errorBody = await res.json().catch(() => ({}));
       throw new MindStudioError(
-        `Upload failed: ${res.status} ${res.statusText}`,
-        'upload_error',
+        (errorBody as Record<string, string>).message ??
+          (errorBody as Record<string, string>).error ??
+          `Upload failed: ${res.status} ${res.statusText}`,
+        (errorBody as Record<string, string>).code ?? 'upload_error',
         res.status,
+        errorBody,
       );
     }
     return { url: data.url };
