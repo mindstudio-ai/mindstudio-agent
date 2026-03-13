@@ -43,10 +43,10 @@ const DEFAULT_MAX_RETRIES = 3;
  * ```
  *
  * Authentication is resolved in order:
- * 1. `apiKey` passed to the constructor
- * 2. `MINDSTUDIO_API_KEY` environment variable
- * 3. `~/.mindstudio/config.json` (set via `mindstudio login`)
- * 4. `CALLBACK_TOKEN` environment variable (auto-set inside MindStudio custom functions)
+ * 1. `CALLBACK_TOKEN` environment variable (auto-set inside MindStudio — always takes priority)
+ * 2. `apiKey` passed to the constructor
+ * 3. `MINDSTUDIO_API_KEY` environment variable
+ * 4. `~/.mindstudio/config.json` (set via `mindstudio login`)
  *
  * Base URL is resolved in order:
  * 1. `baseUrl` passed to the constructor
@@ -990,13 +990,15 @@ function resolveToken(
   token: string;
   authType: AuthType;
 } {
+  // CALLBACK_TOKEN takes priority — when running inside the MindStudio
+  // sandbox, the hook token must be used regardless of other auth sources.
+  if (process.env.CALLBACK_TOKEN)
+    return { token: process.env.CALLBACK_TOKEN, authType: 'internal' };
   if (provided) return { token: provided, authType: 'apiKey' };
   if (process.env.MINDSTUDIO_API_KEY)
     return { token: process.env.MINDSTUDIO_API_KEY, authType: 'apiKey' };
   if (config?.apiKey)
     return { token: config.apiKey, authType: 'apiKey' };
-  if (process.env.CALLBACK_TOKEN)
-    return { token: process.env.CALLBACK_TOKEN, authType: 'internal' };
   throw new MindStudioError(
     'No API key provided. Run `mindstudio login`, pass `apiKey` to the ' +
       'constructor, or set the MINDSTUDIO_API_KEY environment variable.',
