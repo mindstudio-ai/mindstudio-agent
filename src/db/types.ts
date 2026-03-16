@@ -40,13 +40,37 @@ export type SystemFields =
   | 'last_updated_by' | 'lastUpdatedBy';
 
 /**
+ * System columns added to every row on read. This is the concrete shape
+ * of the platform-managed columns — used to augment user-defined interfaces
+ * so reads include id, timestamps, etc. regardless of whether the user
+ * declared them.
+ */
+export interface SystemColumns {
+  id: string;
+  created_at: number;
+  updated_at: number;
+  last_updated_by: string;
+}
+
+/**
+ * A row as returned from the database. Merges the user-defined type T
+ * with system columns. If T already includes system columns (e.g., the
+ * user declared `id: string`), the intersection is harmless — same type.
+ *
+ * This ensures TypeScript knows about `id`, `created_at`, etc. on read
+ * results even if the user's interface only declares their own fields.
+ */
+export type Row<T> = T & SystemColumns;
+
+/**
  * Input type for `Table.push()`. Excludes system-managed fields.
  * Optional fields in T remain optional.
  *
  * @example
  * ```ts
- * // If Order has { id, createdAt, updatedAt, lastUpdatedBy, item, amount }
+ * // If Order has { item: string; amount: number }
  * // then PushInput<Order> is { item: string; amount: number }
+ * // (system fields like id, created_at are not required)
  * ```
  */
 export type PushInput<T> = Omit<T, SystemFields>;

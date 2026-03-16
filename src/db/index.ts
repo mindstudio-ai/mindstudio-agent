@@ -82,6 +82,8 @@ export type {
   Accessor,
   PushInput,
   UpdateInput,
+  Row,
+  SystemColumns,
   SystemFields,
   TableConfig,
 } from './types.js';
