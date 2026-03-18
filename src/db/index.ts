@@ -50,7 +50,7 @@ import { MindStudioError } from '../errors.js';
 import type { AppDatabase, AppDatabaseColumnSchema } from '../types.js';
 import { Table } from './table.js';
 import { Query } from './query.js';
-import type { TableConfig, SqlQuery, SqlResult } from './types.js';
+import type { TableConfig, SqlQuery, SqlResult, SystemColumns } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Options for defineTable
@@ -120,7 +120,7 @@ export interface Db {
    * const Orders = db.defineTable<Order>('orders', { database: 'main' });
    * ```
    */
-  defineTable<T>(name: string, options?: DefineTableOptions): Table<T>;
+  defineTable<T>(name: string, options?: DefineTableOptions): Table<T & SystemColumns>;
 
   // --- Time helpers ---
   // All return numbers (unix timestamps in milliseconds or durations in ms).

@@ -547,6 +547,56 @@ export class MindStudioAgent {
   }
 
   // -------------------------------------------------------------------------
+  // Streaming
+  // -------------------------------------------------------------------------
+
+  /**
+   * Send a stream chunk to the caller via SSE.
+   *
+   * When invoked from a method that was called with `stream: true`, chunks
+   * are delivered in real-time as Server-Sent Events. When there is no active
+   * stream (no `STREAM_ID`), calls are silently ignored — so it's safe to
+   * call unconditionally.
+   *
+   * Accepts strings (sent as `type: 'token'`) or structured data (sent as
+   * `type: 'data'`). The caller receives each chunk as an SSE event.
+   *
+   * @example
+   * ```ts
+   * // Stream text tokens
+   * await agent.stream('Processing item 1...');
+   *
+   * // Stream structured data
+   * await agent.stream({ progress: 50, currentItem: 'abc' });
+   * ```
+   */
+  stream = async (data: string | Record<string, unknown>): Promise<void> => {
+    if (!this._streamId) return;
+
+    const url = `${this._httpConfig.baseUrl}/_internal/v2/stream-chunk`;
+
+    const body =
+      typeof data === 'string'
+        ? { streamId: this._streamId, type: 'token', text: data }
+        : { streamId: this._streamId, type: 'data', data };
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: this._httpConfig.token,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      // Best-effort — don't throw on stream failures, just warn
+      const text = await res.text().catch(() => '');
+      console.warn(`[mindstudio] stream chunk failed: ${res.status} ${text}`);
+    }
+  };
+
+  // -------------------------------------------------------------------------
   // db + auth namespaces
   // -------------------------------------------------------------------------
 
