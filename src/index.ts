@@ -160,6 +160,24 @@ export const db: _Db = new Proxy(
 );
 
 /**
+ * Top-level `stream` function bound to the default singleton.
+ *
+ * Send a stream chunk to the caller via SSE. When the method was called
+ * with `stream: true`, chunks arrive in real-time. When there is no active
+ * stream, calls are silently ignored.
+ *
+ * @example
+ * ```ts
+ * import { stream } from '@mindstudio-ai/agent';
+ *
+ * await stream('Processing...');
+ * await stream({ progress: 50 });
+ * ```
+ */
+export const stream = (data: string | Record<string, unknown>) =>
+  mindstudio.stream(data);
+
+/**
  * Resolve a user ID to display info (name, email, profile picture).
  * Bound to the default singleton.
  *

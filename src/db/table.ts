@@ -25,7 +25,7 @@ import {
   deserializeRow,
   escapeValue,
 } from './sql.js';
-import type { Predicate, Accessor, PushInput, UpdateInput, Row, TableConfig } from './types.js';
+import type { Predicate, Accessor, PushInput, UpdateInput, TableConfig } from './types.js';
 
 export class Table<T> {
   /** @internal */
@@ -39,7 +39,7 @@ export class Table<T> {
   // Reads — direct
   // -------------------------------------------------------------------------
 
-  async get(id: string): Promise<Row<T> | null> {
+  async get(id: string): Promise<T | null> {
     const query = buildSelect(this._config.tableName, {
       where: `id = ?`,
       whereParams: [id],
@@ -50,14 +50,14 @@ export class Table<T> {
     return deserializeRow(
       results[0].rows[0] as Record<string, unknown>,
       this._config.columns,
-    ) as Row<T>;
+    ) as T;
   }
 
-  async findOne(predicate: Predicate<Row<T>>): Promise<Row<T> | null> {
+  async findOne(predicate: Predicate<T>): Promise<T | null> {
     return this.filter(predicate).first();
   }
 
-  async count(predicate?: Predicate<Row<T>>): Promise<number> {
+  async count(predicate?: Predicate<T>): Promise<number> {
     if (predicate) return this.filter(predicate).count();
 
     const query = buildCount(this._config.tableName);
@@ -66,11 +66,11 @@ export class Table<T> {
     return row?.count ?? 0;
   }
 
-  async some(predicate: Predicate<Row<T>>): Promise<boolean> {
+  async some(predicate: Predicate<T>): Promise<boolean> {
     return this.filter(predicate).some();
   }
 
-  async every(predicate: Predicate<Row<T>>): Promise<boolean> {
+  async every(predicate: Predicate<T>): Promise<boolean> {
     return this.filter(predicate).every();
   }
 
@@ -81,30 +81,30 @@ export class Table<T> {
     return row?.result === 1;
   }
 
-  async min(accessor: Accessor<Row<T>, number>): Promise<Row<T> | null> {
-    return this.sortBy(accessor as Accessor<Row<T>>).first();
+  async min(accessor: Accessor<T, number>): Promise<T | null> {
+    return this.sortBy(accessor as Accessor<T>).first();
   }
 
-  async max(accessor: Accessor<Row<T>, number>): Promise<Row<T> | null> {
-    return this.sortBy(accessor as Accessor<Row<T>>).reverse().first();
+  async max(accessor: Accessor<T, number>): Promise<T | null> {
+    return this.sortBy(accessor as Accessor<T>).reverse().first();
   }
 
   async groupBy<K extends string | number>(
-    accessor: Accessor<Row<T>, K>,
-  ): Promise<Map<K, Row<T>[]>> {
-    return new Query<Row<T>>(this._config).groupBy(accessor);
+    accessor: Accessor<T, K>,
+  ): Promise<Map<K, T[]>> {
+    return new Query<T>(this._config).groupBy(accessor);
   }
 
   // -------------------------------------------------------------------------
   // Reads — chainable
   // -------------------------------------------------------------------------
 
-  filter(predicate: Predicate<Row<T>>): Query<Row<T>> {
-    return new Query<Row<T>>(this._config).filter(predicate);
+  filter(predicate: Predicate<T>): Query<T> {
+    return new Query<T>(this._config).filter(predicate);
   }
 
-  sortBy(accessor: Accessor<Row<T>>): Query<Row<T>> {
-    return new Query<Row<T>>(this._config).sortBy(accessor);
+  sortBy(accessor: Accessor<T>): Query<T> {
+    return new Query<T>(this._config).sortBy(accessor);
   }
 
   // -------------------------------------------------------------------------
@@ -118,9 +118,9 @@ export class Table<T> {
    * Uses `INSERT ... RETURNING *` so the created row comes back in a
    * single round trip — no separate SELECT needed.
    */
-  async push(data: PushInput<T>): Promise<Row<T>>;
-  async push(data: PushInput<T>[]): Promise<Row<T>[]>;
-  async push(data: PushInput<T> | PushInput<T>[]): Promise<Row<T> | Row<T>[]> {
+  async push(data: PushInput<T>): Promise<T>;
+  async push(data: PushInput<T>[]): Promise<T[]>;
+  async push(data: PushInput<T> | PushInput<T>[]): Promise<T | T[]> {
     const isArray = Array.isArray(data);
     const items = isArray ? data : [data];
 
@@ -140,9 +140,9 @@ export class Table<T> {
         return deserializeRow(
           r.rows[0] as Record<string, unknown>,
           this._config.columns,
-        ) as Row<T>;
+        ) as T;
       }
-      return undefined as unknown as Row<T>;
+      return undefined as unknown as T;
     });
 
     return isArray ? rows : rows[0];
@@ -152,7 +152,7 @@ export class Table<T> {
    * Update a row by ID. Only the provided fields are changed.
    * Returns the updated row via `UPDATE ... RETURNING *`.
    */
-  async update(id: string, data: UpdateInput<T>): Promise<Row<T>> {
+  async update(id: string, data: UpdateInput<T>): Promise<T> {
     const query = buildUpdate(
       this._config.tableName,
       id,
@@ -165,7 +165,7 @@ export class Table<T> {
     return deserializeRow(
       results[0].rows[0] as Record<string, unknown>,
       this._config.columns,
-    ) as Row<T>;
+    ) as T;
   }
 
   async remove(id: string): Promise<void> {
@@ -176,7 +176,7 @@ export class Table<T> {
   /**
    * Remove all rows matching a predicate. Returns the count removed.
    */
-  async removeAll(predicate: Predicate<Row<T>>): Promise<number> {
+  async removeAll(predicate: Predicate<T>): Promise<number> {
     const compiled = compilePredicate(predicate);
 
     if (compiled.type === 'sql') {
@@ -200,7 +200,7 @@ export class Table<T> {
         ) as Record<string, unknown>,
     );
 
-    const matching = allRows.filter((row) => predicate(row as Row<T>));
+    const matching = allRows.filter((row) => predicate(row as T));
     if (matching.length === 0) return 0;
 
     // Delete all matching rows in a single batch

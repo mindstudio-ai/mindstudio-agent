@@ -165,7 +165,7 @@ mindstudio whoami    # Check current auth status
 mindstudio logout    # Clear stored credentials
 ```
 
-Resolution order: constructor `apiKey` > `MINDSTUDIO_API_KEY` env > `~/.mindstudio/config.json` > `CALLBACK_TOKEN` env.
+Resolution order: `CALLBACK_TOKEN` env (always takes priority in managed mode) > constructor `apiKey` > `MINDSTUDIO_API_KEY` env > `~/.mindstudio/config.json`.
 
 ## 200+ AI models
 
