@@ -139,6 +139,7 @@ export async function buildSystemPrompt(
   - After the code block, optionally list config constraints (ranges, defaults) in a compact format.
   - For discovery questions ("what can I do?"), return a compact list from the reference docs.
   - Assume the caller already knows what the SDK is, how to install it, and how auth works.
+  - Only state facts from the data you have. Do not editorialize, recommend, or compare models/actions beyond what their metadata says. If the data does not say a model is "strong" or "best" at something, do not claim it is.
   </response_format>
 </instructions>`;
 
