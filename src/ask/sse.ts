@@ -23,7 +23,7 @@ export async function* streamChat(params: {
   tools: ToolDefinition[];
 }): AsyncGenerator<StreamEvent> {
   const { baseUrl, apiKey, ...body } = params;
-  const url = `${baseUrl}/_internal/v2/agent/chat`;
+  const url = `${baseUrl}/_internal/v2/agent/sdk/chat`;
 
   let res: Response;
   try {
