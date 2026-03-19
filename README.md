@@ -135,6 +135,34 @@ That's it — Claude Code will discover the MCP server on next launch. Auth is p
 
 Every action is exposed as an MCP tool with full JSON Schema definitions — your AI agent can discover and call any of them directly.
 
+## Ask — built-in SDK assistant
+
+Not sure which action to use? Need a model ID? Want working code for a specific integration? Ask the SDK directly:
+
+```bash
+mindstudio ask "generate an image with FLUX"
+mindstudio ask "what models support vision?"
+mindstudio ask "how do I send a Slack message with an attachment?"
+mindstudio ask "what's the difference between generateText and userMessage?"
+```
+
+The `ask` command runs a built-in agent that has full knowledge of every action, model, and connector in the platform. It resolves real model IDs, looks up config options, and returns complete, copy-paste-ready TypeScript code — no placeholders.
+
+Pipe context in from other commands:
+
+```bash
+echo "I need to connect to HubSpot and create a contact" | mindstudio ask
+```
+
+**For AI agents:** Shell out to `mindstudio ask "..."` from any agent (Remy, Claude Code, custom agents) to get SDK expertise on demand. The response is clean markdown on stdout, ready to parse. Or use the `ask` MCP tool directly if connected via MCP.
+
+**Example questions:**
+- `"what actions are available for image generation?"` — discovery
+- `"give me TypeScript code to generate an image with DALL-E 3"` — resolution with real model IDs and config
+- `"what connectors could I configure?"` — OAuth service discovery
+- `"how do I use runFromConnectorRegistry to post to Slack?"` — connector action details
+- `"what are the config options for the flux-max-2 model?"` — model specs
+
 ## Authentication
 
 The fastest way to get started:
@@ -492,6 +520,7 @@ import { blockTypeAliases } from '@mindstudio-ai/agent';
 Usage: mindstudio <command | method> [options]
 
 Commands:
+  ask "<question>"                   Ask about actions, models, connectors
   login                            Authenticate with MindStudio (opens browser)
   logout                           Clear stored credentials
   whoami                           Show current authentication status

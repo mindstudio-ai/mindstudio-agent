@@ -48,6 +48,30 @@ interface McpTool {
   inputSchema: Record<string, unknown>;
 }
 
+const ASK_TOOL: McpTool = {
+  name: 'ask',
+  description:
+    'Ask a question about the MindStudio SDK — available actions, AI models, OAuth connectors, integrations, and how to use them. ' +
+    'Returns complete TypeScript code with real model IDs, config options, and correct types. ' +
+    'Use this when you need to discover actions, find model IDs, look up connector details, or get working code examples.\n\n' +
+    'Example questions:\n' +
+    '- "generate an image with FLUX"\n' +
+    '- "what models support vision?"\n' +
+    '- "how do I send a Slack message with an attachment?"\n' +
+    '- "what connectors could I configure?"\n' +
+    '- "what are the config options for flux-max-2?"',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      question: {
+        type: 'string',
+        description: 'Natural language question about the MindStudio SDK',
+      },
+    },
+    required: ['question'],
+  },
+};
+
 const HELPER_DESCRIPTIONS: Record<string, string> = {
   listModels: 'List all available AI models.',
   listModelsByType: 'List AI models filtered by type.',
@@ -367,7 +391,7 @@ export async function startMcpServer(options?: {
       }),
     );
 
-    tools = [...stepTools, ...HELPER_TOOLS];
+    tools = [ASK_TOOL, ...stepTools, ...HELPER_TOOLS];
     return tools;
   }
 
@@ -386,10 +410,10 @@ export async function startMcpServer(options?: {
           instructions:
             'Welcome to MindStudio — a platform with 200+ AI models, 850+ third-party integrations, and pre-built agents.\n\n' +
             'Getting started:\n' +
-            '1. Call `listAgents` to verify your connection and see available agents.\n' +
+            '1. Call `ask` with any question about the SDK — it knows every action, model, and connector and returns working code with real model IDs and config options. Examples: ask("generate an image with FLUX"), ask("what models support vision?"), ask("how do I send a Slack message?").\n' +
             '2. Call `changeName` to set your display name — use your name or whatever your user calls you. This is how you\'ll appear in MindStudio request logs.\n' +
-            '3. If you have a profile picture or icon, call `uploadFile` to upload it, then `changeProfilePicture` with the returned URL. This helps users identify your requests in their logs.\n' +
-            '4. Call `listActions` to discover all available actions.\n\n' +
+            '3. If you have a profile picture or icon, call `uploadFile` to upload it, then `changeProfilePicture` with the returned URL.\n' +
+            '4. For manual browsing, call `listActions` to discover all available actions.\n\n' +
             'Then use the tools to generate text, images, video, audio, search the web, work with data sources, run agents, and more.\n\n' +
             'Important:\n' +
             '- AI-powered actions (text generation, image generation, video, audio, etc.) cost money. Before running these, call `estimateActionCost` and confirm with the user before proceeding — unless they\'ve explicitly told you to go ahead.\n' +
@@ -414,7 +438,13 @@ export async function startMcpServer(options?: {
         try {
           let result: unknown;
 
-          if (toolName === 'listActions') {
+          if (toolName === 'ask') {
+            const { runAsk } = await import('./ask/index.js');
+            result = await runAsk(
+              args.question as string,
+              options,
+            );
+          } else if (toolName === 'listActions') {
             const meta = await getMetadata();
             const summary: Record<string, string> = {};
             for (const [name, step] of Object.entries(meta)) {
