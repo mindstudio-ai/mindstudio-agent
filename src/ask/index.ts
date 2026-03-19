@@ -174,21 +174,38 @@ export async function cmdAsk(
   options: { apiKey?: string; baseUrl?: string },
 ): Promise<void> {
   try {
+    let lineBuffer = '';
+
     const response = await runAsk(question, options, (event) => {
       switch (event.type) {
         case 'text':
-          process.stderr.write(event.text);
+          lineBuffer += event.text;
+          // Flush complete lines
+          while (lineBuffer.includes('\n')) {
+            const idx = lineBuffer.indexOf('\n');
+            process.stderr.write(lineBuffer.slice(0, idx + 1));
+            lineBuffer = lineBuffer.slice(idx + 1);
+          }
           break;
         case 'tool_start':
+          // Flush any buffered partial line first
+          if (lineBuffer) {
+            process.stderr.write(lineBuffer + '\n');
+            lineBuffer = '';
+          }
           process.stderr.write(
-            `\n ${ansi.cyan('⟡')} ${ansi.bold(event.name)} ${ansi.dim(summarizeInput(event.input))}\n`,
+            ` ${ansi.cyan('⟡')} ${ansi.bold(event.name)} ${ansi.dim(summarizeInput(event.input))}\n`,
           );
           break;
         case 'tool_done':
-          // Tool results are consumed by the next LLM turn, not shown
           break;
       }
     });
+
+    // Flush any remaining buffered text
+    if (lineBuffer) {
+      process.stderr.write(lineBuffer);
+    }
 
     if (process.stdout.isTTY) {
       process.stderr.write('\n');

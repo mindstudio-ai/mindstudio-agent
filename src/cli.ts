@@ -922,7 +922,9 @@ async function cmdLogin(options: { baseUrl?: string }): Promise<void> {
         `  ${ansi.greenBold('\u2714')} Authenticated successfully!\n` +
           `  ${ansi.gray('Credentials saved to')} ${getConfigPath()}\n\n` +
           `  ${ansi.bold('Using with Claude Code?')} Run once to enable the MCP server:\n` +
-          `  ${ansi.cyan('claude mcp add mindstudio -- mindstudio mcp')}\n\n`,
+          `  ${ansi.cyan('claude mcp add mindstudio -- mindstudio mcp')}\n\n` +
+          `  ${ansi.bold('Need help?')} Ask the SDK anything:\n` +
+          `  ${ansi.cyan('mindstudio ask "how do I generate an image?"')}\n\n`,
       );
       return;
     }
@@ -1195,6 +1197,13 @@ async function main(): Promise<void> {
       : Promise.resolve(null);
 
   try {
+    if (command === 'version' || command === '-v') {
+      process.stdout.write(
+        (process.env.PACKAGE_VERSION ?? 'unknown') + '\n',
+      );
+      return;
+    }
+
     if (command === 'login') {
       await cmdLogin({
         baseUrl: values['base-url'] as string | undefined,
