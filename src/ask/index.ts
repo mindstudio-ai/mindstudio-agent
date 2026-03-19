@@ -18,6 +18,13 @@ import type { Message, ToolCall } from './types.js';
 
 const DEFAULT_BASE_URL = 'https://v1.mindstudio-api.com';
 
+/** Events emitted during the ask agent loop. */
+export type AskEvent =
+  | { type: 'text'; text: string }
+  | { type: 'tool_start'; name: string; input: Record<string, any> }
+  | { type: 'tool_done'; name: string; isError: boolean }
+  | { type: 'error'; error: string };
+
 /**
  * Resolve raw API credentials for the SSE client.
  * Mirrors MindStudioAgent constructor resolution order.
@@ -53,10 +60,13 @@ function resolveCredentials(options: { apiKey?: string; baseUrl?: string }): {
 /**
  * Run the ask agent and return the response as a string.
  * Used by both the CLI command and the MCP tool.
+ *
+ * @param onEvent - Optional callback for streaming events as they happen.
  */
 export async function runAsk(
   question: string,
   options: { apiKey?: string; baseUrl?: string } = {},
+  onEvent?: (event: AskEvent) => void,
 ): Promise<string> {
   const { apiKey, baseUrl } = resolveCredentials(options);
 
@@ -84,11 +94,17 @@ export async function runAsk(
       switch (event.type) {
         case 'text':
           assistantText += event.text;
+          onEvent?.({ type: 'text', text: event.text });
           break;
 
         case 'tool_use':
           toolCalls.push({
             id: event.id,
+            name: event.name,
+            input: event.input,
+          });
+          onEvent?.({
+            type: 'tool_start',
             name: event.name,
             input: event.input,
           });
@@ -116,6 +132,7 @@ export async function runAsk(
     const results = await Promise.all(
       toolCalls.map(async (tc) => {
         const { result, isError } = await executeTool(agent, tc.name, tc.input);
+        onEvent?.({ type: 'tool_done', name: tc.name, isError });
         return { id: tc.id, result, isError };
       }),
     );
@@ -131,16 +148,53 @@ export async function runAsk(
   }
 }
 
+// ANSI helpers
+const ansi = {
+  dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
+  green: (s: string) => `\x1b[32m${s}\x1b[0m`,
+  red: (s: string) => `\x1b[31m${s}\x1b[0m`,
+  cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
+  bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
+};
+
+/** Summarize tool input into a short string for display. */
+function summarizeInput(input: Record<string, any>): string {
+  const vals = Object.values(input).filter((v) => typeof v === 'string');
+  const summary = vals.join(', ');
+  return summary.length > 60 ? summary.slice(0, 57) + '...' : summary;
+}
+
 /**
- * CLI entry point — runs the agent and writes to stdout.
+ * CLI entry point — streams to stderr for human UX, writes final
+ * result to stdout for piping. When stdout is a TTY the final write
+ * is skipped (already visible via stderr).
  */
 export async function cmdAsk(
   question: string,
   options: { apiKey?: string; baseUrl?: string },
 ): Promise<void> {
   try {
-    const response = await runAsk(question, options);
-    process.stdout.write(response + '\n');
+    const response = await runAsk(question, options, (event) => {
+      switch (event.type) {
+        case 'text':
+          process.stderr.write(event.text);
+          break;
+        case 'tool_start':
+          process.stderr.write(
+            `\n ${ansi.cyan('⟡')} ${ansi.bold(event.name)} ${ansi.dim(summarizeInput(event.input))}\n`,
+          );
+          break;
+        case 'tool_done':
+          // Tool results are consumed by the next LLM turn, not shown
+          break;
+      }
+    });
+
+    if (process.stdout.isTTY) {
+      process.stderr.write('\n');
+    } else {
+      process.stdout.write(response + '\n');
+    }
   } catch (err: any) {
     process.stderr.write(`Error: ${err.message}\n`);
     process.exit(1);

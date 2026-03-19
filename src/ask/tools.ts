@@ -31,7 +31,7 @@ export const ASK_TOOLS: ToolDefinition[] = [
   {
     name: 'listModels',
     description:
-      'List available AI models, optionally filtered by type. Returns id, name, type, and tags for each model. Use this to find specific model IDs when building code examples.',
+      'List available AI models, optionally filtered by type. By default returns a compact summary (id, name, type, tags). With details=true, returns full model objects including the `inputs` array that defines config options (width, height, seed, etc.) — use this when you need to check model capabilities or build code with config options. You can filter the full list yourself instead of calling this multiple times.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -40,22 +40,12 @@ export const ASK_TOOLS: ToolDefinition[] = [
           description:
             'Filter by model type: "llm_chat", "image_generation", "video_generation", "video_analysis", "text_to_speech", "vision", "transcription"',
         },
-      },
-    },
-  },
-  {
-    name: 'getModelDetails',
-    description:
-      'Get the full configuration for a specific AI model — context window, pricing, capabilities, accepted inputs. Use this when you need detailed model specs beyond what the summary provides.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        modelId: {
-          type: 'string',
-          description: 'The model ID (e.g. "openai/gpt-4o")',
+        details: {
+          type: 'boolean',
+          description:
+            'If true, returns full model objects with inputs/config arrays. Use this when you need to check supported inputs, config options, or model capabilities.',
         },
       },
-      required: ['modelId'],
     },
   },
   {
@@ -115,31 +105,19 @@ async function toolListModels(
   input: Record<string, any>,
 ): Promise<string> {
   const type = input.type as string | undefined;
+  const details = input.details as boolean | undefined;
+
+  if (details) {
+    const result = type
+      ? await agent.listModelsByType(type as any)
+      : await agent.listModels();
+    return JSON.stringify(result, null, 2);
+  }
+
   const result = type
     ? await agent.listModelsSummaryByType(type as any)
     : await agent.listModelsSummary();
   return JSON.stringify(result, null, 2);
-}
-
-async function toolGetModelDetails(
-  agent: MindStudioAgent,
-  input: Record<string, any>,
-): Promise<string> {
-  const modelId = input.modelId as string;
-
-  // Fetch all models and find the matching one
-  const result = await agent.listModels();
-  const model = result.models.find(
-    (m) => m.id === modelId || m.name?.toLowerCase() === modelId.toLowerCase(),
-  );
-
-  if (!model) {
-    return JSON.stringify({
-      error: `Model not found: ${modelId}. Use listModels to see available models.`,
-    });
-  }
-
-  return JSON.stringify(model, null, 2);
 }
 
 async function toolGetConnectorDetails(
@@ -171,9 +149,6 @@ export async function executeTool(
         break;
       case 'listModels':
         result = await toolListModels(agent, input);
-        break;
-      case 'getModelDetails':
-        result = await toolGetModelDetails(agent, input);
         break;
       case 'getConnectorDetails':
         result = await toolGetConnectorDetails(agent, input);

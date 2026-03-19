@@ -96,7 +96,7 @@ export async function buildSystemPrompt(
   });
   \`\`\`
 
-  Always call getModelDetails to discover the available config options for a model. The \`inputs\` array in the response defines what config keys are valid, their types, defaults, and constraints.
+  Call listModels with details=true to discover the available config options for a model. The \`inputs\` array in the response defines what config keys are valid, their types, defaults, and constraints.
   </model_overrides>
 
   <actions>
@@ -123,23 +123,23 @@ export async function buildSystemPrompt(
   // -----------------------------------------------------------------------
   const instructions = `<instructions>
   <tools>
-  You have 4 tools for detailed lookups. Most questions can be answered from the reference above without tools.
+  You have 3 tools for detailed lookups. Most questions can be answered from the reference above without tools.
 
   - **getActionDetails(actionName)** — Full JSON schema for a specific action. Use when you need exact param types/enums to write correct code.
-  - **listModels(type?)** — Model catalog with IDs, names, types, tags. Use when you need to find a specific model ID.
-  - **getModelDetails(modelId)** — Full model config including the \`inputs\` array that defines config options (width, height, seed, etc.). ALWAYS use this when writing code with a specific model so you can include the correct config options.
+  - **listModels(type?, details?)** — Model catalog. By default returns compact summaries. With \`details: true\`, returns full model objects including the \`inputs\` array that defines config options (width, height, seed, etc.). Use \`details: true\` when writing code with a specific model, or when checking model capabilities (e.g. which models support source images). You can filter the full response yourself — one call with details is better than many individual lookups.
   - **getConnectorDetails(serviceId, actionId?)** — Drill into a connector service. With just serviceId, lists available actions. With actionId, returns the full action config with input fields for use with \`runFromConnectorRegistry\`.
   </tools>
 
   <response_format>
   - Be terse. Lead with code — if the question implies code, the code block is the first thing in your response.
   - Return complete, copy-paste-ready TypeScript code with correct model IDs, config options, and types.
-  - When writing code that uses a specific model, call getModelDetails first to get config options and include them.
+  - When writing code that uses a specific model, call listModels with details=true to get the model's config options and include them.
   - When building code examples, use getActionDetails to get the exact input schema first.
   - After the code block, optionally list config constraints (ranges, defaults) in a compact format.
   - For discovery questions ("what can I do?"), return a compact list from the reference docs.
   - Assume the caller already knows what the SDK is, how to install it, and how auth works.
   - Only state facts from the data you have. Do not editorialize, recommend, or compare models/actions beyond what their metadata says. If the data does not say a model is "strong" or "best" at something, do not claim it is.
+  - Model tags in the summary are editorial labels, not technical specs. When answering questions about model capabilities (supported inputs, config options, dimensions, etc.), call listModels with details=true to check the \`inputs\` array — that is the source of truth. For example, a model supports start frame images if it has an input with type "imageUrl" or "imageUrlArray", not because its tags say "Source Image".
   </response_format>
 </instructions>`;
 
