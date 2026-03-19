@@ -5,6 +5,10 @@ import { extname } from 'node:path';
 
 const HELP = `Usage: mindstudio <command> [options]
 
+Ask:
+  ask "<question>"                     Ask about actions, models, connectors
+                                       Returns working code with real model IDs
+
 Run actions:
   <action> [json | --flags]            Run an action directly
   run <action> [json | --flags]        Run an action (explicit form)
@@ -52,6 +56,8 @@ Options:
   --help             Show this help
 
 Examples:
+  mindstudio ask "generate an image with FLUX"
+  mindstudio ask "what models support vision?"
   mindstudio generate-image --prompt "a sunset"
   mindstudio generate-text --message "hello" --no-meta
   mindstudio generate-image '{"prompt":"a sunset"}' --output-key imageUrl
@@ -175,6 +181,7 @@ const BUILTIN_COMMANDS = new Set([
   'estimate-cost',
   'change-name',
   'change-profile-picture',
+  'ask',
 ]);
 
 /**
@@ -1202,6 +1209,40 @@ async function main(): Promise<void> {
 
     if (command === 'whoami') {
       await cmdWhoami({
+        apiKey: values['api-key'] as string | undefined,
+        baseUrl: values['base-url'] as string | undefined,
+      });
+      return;
+    }
+
+    if (command === 'ask') {
+      let question = positionals.slice(1).join(' ');
+      if (!question && !process.stdin.isTTY) {
+        question = (await readStdin()).trim();
+      }
+      if (!question) {
+        usageBlock([
+          'ask — Built-in SDK assistant',
+          '',
+          'Returns working code with real model IDs, config options,',
+          'and correct types. Knows every action, model, and connector.',
+          '',
+          'Usage:',
+          '  mindstudio ask "your question here"',
+          '  echo "your question" | mindstudio ask',
+          '',
+          'Examples:',
+          '  mindstudio ask "generate an image with FLUX"',
+          '  mindstudio ask "what models support vision?"',
+          '  mindstudio ask "how do I send a Slack message with an attachment?"',
+          '  mindstudio ask "what connectors could I configure?"',
+          '  mindstudio ask "what are the config options for flux-max-2?"',
+          '  mindstudio ask "give me code to transcribe an audio file"',
+          '  mindstudio ask "what\'s the difference between generateText and userMessage?"',
+        ]);
+      }
+      const { cmdAsk } = await import('./ask/index.js');
+      await cmdAsk(question, {
         apiKey: values['api-key'] as string | undefined,
         baseUrl: values['base-url'] as string | undefined,
       });

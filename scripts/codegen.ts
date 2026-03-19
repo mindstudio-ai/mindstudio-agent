@@ -1037,10 +1037,10 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     '1. **Identify yourself** — Call `changeName` to set your display name (use your name or whatever your user calls you). If you have a profile picture or icon, call `uploadFile` to upload it, then `changeProfilePicture` with the returned URL. This helps users identify your requests in their logs.',
   );
   lines.push(
-    '2. **Discover** — Call `listActions` (MCP tool) or `mindstudio list-actions --summary` (CLI) to get a compact `{ action: description }` map of everything available (~3k tokens).',
+    '2. **Ask** — Use `mindstudio ask "your question"` (CLI) or the `ask` MCP tool for SDK guidance. It knows every action, model, and connector and returns working TypeScript code with real model IDs and config options. Examples: `mindstudio ask "generate an image with FLUX"`, `mindstudio ask "what models support vision?"`, `mindstudio ask "how do I send a Slack message?"`.',
   );
   lines.push(
-    '3. **Drill in** — Once you identify the right action, look up its full signature in the reference below, or call `mindstudio info <action>` (CLI) for parameter details.',
+    '3. **Browse** — For manual discovery, call `listActions` (MCP tool) or `mindstudio list-actions --summary` (CLI) to get a compact `{ action: description }` map of everything available (~3k tokens). Call `mindstudio info <action>` (CLI) for parameter details.',
   );
   lines.push(
     '4. **Call it** — Invoke the action with the required parameters. All actions share the same calling convention (see below).',
@@ -1673,6 +1673,11 @@ async function main() {
 
   writeFileSync(resolve(__dirname, '../llms.txt'), llmsTxtContent);
   console.log(`Wrote llms.txt`);
+
+  // Bundle llms.txt as an importable module for the ask command
+  const llmsContentModule = `${HEADER}\nexport const llmsContent = ${JSON.stringify(llmsTxtContent)};\n`;
+  writeFileSync(resolve(GENERATED_DIR, 'llms-content.ts'), llmsContentModule);
+  console.log(`Wrote src/generated/llms-content.ts`);
 
   console.log('Done!');
 }
