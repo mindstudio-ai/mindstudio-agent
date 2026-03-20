@@ -241,12 +241,13 @@ export class Query<T> implements PromiseLike<T[]> {
         limit: this._limit,
         offset: this._offset,
       });
-      return { query, fallbackQuery: null, config: this._config };
+      return { type: 'query', query, fallbackQuery: null, config: this._config };
     }
 
     // JS fallback — need all rows
     const fallbackQuery = buildSelect(this._config.tableName);
     return {
+      type: 'query',
       query: null,
       fallbackQuery,
       config: this._config,
@@ -426,6 +427,7 @@ export class Query<T> implements PromiseLike<T[]> {
  * (fast path) or a fallback SELECT * with JS processing metadata.
  */
 export interface CompiledQuery<T> {
+  type: 'query';
   /** Compiled SQL query, or null if JS fallback needed. */
   query: SqlQuery | null;
   /** SELECT * fallback query, or null if SQL compiled. */

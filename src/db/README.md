@@ -72,6 +72,8 @@ const page2 = await Orders
 
 ### Writing data
 
+Write methods return lazy `Mutation` objects (like reads return `Query`). They execute when awaited, and can be batched with `db.batch()` for single-roundtrip execution.
+
 ```ts
 // Insert — system fields (id, createdAt, etc.) are auto-populated
 const order = await Orders.push({
@@ -100,6 +102,34 @@ const removed = await Orders.removeAll(o => o.status === 'rejected');
 
 // Delete everything
 await Orders.clear();
+```
+
+### Batching reads and writes
+
+Use `db.batch()` to execute multiple operations in a single round trip. All operations run on the same SQLite connection — writes execute in argument order, and subsequent reads see prior writes.
+
+```ts
+// All of these execute as a single HTTP request
+const [, newOrder, pending] = await db.batch(
+  Orders.update(existingId, { status: 'approved' }),
+  Orders.push({ item: 'Laptop', amount: 999, status: 'pending', requestedBy: auth.userId }),
+  Orders.filter(o => o.status === 'pending').take(10),
+);
+
+// newOrder has the created row, pending includes results of the update above
+```
+
+This is especially useful for operations that modify multiple rows:
+
+```ts
+// Move a card to the top of a column — shift all others down, then insert
+const existing = await Cards.filter(c => c.columnId === columnId).sortBy(c => c.position);
+
+await db.batch(
+  ...existing.map(card => Cards.update(card.id, { position: card.position + 1 })),
+  Cards.push({ columnId, title: 'New card', position: 0 }),
+);
+// N+1 updates in a single round trip instead of N+1 separate HTTP calls
 ```
 
 ### Using with auth
@@ -160,6 +190,8 @@ if (user) {
 
 ## How it works
 
+### Reads (Query)
+
 ```
 User code                          SDK internals                    Platform
 ─────────                          ─────────────                    ────────
@@ -178,6 +210,39 @@ Orders.filter(pred).take(10)
                                        buildSelect('orders', {})  ← fetch ALL rows
                                        rows.filter(pred).slice(0, 10)
                                        ⚠ warning logged to stderr
+```
+
+### Writes (Mutation)
+
+```
+User code                          SDK internals                    Platform
+─────────                          ─────────────                    ────────
+Orders.update(id, { status })
+  │
+  ├─ Mutation holds SQL            (lazy, nothing executes)
+  │  buildUpdate('orders', id, { status })
+  │
+  └─ await ──────────────────────► executeBatch([query])
+                                                              ──► SQLite
+                                    deserializeRow(RETURNING *)
+```
+
+### Batching (reads + writes in one round trip)
+
+```
+db.batch(                          SDK internals                    Platform
+  Orders.update(id, { status }),   ─────────────                    ────────
+  Orders.push({ item, amount }),
+  Orders.filter(pred),             compile all operations
+)                                    │
+  │                                  ├─ Mutation._compile() → SQL
+  │                                  ├─ Mutation._compile() → SQL
+  │                                  ├─ Query._compile()    → SQL
+  │                                  │
+  └─ await ────────────────────────► executeBatch([sql1, sql2, sql3])
+                                                              ──► SQLite
+                                     slice results back to operations
+                                     [Mutation.process, Mutation.process, Query.process]
 ```
 
 ### SQL fast path vs JS fallback
@@ -261,16 +326,26 @@ Chain methods return a new immutable Query. Nothing executes until you `await`.
 | `.max(fn)` | `T \| null` | Row with maximum value |
 | `.groupBy(fn)` | `Map<K, T[]>` | Group results by field |
 
-### Writes
+### Writes (return `Mutation<T>` — lazy, batchable)
+
+Write methods return `Mutation` objects that execute when awaited. Pass them to `db.batch()` to combine multiple writes (and reads) into a single round trip.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `push(data)` | `T` | Insert one row, returns created row with system fields |
-| `push(data[])` | `T[]` | Insert multiple rows |
-| `update(id, partial)` | `T` | Partial update by ID, returns updated row |
-| `remove(id)` | `void` | Delete row by ID |
-| `removeAll(pred)` | `number` | Delete matching rows, returns count removed |
-| `clear()` | `void` | Delete all rows |
+| `push(data)` | `Mutation<T>` | Insert one row, returns created row with system fields |
+| `push(data[])` | `Mutation<T[]>` | Insert multiple rows |
+| `update(id, partial)` | `Mutation<T>` | Partial update by ID, returns updated row |
+| `remove(id)` | `Mutation<void>` | Delete row by ID |
+| `removeAll(pred)` | `Mutation<number>` | Delete matching rows, returns count removed |
+| `clear()` | `Mutation<void>` | Delete all rows |
+
+### Batch execution
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `db.batch(op1, op2, ...)` | `Promise<[R1, R2, ...]>` | Execute reads and writes in one round trip |
+
+`db.batch()` accepts any mix of `Query` and `Mutation` objects. Operations execute in order on a single SQLite connection. Results are returned as a typed tuple matching the input order.
 
 ## System columns
 
@@ -352,9 +427,10 @@ const Logs = db.defineTable<LogEntry>('entries', { database: 'analytics' });
 
 | File | Purpose |
 |------|---------|
-| `index.ts` | `createDb()` factory, `Db` interface, time helpers, table name → database resolution |
+| `index.ts` | `createDb()` factory, `Db` interface, `db.batch()`, time helpers, table name → database resolution |
 | `table.ts` | `Table<T>` class — the full read/write collection API |
-| `query.ts` | `Query<T>` class — lazy chainable builder, SQL/JS dual execution |
+| `query.ts` | `Query<T>` class — lazy chainable read builder, SQL/JS dual execution |
+| `mutation.ts` | `Mutation<T>` class — lazy write operation, batchable via `db.batch()` |
 | `predicate.ts` | Predicate compiler — tokenizer + recursive descent → SQL WHERE |
 | `sql.ts` | SQL string builders, value escaping, row deserialization |
 | `types.ts` | Internal types (Predicate, Accessor, TableConfig, SystemFields, etc.) |
