@@ -15,6 +15,7 @@ src/
     index.ts            # createDb() factory + Db interface + time helpers (now, days, hours, minutes, ago, fromNow)
     table.ts            # Table<T> class — typed collection API (get, filter, push, update, remove, etc.)
     query.ts            # Query<T> class — lazy chainable builder (PromiseLike<T[]>), SQL/JS dual execution
+    mutation.ts         # Mutation<T> class — lazy write operation (PromiseLike<T>), batchable via db.batch()
     predicate.ts        # Predicate compiler — arrow fn toString() → SQL WHERE clause (tokenizer + recursive descent)
     sql.ts              # SQL string builders (SELECT, INSERT, UPDATE, DELETE) + value escaping + row deserialization
     types.ts            # Internal types (Predicate, Accessor, TableConfig, SystemFields, PushInput, UpdateInput)
@@ -204,6 +205,25 @@ const removed = await PurchaseOrders.removeAll(o => o.status === 'rejected');
 await PurchaseOrders.clear();
 ```
 
+### Batching reads and writes
+
+`db.batch()` executes multiple operations in a single round trip. Accepts both `Query` (reads) and `Mutation` (writes) objects. Operations execute in order on a single SQLite connection — writes are visible to subsequent reads in the same batch.
+
+```typescript
+// Mixed reads and writes — one HTTP call
+const [, newOrder, pending] = await db.batch(
+  PurchaseOrders.update(existingId, { status: 'approved' }),
+  PurchaseOrders.push({ vendorId: 'v1', status: 'pending_approval', ... }),
+  PurchaseOrders.filter(o => o.status === 'pending_approval').take(10),
+);
+
+// Bulk updates — N updates in one round trip
+const items = await Items.filter(i => i.categoryId === oldCategoryId);
+await db.batch(
+  ...items.map(item => Items.update(item.id, { categoryId: newCategoryId })),
+);
+```
+
 ### Time helpers
 
 All timestamps are unix ms. Use `db` helpers for readable time math:
@@ -264,6 +284,8 @@ const { users } = await agent.resolveUsers(['user-1', 'user-2']);
 - **Predicate compilation** (`src/db/predicate.ts`): parses `fn.toString()` → tokenizer → recursive descent parser → SQL WHERE. Falls back to JS for unrecognized patterns.
 - **SQL generation** (`src/db/sql.ts`): uses `parameterize: false` on `queryAppDatabase` step, builds fully-formed SQL with inline escaped values. SQLite escaping (single quotes doubled). System columns stripped from writes. `@@user@@` prefix added/stripped for user-type columns.
 - **Query execution** (`src/db/query.ts`): `Query<T>` is immutable and lazy (implements `PromiseLike<T[]>`). Tries SQL fast path; if any predicate fails to compile, entire chain falls back to JS array operations on all rows.
+- **Mutation execution** (`src/db/mutation.ts`): `Mutation<T>` is lazy (implements `PromiseLike<T>`). Write methods (`push`, `update`, `remove`, `removeAll`, `clear`) return Mutations instead of Promises. When awaited standalone, behavior is identical. When passed to `db.batch()`, SQL is bundled into a single round trip. `removeAll` with JS-fallback predicates creates a non-batchable Mutation (works standalone, throws in `db.batch()`).
+- **`db.batch()` supports reads and writes** (`src/db/index.ts`): accepts both `Query` and `Mutation` objects. A single Mutation may produce multiple SQL statements (e.g. `push([a, b, c])` = 3 INSERTs). The batch groups by databaseId, flattens all SQL, executes, then slices results back to their operations. Write ordering is preserved — statements execute sequentially on a single SQLite connection.
 
 ## Rate limiting
 

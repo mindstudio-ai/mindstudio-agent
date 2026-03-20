@@ -50,6 +50,7 @@ import { MindStudioError } from '../errors.js';
 import type { AppDatabase, AppDatabaseColumnSchema } from '../types.js';
 import { Table } from './table.js';
 import { Query } from './query.js';
+import { Mutation } from './mutation.js';
 import type { TableConfig, SqlQuery, SqlResult, SystemColumns } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -74,9 +75,10 @@ export interface DefineTableOptions {
   database?: string;
 }
 
-// Re-export Table, Query, and types for consumers
+// Re-export Table, Query, Mutation, and types for consumers
 export { Table } from './table.js';
 export { Query } from './query.js';
+export { Mutation } from './mutation.js';
 export type {
   Predicate,
   Accessor,
@@ -146,18 +148,21 @@ export interface Db {
   // --- Batch execution ---
 
   /**
-   * Execute multiple queries in a single round trip. All queries run on
-   * the same database connection, eliminating per-query HTTP overhead.
+   * Execute multiple reads and writes in a single round trip. All
+   * operations run on the same database connection, eliminating
+   * per-operation HTTP overhead. Writes execute in argument order.
    *
-   * Accepts Query objects (lazy, not yet executed). Compiles them to SQL,
+   * Accepts Query objects (reads) and Mutation objects (writes from
+   * push, update, remove, removeAll, clear). Compiles them to SQL,
    * sends all in one batch request, and returns typed results.
    *
    * @example
    * ```ts
-   * const [orders, approvals, vendors] = await db.batch(
-   *   Orders.filter(o => o.status === 'active').take(10),
-   *   Approvals.filter(a => a.status === 'pending').take(25),
-   *   Vendors.sortBy(v => v.createdAt).reverse().take(5),
+   * // Mixed reads and writes in one round trip
+   * const [, newCard, cards] = await db.batch(
+   *   Cards.update(card1.id, { position: 1 }),
+   *   Cards.push({ title: 'New', columnId, position: 0 }),
+   *   Cards.filter(c => c.columnId === columnId),
    * );
    * ```
    */
@@ -215,61 +220,90 @@ export function createDb(
 
     // --- Batch execution ---
 
-    batch: ((...queries: PromiseLike<unknown>[]) => {
+    batch: ((...operations: PromiseLike<unknown>[]) => {
       return (async () => {
-      // Compile each Query into SQL (or fallback SELECT *)
-      const compiled = queries.map((q) => {
-        if (!(q instanceof Query)) {
-          throw new MindStudioError(
-            'db.batch() only accepts Query objects (from .filter(), .sortBy(), etc.)',
-            'invalid_batch_query',
-            400,
-          );
+      // Compile each operation into SQL
+      type CompiledOp =
+        | ReturnType<InstanceType<typeof Query<unknown>>['_compile']>
+        | ReturnType<InstanceType<typeof Mutation<unknown>>['_compile']>;
+
+      const compiled: CompiledOp[] = operations.map((op) => {
+        if (op instanceof Query) {
+          return (op as InstanceType<typeof Query<unknown>>)._compile();
         }
-        return (q as InstanceType<typeof Query<unknown>>)._compile();
+        if (op instanceof Mutation) {
+          return (op as InstanceType<typeof Mutation<unknown>>)._compile();
+        }
+        throw new MindStudioError(
+          'db.batch() only accepts Query and Mutation objects (from .filter(), .update(), .push(), etc.)',
+          'invalid_batch_operation',
+          400,
+        );
       });
 
-      // Group queries by databaseId for minimal HTTP calls.
-      // Most apps have one database, so this is usually one group.
+      // Build a flat list of SQL queries, tracking which slice belongs
+      // to which operation. Queries (reads) produce 1 SQL statement.
+      // Mutations (writes) may produce N (e.g. push([a, b, c]) = 3 INSERTs).
       const groups = new Map<
         string,
-        { index: number; sqlQuery: SqlQuery }[]
+        { opIndex: number; sqlQueries: SqlQuery[] }[]
       >();
 
       for (let i = 0; i < compiled.length; i++) {
         const c = compiled[i];
         const dbId = c.config.databaseId;
-        const sqlQuery = c.query ?? c.fallbackQuery!;
 
         if (!groups.has(dbId)) groups.set(dbId, []);
-        groups.get(dbId)!.push({ index: i, sqlQuery });
+
+        if (c.type === 'query') {
+          const sqlQuery = c.query ?? c.fallbackQuery!;
+          groups.get(dbId)!.push({ opIndex: i, sqlQueries: [sqlQuery] });
+        } else {
+          groups.get(dbId)!.push({ opIndex: i, sqlQueries: c.queries });
+        }
       }
 
-      // Execute one batch per database
-      const allResults: (SqlResult | undefined)[] = new Array(compiled.length);
+      // Execute one batch per database, then map result slices back
+      const opResults = new Map<number, SqlResult[]>();
 
       await Promise.all(
         Array.from(groups.entries()).map(async ([dbId, entries]) => {
-          const sqlQueries = entries.map((e) => e.sqlQuery);
-          const results = await executeBatch(dbId, sqlQueries);
-          for (let i = 0; i < entries.length; i++) {
-            allResults[entries[i].index] = results[i];
+          // Flatten all SQL for this database into one batch
+          const flatQueries: SqlQuery[] = [];
+          const slices: { opIndex: number; start: number; count: number }[] = [];
+
+          for (const entry of entries) {
+            slices.push({
+              opIndex: entry.opIndex,
+              start: flatQueries.length,
+              count: entry.sqlQueries.length,
+            });
+            flatQueries.push(...entry.sqlQueries);
+          }
+
+          const results = await executeBatch(dbId, flatQueries);
+
+          for (const { opIndex, start, count } of slices) {
+            opResults.set(opIndex, results.slice(start, start + count));
           }
         }),
       );
 
       // Process results: deserialize + apply JS fallback where needed
       return compiled.map((c, i) => {
-        const result = allResults[i]!;
+        const results = opResults.get(i)!;
 
-        // Log warning for JS fallback queries
-        if (!c.query && c.predicates?.length) {
-          console.warn(
-            `[mindstudio] db.batch(): filter on ${c.config.tableName} could not be compiled to SQL — processing in JS`,
-          );
+        if (c.type === 'query') {
+          // Log warning for JS fallback queries
+          if (!c.query && c.predicates?.length) {
+            console.warn(
+              `[mindstudio] db.batch(): filter on ${c.config.tableName} could not be compiled to SQL — processing in JS`,
+            );
+          }
+          return Query._processResults(results[0], c);
+        } else {
+          return Mutation._processResults(results, c);
         }
-
-        return Query._processResults(result, c);
       });
       })();
     }) as Db['batch'],
