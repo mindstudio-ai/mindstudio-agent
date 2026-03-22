@@ -33,6 +33,7 @@ Account:
   change-name <name>                   Update your display name
   change-profile-picture <url>         Update your profile picture
   upload <filepath>                    Upload a file to the MindStudio CDN
+  update                               Update to the latest version
 
 OAuth integrations:
   list-connectors [<id> [<actionId>]]  Browse OAuth connector services
@@ -740,8 +741,89 @@ function printUpdateNotice(latestVersion: string): void {
   const currentVersion = process.env.PACKAGE_VERSION ?? '?';
   process.stderr.write(
     `\n  ${ansi.cyanBright('Update available')} ${ansi.gray(currentVersion + ' \u2192')} ${ansi.cyanBold(latestVersion)}\n` +
-      `  ${ansi.gray('Run')} npm install -g @mindstudio-ai/agent ${ansi.gray('to update')}\n`,
+      `  ${ansi.gray('Run')} mindstudio update ${ansi.gray('to update')}\n`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Self-update
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect whether the current process is a standalone binary install
+ * (i.e. NOT running from inside node_modules).
+ */
+function isStandaloneBinary(): boolean {
+  const argv1 = process.argv[1] ?? '';
+  return !argv1.includes('node_modules');
+}
+
+async function cmdUpdate(): Promise<void> {
+  const currentVersion = process.env.PACKAGE_VERSION ?? 'unknown';
+  process.stderr.write(
+    `  ${ansi.gray('Current version:')} ${currentVersion}\n`,
+  );
+  process.stderr.write(`  ${ansi.gray('Checking for updates...')}\n`);
+
+  // Fetch latest version (bypass cache)
+  let latestVersion: string;
+  try {
+    const res = await fetch(
+      'https://registry.npmjs.org/@mindstudio-ai/agent/latest',
+      { signal: AbortSignal.timeout(10000) },
+    );
+    if (!res.ok) {
+      fatal('Failed to check for updates. Please try again later.');
+    }
+    const data = (await res.json()) as { version?: string };
+    latestVersion = data.version ?? '';
+    if (!latestVersion) {
+      fatal('Failed to check for updates. Please try again later.');
+    }
+  } catch {
+    fatal(
+      'Failed to check for updates. Please check your internet connection.',
+    );
+  }
+
+  if (!isNewerVersion(currentVersion, latestVersion!)) {
+    process.stderr.write(
+      `  ${ansi.greenBold('Already up to date!')} ${ansi.gray('(' + currentVersion + ')')}\n`,
+    );
+    return;
+  }
+
+  process.stderr.write(
+    `  ${ansi.cyanBright('Updating')} ${ansi.gray(currentVersion + ' →')} ${ansi.cyanBold(latestVersion!)}\n`,
+  );
+
+  if (isStandaloneBinary()) {
+    // Standalone binary — re-run the install script
+    const platform = process.platform;
+    try {
+      if (platform === 'win32') {
+        execSync(
+          'powershell -Command "irm https://msagent.ai/install.ps1 | iex"',
+          { stdio: 'inherit' },
+        );
+      } else {
+        execSync('curl -fsSL https://msagent.ai/install.sh | bash', {
+          stdio: 'inherit',
+        });
+      }
+      process.stderr.write(
+        `\n  ${ansi.greenBold('Updated to ' + latestVersion!)}\n`,
+      );
+    } catch {
+      fatal('Update failed. Try running the install command manually.');
+    }
+  } else {
+    // npm install — tell the user to use npm
+    process.stderr.write(
+      `\n  ${ansi.gray('Run the following command to update:')}\n\n` +
+        `  npm install -g @mindstudio-ai/agent@latest\n`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1192,7 +1274,7 @@ async function main(): Promise<void> {
   // Fire off update check in background (non-blocking).
   // Skip for mcp (long-running) and login (has its own flow).
   const updatePromise =
-    command !== 'mcp' && command !== 'login'
+    command !== 'mcp' && command !== 'login' && command !== 'update'
       ? checkForUpdate()
       : Promise.resolve(null);
 
@@ -1221,6 +1303,11 @@ async function main(): Promise<void> {
         apiKey: values['api-key'] as string | undefined,
         baseUrl: values['base-url'] as string | undefined,
       });
+      return;
+    }
+
+    if (command === 'update') {
+      await cmdUpdate();
       return;
     }
 
