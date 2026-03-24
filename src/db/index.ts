@@ -51,7 +51,7 @@ import type { AppDatabase, AppDatabaseColumnSchema } from '../types.js';
 import { Table } from './table.js';
 import { Query } from './query.js';
 import { Mutation } from './mutation.js';
-import type { TableConfig, SqlQuery, SqlResult, SystemColumns } from './types.js';
+import type { TableConfig, SqlQuery, SqlResult, SystemColumns, SystemFields } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Options for defineTable
@@ -60,7 +60,7 @@ import type { TableConfig, SqlQuery, SqlResult, SystemColumns } from './types.js
 /**
  * Options for `db.defineTable()`.
  */
-export interface DefineTableOptions {
+export interface DefineTableOptions<T = unknown> {
   /**
    * Database name or ID to target. Required when the app has multiple
    * databases and the table name alone is ambiguous.
@@ -73,6 +73,41 @@ export interface DefineTableOptions {
    * - Multiple databases → searched by table name
    */
   database?: string;
+
+  /**
+   * Unique constraints for the table. Each entry is an array of column
+   * names that together must be unique. The SDK communicates these to
+   * the platform which creates the corresponding SQLite UNIQUE indexes.
+   *
+   * Required for `upsert()` — the conflict key must match a declared
+   * unique constraint.
+   *
+   * @example
+   * ```ts
+   * // Single column unique
+   * db.defineTable<User>('users', { unique: [['email']] });
+   *
+   * // Compound unique
+   * db.defineTable<Membership>('memberships', { unique: [['userId', 'orgId']] });
+   *
+   * // Multiple constraints
+   * db.defineTable<User>('users', { unique: [['email'], ['slug']] });
+   * ```
+   */
+  unique?: (keyof T & string)[][];
+
+  /**
+   * Default values for columns, applied client-side in `push()` and
+   * `upsert()`. Explicit values in the input override defaults.
+   *
+   * @example
+   * ```ts
+   * db.defineTable<Order>('orders', {
+   *   defaults: { status: 'pending', retryCount: 0 },
+   * });
+   * ```
+   */
+  defaults?: Partial<Omit<T, SystemFields>>;
 }
 
 // Re-export Table, Query, Mutation, and types for consumers
@@ -122,7 +157,7 @@ export interface Db {
    * const Orders = db.defineTable<Order>('orders', { database: 'main' });
    * ```
    */
-  defineTable<T>(name: string, options?: DefineTableOptions): Table<T & SystemColumns>;
+  defineTable<T>(name: string, options?: DefineTableOptions<T>): Table<T & SystemColumns>;
 
   // --- Time helpers ---
   // All return numbers (unix timestamps in milliseconds or durations in ms).
@@ -193,7 +228,7 @@ export function createDb(
   executeBatch: (databaseId: string, queries: SqlQuery[]) => Promise<SqlResult[]>,
 ): Db {
   return {
-    defineTable<T>(name: string, options?: DefineTableOptions): Table<T> {
+    defineTable<T>(name: string, options?: DefineTableOptions<T>): Table<T & SystemColumns> {
       // Resolve which database contains this table
       const resolved = resolveTable(databases, name, options?.database);
 
@@ -201,11 +236,13 @@ export function createDb(
         databaseId: resolved.databaseId,
         tableName: name,
         columns: resolved.columns,
+        unique: options?.unique as string[][] | undefined,
+        defaults: options?.defaults as Record<string, unknown> | undefined,
         executeBatch: (queries: SqlQuery[]) =>
           executeBatch(resolved.databaseId, queries),
       };
 
-      return new Table<T>(config);
+      return new Table<T & SystemColumns>(config);
     },
 
     // --- Time helpers ---

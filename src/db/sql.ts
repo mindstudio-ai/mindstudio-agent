@@ -223,6 +223,38 @@ export function buildUpdate(
 }
 
 /**
+ * Build an INSERT ... ON CONFLICT ... DO UPDATE statement with RETURNING *.
+ * System columns are excluded. Values are bind params.
+ *
+ * If all data keys are conflict columns (nothing to update), uses DO NOTHING.
+ * Uses SQLite's `excluded.` prefix to reference the attempted INSERT values.
+ */
+export function buildUpsert(
+  table: string,
+  data: Record<string, unknown>,
+  conflictColumns: string[],
+  columns: AppDatabaseColumnSchema[],
+): SqlQuery {
+  const filtered = stripSystemColumns(data);
+  const keys = Object.keys(filtered);
+  const placeholders = keys.map(() => '?').join(', ');
+  const params = keys.map((k) =>
+    serializeColumnParam(filtered[k], k, columns),
+  );
+
+  // ON CONFLICT — update all non-conflict columns
+  const updateKeys = keys.filter((k) => !conflictColumns.includes(k));
+  const conflict = conflictColumns.join(', ');
+
+  const sql =
+    updateKeys.length > 0
+      ? `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders}) ON CONFLICT(${conflict}) DO UPDATE SET ${updateKeys.map((k) => `${k} = excluded.${k}`).join(', ')} RETURNING *`
+      : `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders}) ON CONFLICT(${conflict}) DO NOTHING RETURNING *`;
+
+  return { sql, params };
+}
+
+/**
  * Build a DELETE statement.
  */
 export function buildDelete(table: string, where?: string, whereParams?: unknown[]): SqlQuery {

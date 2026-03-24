@@ -95,6 +95,14 @@ export class Mutation<TResult> implements PromiseLike<TResult> {
     return this._execute().then(onfulfilled, onrejected);
   }
 
+  catch<T2 = never>(
+    onrejected?:
+      | ((reason: unknown) => T2 | PromiseLike<T2>)
+      | null,
+  ): Promise<TResult | T2> {
+    return this._execute().catch(onrejected);
+  }
+
   // -------------------------------------------------------------------------
   // Batch compilation — used by db.batch()
   // -------------------------------------------------------------------------

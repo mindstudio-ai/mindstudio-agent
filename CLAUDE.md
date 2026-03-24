@@ -17,7 +17,7 @@ src/
     query.ts            # Query<T> class — lazy chainable builder (PromiseLike<T[]>), SQL/JS dual execution
     mutation.ts         # Mutation<T> class — lazy write operation (PromiseLike<T>), batchable via db.batch()
     predicate.ts        # Predicate compiler — arrow fn toString() → SQL WHERE clause (tokenizer + recursive descent)
-    sql.ts              # SQL string builders (SELECT, INSERT, UPDATE, DELETE) + value escaping + row deserialization
+    sql.ts              # SQL string builders (SELECT, INSERT, UPDATE, UPSERT, DELETE) + value escaping + row deserialization
     types.ts            # Internal types (Predicate, Accessor, TableConfig, SystemFields, PushInput, UpdateInput)
     README.md           # DB namespace docs — architecture, API reference, execution strategy
   config.ts             # Config file read/write for ~/.mindstudio/config.json (login persistence)
@@ -142,6 +142,23 @@ System columns (`id`, `createdAt`, `updatedAt`, `lastUpdatedBy`) must be in the 
 
 For apps with multiple databases: `db.defineTable<T>('name', { database: 'db-name-or-id' })`.
 
+#### Table options
+
+```typescript
+const Users = db.defineTable<User>('users', {
+  unique: [['email']],                    // unique constraint on email
+  defaults: { role: 'member' },           // applied client-side in push()/upsert()
+});
+
+// Compound unique constraint
+const Memberships = db.defineTable<Membership>('memberships', {
+  unique: [['userId', 'orgId']],
+});
+```
+
+- `unique` — array of column groups. Each entry is a `string[]` of column names that together must be unique. The SDK sends these to the platform which creates SQLite `UNIQUE` indexes idempotently. Required for `upsert()`.
+- `defaults` — default values for columns, applied client-side in `push()` and `upsert()`. Explicit values override defaults.
+
 ### Reading data
 
 ```typescript
@@ -198,6 +215,14 @@ const orders = await PurchaseOrders.push([item1, item2, item3]);
 
 // Partial update — returns updated row
 await PurchaseOrders.update(po.id, { status: 'approved' });
+
+// Upsert — insert or update on conflict (requires unique constraint)
+const user = await Users.upsert('email', {
+  email: 'alice@example.com',
+  name: 'Alice',
+  role: 'admin',
+});
+// → INSERT ... ON CONFLICT(email) DO UPDATE SET name=..., role=... RETURNING *
 
 // Delete
 await PurchaseOrders.remove(po.id);
@@ -284,7 +309,9 @@ const { users } = await agent.resolveUsers(['user-1', 'user-2']);
 - **Predicate compilation** (`src/db/predicate.ts`): parses `fn.toString()` → tokenizer → recursive descent parser → SQL WHERE. Falls back to JS for unrecognized patterns.
 - **SQL generation** (`src/db/sql.ts`): uses `parameterize: false` on `queryAppDatabase` step, builds fully-formed SQL with inline escaped values. SQLite escaping (single quotes doubled). System columns stripped from writes. `@@user@@` prefix added/stripped for user-type columns.
 - **Query execution** (`src/db/query.ts`): `Query<T>` is immutable and lazy (implements `PromiseLike<T[]>`). Tries SQL fast path; if any predicate fails to compile, entire chain falls back to JS array operations on all rows.
-- **Mutation execution** (`src/db/mutation.ts`): `Mutation<T>` is lazy (implements `PromiseLike<T>`). Write methods (`push`, `update`, `remove`, `removeAll`, `clear`) return Mutations instead of Promises. When awaited standalone, behavior is identical. When passed to `db.batch()`, SQL is bundled into a single round trip. `removeAll` with JS-fallback predicates creates a non-batchable Mutation (works standalone, throws in `db.batch()`).
+- **Mutation execution** (`src/db/mutation.ts`): `Mutation<T>` is lazy (implements `PromiseLike<T>`). Write methods (`push`, `update`, `upsert`, `remove`, `removeAll`, `clear`) return Mutations instead of Promises. When awaited standalone, behavior is identical. When passed to `db.batch()`, SQL is bundled into a single round trip. `removeAll` with JS-fallback predicates creates a non-batchable Mutation (works standalone, throws in `db.batch()`).
+- **Unique constraints**: Declared via `defineTable({ unique: [['email']] })`. Stored in `TableConfig.unique`. Schema sync (creating SQLite UNIQUE indexes) is handled by a separate platform service — the SDK only uses the declaration for `upsert()` validation (conflict keys must match a declared constraint) and generating `ON CONFLICT` SQL.
+- **Defaults**: Declared via `defineTable({ defaults: { status: 'pending' } })`. Applied client-side in `push()` and `upsert()` — spread before user data so explicit values override.
 - **`db.batch()` supports reads and writes** (`src/db/index.ts`): accepts both `Query` and `Mutation` objects. A single Mutation may produce multiple SQL statements (e.g. `push([a, b, c])` = 3 INSERTs). The batch groups by databaseId, flattens all SQL, executes, then slices results back to their operations. Write ordering is preserved — statements execute sequentially on a single SQLite connection.
 
 ## Rate limiting
