@@ -1170,7 +1170,16 @@ function parseStepFlags(argv: string[]): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg.startsWith('--') && i + 1 < argv.length) {
+    if (!arg.startsWith('--')) continue;
+
+    // Skip global flags — already handled by parseArgs
+    if (GLOBAL_BOOLEAN_FLAGS.has(arg)) continue;
+    if (GLOBAL_STRING_FLAGS.has(arg)) {
+      i++; // skip value
+      continue;
+    }
+
+    if (i + 1 < argv.length) {
       const key = arg.slice(2);
       result[kebabToCamel(key)] = coerce(argv[++i]);
     }
@@ -1186,6 +1195,14 @@ const GLOBAL_STRING_FLAGS = new Set([
   '--output-key',
   '--workflow',
   '--version',
+]);
+
+const GLOBAL_BOOLEAN_FLAGS = new Set([
+  '--no-meta',
+  '--json-logs',
+  '--json',
+  '--summary',
+  '--help',
 ]);
 
 /**
@@ -1206,6 +1223,7 @@ function findMethodSplit(argv: string[]): {
 
     if (arg.startsWith('--')) {
       if (GLOBAL_STRING_FLAGS.has(arg)) i++; // skip value
+      // GLOBAL_BOOLEAN_FLAGS are also skipped (no value to consume)
       continue;
     }
 
@@ -1226,6 +1244,7 @@ function findMethodSplit(argv: string[]): {
 
     if (arg.startsWith('--')) {
       if (GLOBAL_STRING_FLAGS.has(arg)) i++;
+      // GLOBAL_BOOLEAN_FLAGS are also skipped
       continue;
     }
 
