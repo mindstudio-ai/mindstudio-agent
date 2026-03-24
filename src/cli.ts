@@ -49,6 +49,7 @@ Options:
   --thread-id <id>   Thread ID for state persistence
   --output-key <key> Extract a single field from the result
   --no-meta          Strip $-prefixed metadata from output
+  --json-logs        Stream debug logs as JSONL to stderr
   --workflow <name>  Workflow to execute (run-agent only)
   --version <ver>    App version, e.g. "draft" (run-agent only)
   --json             Output as JSON
@@ -342,6 +343,7 @@ async function cmdExec(
     threadId?: string;
     outputKey?: string;
     noMeta?: boolean;
+    jsonLogs?: boolean;
   },
 ): Promise<void> {
   const { MindStudioAgent } = await import('./client.js');
@@ -362,16 +364,29 @@ async function cmdExec(
     );
   }
 
+  // Determine log handler:
+  // --json-logs: structured JSONL to stderr (for AI agents), always streams
+  // TTY: pretty-printed logs to stderr
+  // Piped: no streaming
+  let onLog: ((log: { value: string; tag: string; ts: number }) => void) | undefined;
+  if (options.jsonLogs) {
+    onLog = (log) => {
+      process.stderr.write(
+        JSON.stringify({ type: 'log', value: log.value, tag: log.tag, ts: log.ts }) + '\n',
+      );
+    };
+  } else if (process.stderr.isTTY) {
+    onLog = (log) => {
+      process.stderr.write(
+        `  ${ansi.cyan('⟡')} ${ansi.gray(log.value)}\n`,
+      );
+    };
+  }
+
   const result = await agent.executeStep(meta.stepType, input, {
     appId: options.appId,
     threadId: options.threadId,
-    onLog: process.stderr.isTTY
-      ? (log: { value: string }) => {
-          process.stderr.write(
-            `  ${ansi.cyan('⟡')} ${ansi.gray(log.value)}\n`,
-          );
-        }
-      : undefined,
+    onLog,
   });
 
   // Apply output options
@@ -1240,6 +1255,7 @@ async function main(): Promise<void> {
       'thread-id': { type: 'string' },
       'output-key': { type: 'string' },
       'no-meta': { type: 'boolean', default: false },
+      'json-logs': { type: 'boolean', default: false },
       workflow: { type: 'string' },
       version: { type: 'string' },
       type: { type: 'string' },
@@ -1762,6 +1778,7 @@ async function main(): Promise<void> {
       threadId: values['thread-id'] as string | undefined,
       outputKey: values['output-key'] as string | undefined,
       noMeta: values['no-meta'] as boolean | undefined,
+      jsonLogs: values['json-logs'] as boolean | undefined,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
