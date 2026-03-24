@@ -318,6 +318,12 @@ export class Query<T> implements PromiseLike<T[]> {
     return this._execute().then(onfulfilled, onrejected);
   }
 
+  catch<TResult2 = never>(
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+  ): Promise<T[] | TResult2> {
+    return this._execute().catch(onrejected);
+  }
+
   // -------------------------------------------------------------------------
   // Execution internals
   // -------------------------------------------------------------------------

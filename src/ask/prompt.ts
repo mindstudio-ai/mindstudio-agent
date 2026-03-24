@@ -32,8 +32,8 @@ export async function buildSystemPrompt(
     modelsResult.status === 'fulfilled'
       ? modelsResult.value.models
           .map(
-            (m) =>
-              `- ${m.id} (${m.name}, type: ${m.type}${m.tags ? ', tags: ' + m.tags : ''})`,
+            (m: any) =>
+              `- ${m.id} (${m.name}, type: ${m.type}${m.popularity != null ? ', popularity: ' + m.popularity : ''}${m.tags ? ', tags: ' + m.tags : ''})`,
           )
           .join('\n')
       : '(Could not load models — use the listModels tool to look them up)';
@@ -83,6 +83,15 @@ export async function buildSystemPrompt(
   Results are flat: output fields + \`$appId\`, \`$threadId\`, \`$billingCost\` metadata.
   Thread persistence: pass \`{ threadId: result.$threadId, appId: result.$appId }\` as second arg.
   All 200+ models accessed through one API key — MindStudio routes to the provider server-side.
+
+  Streaming: \`stream()\` is a separate function for sending SSE chunks to the frontend — it is NOT an option you pass to step methods. Streaming is automatic when the sandbox sets STREAM_ID. Import as \`import { stream } from '@mindstudio-ai/agent'\` and call \`await stream('Processing...')\` or \`await stream({ progress: 50 })\`. When there's no active stream, calls are silently ignored.
+
+  Database queries (Query, Mutation) support both \`await\` and \`.then()/.catch()\` — use standard try/catch with await or chain \`.catch()\` directly.
+
+  Table options: \`db.defineTable<T>(name, { unique, defaults })\`.
+  - \`unique: [['email'], ['userId', 'orgId']]\` — declares unique constraints (SDK communicates to platform, enables upsert).
+  - \`defaults: { status: 'pending' }\` — client-side defaults applied in push() and upsert().
+  - \`Table.upsert(conflictKey, data)\` — INSERT ... ON CONFLICT ... DO UPDATE. Conflict key must match a declared unique constraint. Returns created or updated row.
   </quick_reference>
 
   <model_overrides>
@@ -147,6 +156,16 @@ export async function buildSystemPrompt(
   - **One-at-a-time db writes when batch exists** — N sequential \`update()\` or \`push()\` calls should be a single \`db.batch()\` call. One round trip instead of N.
   - **Hardcoded model IDs without context** — model IDs can change. When writing code with a specific model, include a comment noting which model it is and why it was chosen, so the caller can swap it later.
   </anti_patterns>
+
+  <model_guidance>
+  Each model in the reference above includes a \`popularity\` score (0.0–1.0) reflecting real platform usage over the last 30 days, normalized per model type. Use this to guide recommendations:
+
+  - **When the caller asks for a specific model**: use it. But if a significantly more popular or newer model exists in the same category, mention it. "Here's how to do X with Claude 3.5 Haiku — note that Claude Haiku 4.5 (popularity: 0.9) is the current generation and a better default."
+  - **When the caller asks generally** (no model specified): default to a high-popularity model. For text generation, show examples across multiple providers (Anthropic, Google, OpenAI) so the caller sees the breadth — pick one for the primary example and mention the others as alternatives.
+  - **Never rank vendors** or claim one provider is better than another. Popularity reflects usage patterns, not quality judgments. Present options with their model IDs and let the caller choose.
+  - **Popularity scores**: 1.0 = most used in its category, 0.5–0.9 = commonly used, 0.1–0.4 = niche, 0.0 = rarely used, null = new model with no data yet.
+  - **Prefer popular models as defaults** in code examples unless the caller has a reason to use something specific. A model with popularity 0.9 is a safer recommendation than one with 0.2.
+  </model_guidance>
 
   <tools>
   You have 3 tools for detailed lookups. Most questions can be answered from the reference above without tools. Sometimes you already know the answer — you don't need to look up every action schema to answer a question about how to use it. Use tools when you need exact param types, model config options, or connector action details.

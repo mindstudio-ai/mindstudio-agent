@@ -133,6 +133,19 @@ export interface TableConfig {
   columns: AppDatabaseColumnSchema[];
 
   /**
+   * Unique constraints declared via defineTable options.
+   * Each entry is an array of column names that form a unique constraint.
+   * e.g. [['email'], ['userId', 'orgId']]
+   */
+  unique?: string[][];
+
+  /**
+   * Default values for columns, applied client-side in push() and upsert().
+   * Explicit values in the input override defaults.
+   */
+  defaults?: Record<string, unknown>;
+
+  /**
    * Execute one or more SQL queries against the managed database in a
    * single round trip. All queries run on the same SQLite connection,
    * enabling RETURNING clauses and multi-statement batches.

@@ -836,6 +836,8 @@ export class MindStudioAgent {
           databaseId: '',
           tableName: name,
           columns: [],
+          unique: options?.unique as string[][] | undefined,
+          defaults: options?.defaults as Record<string, unknown> | undefined,
           executeBatch: async (queries) => {
             await agent.ensureContext();
             const databases = agent._context!.databases;

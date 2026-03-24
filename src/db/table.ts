@@ -16,17 +16,19 @@
 import { Query, extractFieldName } from './query.js';
 import { Mutation } from './mutation.js';
 import { compilePredicate } from './predicate.js';
+import { MindStudioError } from '../errors.js';
 import {
   buildSelect,
   buildCount,
   buildExists,
   buildInsert,
   buildUpdate,
+  buildUpsert,
   buildDelete,
   deserializeRow,
   escapeValue,
 } from './sql.js';
-import type { Predicate, Accessor, PushInput, UpdateInput, TableConfig } from './types.js';
+import type { Predicate, Accessor, PushInput, UpdateInput, SystemFields, TableConfig } from './types.js';
 
 export class Table<T> {
   /** @internal */
@@ -128,7 +130,11 @@ export class Table<T> {
   push(data: PushInput<T>[]): Mutation<T[]>;
   push(data: PushInput<T> | PushInput<T>[]): Mutation<T | T[]> {
     const isArray = Array.isArray(data);
-    const items = isArray ? data : [data];
+    const items = (isArray ? data : [data]).map((item) =>
+      this._config.defaults
+        ? ({ ...this._config.defaults, ...item } as PushInput<T>)
+        : item,
+    );
 
     const queries = items.map((item) =>
       buildInsert(
@@ -222,5 +228,74 @@ export class Table<T> {
   clear(): Mutation<void> {
     const query = buildDelete(this._config.tableName);
     return new Mutation<void>(this._config, [query], () => undefined as void);
+  }
+
+  /**
+   * Insert a row, or update it if a row with the same unique key already
+   * exists. The conflict key must match a `unique` constraint declared in
+   * defineTable options. Returns the created or updated row.
+   *
+   * Uses SQLite's `INSERT ... ON CONFLICT ... DO UPDATE SET ... RETURNING *`.
+   *
+   * @param conflictKey - Column name(s) that form the unique constraint.
+   *   Pass a single string for single-column unique, or an array for compound.
+   * @param data - Row data to insert (or update on conflict). Defaults apply.
+   */
+  upsert(
+    conflictKey:
+      | (keyof Omit<T, SystemFields> & string)
+      | (keyof Omit<T, SystemFields> & string)[],
+    data: PushInput<T>,
+  ): Mutation<T> {
+    const conflictColumns = (
+      Array.isArray(conflictKey) ? conflictKey : [conflictKey]
+    ) as string[];
+
+    this._validateUniqueConstraint(conflictColumns);
+
+    const withDefaults = this._config.defaults
+      ? ({ ...this._config.defaults, ...data } as Record<string, unknown>)
+      : (data as Record<string, unknown>);
+
+    const query = buildUpsert(
+      this._config.tableName,
+      withDefaults,
+      conflictColumns,
+      this._config.columns,
+    );
+
+    return new Mutation<T>(this._config, [query], (results) =>
+      deserializeRow(
+        results[0].rows[0] as Record<string, unknown>,
+        this._config.columns,
+      ) as T,
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Internal helpers
+  // -------------------------------------------------------------------------
+
+  /** @internal Validate that the given columns match a declared unique constraint. */
+  private _validateUniqueConstraint(columns: string[]): void {
+    if (!this._config.unique?.length) {
+      throw new MindStudioError(
+        `Cannot upsert on ${this._config.tableName}: no unique constraints declared. ` +
+          `Add unique: [[${columns.map((c) => `'${c}'`).join(', ')}]] to defineTable options.`,
+        'no_unique_constraint',
+        400,
+      );
+    }
+    const sorted = [...columns].sort().join(',');
+    const match = this._config.unique.some(
+      (u) => [...u].sort().join(',') === sorted,
+    );
+    if (!match) {
+      throw new MindStudioError(
+        `Cannot upsert on (${columns.join(', ')}): no matching unique constraint declared on ${this._config.tableName}.`,
+        'no_unique_constraint',
+        400,
+      );
+    }
   }
 }
