@@ -96,6 +96,15 @@ $ mindstudio generate-image --prompt "A mountain landscape at sunset"
 {"imageUrl":"https://...","$billingCost":5000000}
 ```
 
+For AI agents, use `--json-logs` to get structured debug logs on stderr:
+
+```bash
+mindstudio generate-image --prompt "a cat" --json-logs
+# stderr: {"type":"log","value":"Generating image with DALL·E 3...","tag":"Generate Image","ts":1774270499100}
+# stderr: {"type":"log","value":"Image generated successfully","tag":"Generate Image","ts":1774270502300}
+# stdout: {"imageUrl":"https://...","$billingCost":5000000}
+```
+
 Run via `npx` without installing:
 
 ```bash
