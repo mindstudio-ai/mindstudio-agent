@@ -365,6 +365,13 @@ async function cmdExec(
   const result = await agent.executeStep(meta.stepType, input, {
     appId: options.appId,
     threadId: options.threadId,
+    onLog: process.stderr.isTTY
+      ? (log: { value: string }) => {
+          process.stderr.write(
+            `  ${ansi.cyan('⟡')} ${ansi.gray(log.value)}\n`,
+          );
+        }
+      : undefined,
   });
 
   // Apply output options
