@@ -20,6 +20,7 @@ export type {
   StepExecutionOptions,
   StepExecutionResult,
   StepExecutionMeta,
+  StepLogEvent,
   User,
   ResolvedUser,
   AgentInfo,

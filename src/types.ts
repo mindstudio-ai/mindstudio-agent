@@ -55,6 +55,16 @@ export interface AgentOptions {
   reuseThreadId?: boolean;
 }
 
+/** A debug log event emitted during streaming step execution. */
+export interface StepLogEvent {
+  /** Log message text. */
+  value: string;
+  /** Step display name, e.g. "Generate Image", "Scrape URL". */
+  tag: string;
+  /** Unix timestamp in milliseconds. */
+  ts: number;
+}
+
 /** Options for a single step execution call. */
 export interface StepExecutionOptions {
   /**
@@ -70,6 +80,17 @@ export interface StepExecutionOptions {
    * history or variable state.
    */
   threadId?: string;
+
+  /**
+   * Called for each debug log event during step execution. When set, the SDK
+   * uses SSE streaming to receive real-time progress updates from the API.
+   * When omitted, the endpoint returns a single JSON response as before.
+   *
+   * Log content and frequency varies by step type — image generation emits
+   * 2-3 logs, scrape steps emit per-URL progress, LLM steps may emit model
+   * selection and token info.
+   */
+  onLog?: (event: StepLogEvent) => void;
 }
 
 /** Execution metadata returned alongside every step result. */

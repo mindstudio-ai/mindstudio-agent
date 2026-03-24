@@ -8,6 +8,7 @@ import type {
   AgentOptions,
   StepExecutionOptions,
   StepExecutionResult,
+  StepLogEvent,
   ListAgentsResult,
   UserInfoResult,
   RunAgentOptions,
@@ -152,6 +153,15 @@ export class MindStudioAgent {
     step: Record<string, unknown>,
     options?: StepExecutionOptions,
   ): Promise<StepExecutionResult<TOutput>> {
+    // Streaming path — when onLog is set, use SSE to get real-time debug logs
+    if (options?.onLog) {
+      return this._executeStepStreaming<TOutput>(
+        stepType,
+        step,
+        options as StepExecutionOptions & { onLog: (event: StepLogEvent) => void },
+      );
+    }
+
     const threadId =
       options?.threadId ?? (this._reuseThreadId ? this._threadId : undefined);
 
@@ -213,6 +223,202 @@ export class MindStudioAgent {
           ? (JSON.parse(billingEvents) as Array<Record<string, unknown>>)
           : undefined,
     } as StepExecutionResult<TOutput>;
+  }
+
+  /**
+   * @internal Streaming step execution — sends `Accept: text/event-stream`
+   * and parses SSE events for real-time debug logs.
+   */
+  private async _executeStepStreaming<TOutput = unknown>(
+    stepType: string,
+    step: Record<string, unknown>,
+    options: StepExecutionOptions & { onLog: (event: StepLogEvent) => void },
+  ): Promise<StepExecutionResult<TOutput>> {
+    const threadId =
+      options.threadId ?? (this._reuseThreadId ? this._threadId : undefined);
+
+    const url = `${this._httpConfig.baseUrl}/developer/v2/steps/${stepType}/execute`;
+    const body = {
+      step,
+      ...(options.appId != null && { appId: options.appId }),
+      ...(threadId != null && { threadId }),
+      ...(this._streamId != null && { streamId: this._streamId }),
+    };
+
+    await this._httpConfig.rateLimiter.acquire();
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this._httpConfig.token}`,
+          'Content-Type': 'application/json',
+          'User-Agent': '@mindstudio-ai/agent',
+          Accept: 'text/event-stream',
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      this._httpConfig.rateLimiter.release();
+      throw err;
+    }
+
+    this._httpConfig.rateLimiter.updateFromHeaders(res.headers);
+
+    if (!res.ok) {
+      this._httpConfig.rateLimiter.release();
+      const errorBody = await res.json().catch(() => ({}));
+      throw new MindStudioError(
+        (errorBody as Record<string, string>).message ||
+          `${res.status} ${res.statusText}`,
+        (errorBody as Record<string, string>).code || 'api_error',
+        res.status,
+        errorBody,
+      );
+    }
+
+    // Capture headers from the initial response (same as non-streaming path)
+    const headers = res.headers;
+
+    try {
+      // Parse SSE stream
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let doneEvent: {
+        output?: TOutput;
+        outputUrl?: string;
+        billingCost?: number;
+        billingEvents?: Array<Record<string, unknown>>;
+      } | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6)) as Record<string, unknown>;
+
+            if (event.type === 'log') {
+              options.onLog({
+                value: event.value as string,
+                tag: event.tag as string,
+                ts: event.ts as number,
+              });
+            } else if (event.type === 'done') {
+              doneEvent = {
+                output: event.output as TOutput | undefined,
+                outputUrl: event.outputUrl as string | undefined,
+                billingCost: event.billingCost as number | undefined,
+                billingEvents: event.billingEvents as
+                  | Array<Record<string, unknown>>
+                  | undefined,
+              };
+            } else if (event.type === 'error') {
+              throw new MindStudioError(
+                (event.error as string) || 'Step execution failed',
+                'step_error',
+                500,
+              );
+            }
+          } catch (err) {
+            if (err instanceof MindStudioError) throw err;
+            // Skip malformed SSE lines
+          }
+        }
+      }
+
+      // Flush remaining buffer
+      if (buffer.startsWith('data: ')) {
+        try {
+          const event = JSON.parse(buffer.slice(6)) as Record<string, unknown>;
+          if (event.type === 'done') {
+            doneEvent = {
+              output: event.output as TOutput | undefined,
+              outputUrl: event.outputUrl as string | undefined,
+              billingCost: event.billingCost as number | undefined,
+              billingEvents: event.billingEvents as
+                | Array<Record<string, unknown>>
+                | undefined,
+            };
+          } else if (event.type === 'error') {
+            throw new MindStudioError(
+              (event.error as string) || 'Step execution failed',
+              'step_error',
+              500,
+            );
+          } else if (event.type === 'log') {
+            options.onLog({
+              value: event.value as string,
+              tag: event.tag as string,
+              ts: event.ts as number,
+            });
+          }
+        } catch (err) {
+          if (err instanceof MindStudioError) throw err;
+        }
+      }
+
+      if (!doneEvent) {
+        throw new MindStudioError(
+          'Stream ended without a done event',
+          'stream_error',
+          500,
+        );
+      }
+
+      // Resolve output — same logic as non-streaming path
+      let output: TOutput;
+      if (doneEvent.output != null) {
+        output = doneEvent.output;
+      } else if (doneEvent.outputUrl) {
+        const s3Res = await fetch(doneEvent.outputUrl);
+        if (!s3Res.ok) {
+          throw new MindStudioError(
+            `Failed to fetch output from S3: ${s3Res.status} ${s3Res.statusText}`,
+            'output_fetch_error',
+            s3Res.status,
+          );
+        }
+        const envelope = (await s3Res.json()) as { value: TOutput };
+        output = envelope.value;
+      } else {
+        output = undefined as TOutput;
+      }
+
+      // Process headers — same as non-streaming path
+      const returnedThreadId =
+        headers.get('x-mindstudio-thread-id') ?? '';
+      if (this._reuseThreadId && returnedThreadId) {
+        this._threadId = returnedThreadId;
+      }
+
+      const returnedAppId = headers.get('x-mindstudio-app-id');
+      if (!this._appId && returnedAppId) {
+        this._appId = returnedAppId;
+      }
+
+      const remaining = headers.get('x-ratelimit-remaining');
+
+      return {
+        ...(output as object),
+        $appId: headers.get('x-mindstudio-app-id') ?? '',
+        $threadId: returnedThreadId,
+        $rateLimitRemaining:
+          remaining != null ? parseInt(remaining, 10) : undefined,
+        $billingCost: doneEvent.billingCost,
+        $billingEvents: doneEvent.billingEvents,
+      } as StepExecutionResult<TOutput>;
+    } finally {
+      this._httpConfig.rateLimiter.release();
+    }
   }
 
   /**

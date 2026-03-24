@@ -87,6 +87,15 @@ mindstudio info generate-image
 echo '{"query": "TypeScript best practices"}' | mindstudio search-google
 ```
 
+Steps stream real-time progress when run from a terminal:
+
+```
+$ mindstudio generate-image --prompt "A mountain landscape at sunset"
+  ⟡ Generating image with DALL·E 3...
+  ⟡ Image generated successfully
+{"imageUrl":"https://...","$billingCost":5000000}
+```
+
 Run via `npx` without installing:
 
 ```bash
