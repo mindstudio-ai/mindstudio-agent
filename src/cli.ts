@@ -91,6 +91,11 @@ function kebabToCamel(s: string): string {
  * Supports: unquoted keys, single-quoted strings, trailing commas, comments.
  */
 function parseJson5(input: string): unknown {
+  try {
+    return JSON.parse(input);
+  } catch {
+    // Fall back to JSON5-ish transformations for relaxed input
+  }
   let s = input;
   s = s.replace(/\/\/.*$/gm, '');
   s = s.replace(/\/\*[\s\S]*?\*\//g, '');
