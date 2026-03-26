@@ -103,6 +103,18 @@ export class MindStudioAgent {
   /** @internal Auth type — 'internal' for CALLBACK_TOKEN (managed mode), 'apiKey' otherwise. */
   private _authType: AuthType;
 
+  /**
+   * @internal Resolve the current auth token. For internal (CALLBACK_TOKEN)
+   * auth, re-reads the env var each time so that long-lived singleton
+   * instances pick up token rotations from the host process.
+   */
+  private get _token(): string {
+    if (this._authType === 'internal' && process.env.CALLBACK_TOKEN) {
+      return process.env.CALLBACK_TOKEN;
+    }
+    return this._httpConfig.token;
+  }
+
   constructor(options: AgentOptions = {}) {
     const config = loadConfig();
     const { token, authType } = resolveToken(options.apiKey, config);
@@ -252,7 +264,7 @@ export class MindStudioAgent {
       res = await fetch(url, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${this._httpConfig.token}`,
+          Authorization: `Bearer ${this._token}`,
           'Content-Type': 'application/json',
           'User-Agent': '@mindstudio-ai/agent',
           Accept: 'text/event-stream',
@@ -790,7 +802,7 @@ export class MindStudioAgent {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: this._httpConfig.token,
+        Authorization: this._token,
       },
       body: JSON.stringify(body),
     });
@@ -980,7 +992,7 @@ export class MindStudioAgent {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: this._httpConfig.token,
+        Authorization: this._token,
       },
       body: JSON.stringify({ databaseId, queries }),
     });
