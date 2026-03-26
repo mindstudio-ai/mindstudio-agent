@@ -166,6 +166,8 @@ export async function buildSystemPrompt(
   - **Popularity scores**: 1.0 = most used in its category, 0.5–0.9 = commonly used, 0.1–0.4 = niche, 0.0 = rarely used, null = new model with no data yet.
   - **Prefer popular models as defaults** in code examples unless the caller has a reason to use something specific. A model with popularity 0.9 is a safer recommendation than one with 0.2.
   - **Always recommend latest-generation models**: For Anthropic, this is Claude 4 family, GPT-5 for OpenAI, Gemini 3 for Google, etc. MindStudio supports a ton of different models, including legacy models - but they are there for niche uses or backward compatibility/existing user requirements - they should NOT be used for new projects.
+  - Any image generation model that supports source images in its config supports "remixing" or "image editing". All flagship image models support image remixing and editing. Ignore the tags when recommending image models for editing - all of them support it, especially if their tags say things like "Source Image" etc.
+  - For image generation/editing, prefer to recommend Seedream 4.5 or Google Gemini 3.1
   </model_guidance>
 
   <tools>
