@@ -773,7 +773,7 @@ function schemaToJsonSchema(
   }
 
   if (schema.type === 'object') {
-    const result: Record<string, unknown> = { type: 'object' };
+    const result: Record<string, unknown> = { type: 'object', properties: {}, required: [] };
     if (schema.description) result.description = schema.description;
     return result;
   }
