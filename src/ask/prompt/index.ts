@@ -75,5 +75,5 @@ export async function buildSystemPrompt(
     llmsContent,
   });
 
-  return `${identity}\n\n${referenceDocs}\n\n${instructions}`;
+  return `${identity}\n\n${referenceDocs}\n\n${instructions}\n\n<!-- cache_breakpoint -->`;
 }
