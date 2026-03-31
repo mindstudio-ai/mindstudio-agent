@@ -466,7 +466,7 @@ export class MindStudioAgent {
       appId?: string;
       threadId?: string;
     }>(this._httpConfig, 'POST', '/steps/execute-batch', {
-      steps,
+      steps: steps.map((s) => ({ ...s, stepType: resolveStepType(s.stepType) })),
       ...(options?.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
     });
@@ -758,7 +758,7 @@ export class MindStudioAgent {
       costType?: string;
       estimates?: StepCostEstimateEntry[];
     }>(this._httpConfig, 'POST', '/helpers/step-cost-estimate', {
-      step: { type: stepType, ...step },
+      step: { type: resolveStepType(stepType), ...step },
       ...options,
     });
     return data;
@@ -1257,7 +1257,14 @@ function sleep(ms: number): Promise<void> {
 
 // Attach generated step methods to the prototype
 import { applyStepMethods } from './generated/steps.js';
+import { stepMetadata } from './generated/metadata.js';
 applyStepMethods(MindStudioAgent);
+
+/** Resolve a public method name (which may be an alias) to the real API step type. */
+function resolveStepType(name: string): string {
+  const meta = (stepMetadata as Record<string, { stepType: string }>)[name];
+  return meta ? meta.stepType : name;
+}
 
 function resolveToken(
   provided?: string,
