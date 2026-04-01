@@ -103,6 +103,7 @@ export function deserializeRow(
   row: Record<string, unknown>,
   columns: AppDatabaseColumnSchema[],
 ): Record<string, unknown> {
+  if (row == null) return row;
   const result: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(row)) {

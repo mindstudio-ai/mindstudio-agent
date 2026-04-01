@@ -839,6 +839,18 @@ export class MindStudioAgent {
    * ```
    */
   get auth(): AuthContext {
+    // In sandbox mode, re-read globalThis.ai.auth on every access so that
+    // persistent workers pick up fresh identity on each method invocation.
+    // The platform sets globalThis.ai before each call.
+    if (this._authType === 'internal') {
+      const ai = (globalThis as Record<string, unknown>).ai as
+        | { auth?: AppContextResult['auth'] }
+        | undefined;
+      if (ai?.auth) {
+        return new AuthContext(ai.auth);
+      }
+    }
+
     if (!this._auth) {
       // Try sandbox hydration lazily — global.ai may have been set after
       // the constructor ran (e.g. ESM imports hoist before inline code)
@@ -1015,10 +1027,13 @@ export class MindStudioAgent {
           const body = JSON.parse(text) as Record<string, unknown>;
           // Accept various error shapes the API might use
           const errMsg =
-            (body.error as string) ??
-            (body.message as string) ??
-            (body.details as string);
+            (typeof body.error === 'string' ? body.error : undefined) ??
+            (typeof body.message === 'string' ? body.message : undefined) ??
+            (typeof body.details === 'string' ? body.details : undefined);
           if (errMsg) message = errMsg;
+          else if (body.error || body.message || body.details) {
+            message = JSON.stringify(body.error ?? body.message ?? body.details);
+          }
           if (body.code) code = body.code as string;
         } catch {
           // Not JSON — use raw text if it's informative

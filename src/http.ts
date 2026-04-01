@@ -63,10 +63,13 @@ async function requestWithRetry<T>(
         const body = JSON.parse(text) as Record<string, unknown>;
         details = body;
         const errMsg =
-          (body.error as string) ??
-          (body.message as string) ??
-          (body.details as string);
+          (typeof body.error === 'string' ? body.error : undefined) ??
+          (typeof body.message === 'string' ? body.message : undefined) ??
+          (typeof body.details === 'string' ? body.details : undefined);
         if (errMsg) message = errMsg;
+        else if (body.error || body.message || body.details) {
+          message = JSON.stringify(body.error ?? body.message ?? body.details);
+        }
         if (body.code) code = body.code as string;
       } catch {
         if (text && text.length < 500) message = text;
