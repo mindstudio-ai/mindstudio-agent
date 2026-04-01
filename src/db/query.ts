@@ -53,13 +53,15 @@ import type {
 // Query class
 // ---------------------------------------------------------------------------
 
-export class Query<T> implements PromiseLike<T[]> {
+export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
   private readonly _predicates: Predicate<T>[];
   private readonly _sortAccessor: Accessor<T> | undefined;
   private readonly _reversed: boolean;
   private readonly _limit: number | undefined;
   private readonly _offset: number | undefined;
   private readonly _config: TableConfig;
+  /** @internal Post-process transform applied after row deserialization. */
+  readonly _postProcess: ((rows: T[]) => TResult) | undefined;
 
   constructor(
     config: TableConfig,
@@ -69,6 +71,7 @@ export class Query<T> implements PromiseLike<T[]> {
       reversed?: boolean;
       limit?: number;
       offset?: number;
+      postProcess?: (rows: T[]) => TResult;
     },
   ) {
     this._config = config;
@@ -77,6 +80,7 @@ export class Query<T> implements PromiseLike<T[]> {
     this._reversed = options?.reversed ?? false;
     this._limit = options?.limit;
     this._offset = options?.offset;
+    this._postProcess = options?.postProcess;
   }
 
   private _clone(overrides: {
@@ -85,6 +89,7 @@ export class Query<T> implements PromiseLike<T[]> {
     reversed?: boolean;
     limit?: number;
     offset?: number;
+    postProcess?: (rows: T[]) => unknown;
   }): Query<T> {
     return new Query<T>(this._config, {
       predicates: overrides.predicates ?? this._predicates,
@@ -92,6 +97,7 @@ export class Query<T> implements PromiseLike<T[]> {
       reversed: overrides.reversed ?? this._reversed,
       limit: overrides.limit ?? this._limit,
       offset: overrides.offset ?? this._offset,
+      postProcess: overrides.postProcess as ((rows: T[]) => T[]) | undefined,
     });
   }
 
@@ -123,14 +129,19 @@ export class Query<T> implements PromiseLike<T[]> {
   // Terminal methods
   // -------------------------------------------------------------------------
 
-  async first(): Promise<T | null> {
-    const rows = await this._clone({ limit: 1 })._execute();
-    return rows[0] ?? null;
+  first(): Query<T, T | null> {
+    return this._clone({
+      limit: 1,
+      postProcess: (rows: T[]) => rows[0] ?? null,
+    }) as unknown as Query<T, T | null>;
   }
 
-  async last(): Promise<T | null> {
-    const rows = await this._clone({ limit: 1, reversed: !this._reversed })._execute();
-    return rows[0] ?? null;
+  last(): Query<T, T | null> {
+    return this._clone({
+      limit: 1,
+      reversed: !this._reversed,
+      postProcess: (rows: T[]) => rows[0] ?? null,
+    }) as unknown as Query<T, T | null>;
   }
 
   async count(): Promise<number> {
@@ -190,11 +201,11 @@ export class Query<T> implements PromiseLike<T[]> {
     );
   }
 
-  async min(accessor: Accessor<T, number>): Promise<T | null> {
+  min(accessor: Accessor<T, number>): Query<T, T | null> {
     return this.sortBy(accessor as Accessor<T>).first();
   }
 
-  async max(accessor: Accessor<T, number>): Promise<T | null> {
+  max(accessor: Accessor<T, number>): Query<T, T | null> {
     return this.sortBy(accessor as Accessor<T>).reverse().first();
   }
 
@@ -227,7 +238,7 @@ export class Query<T> implements PromiseLike<T[]> {
    * `SELECT *` is returned as `fallbackQuery` so the batch can fetch
    * all rows and this query can filter them in JS post-fetch.
    */
-  _compile(): CompiledQuery<T> {
+  _compile(): CompiledQuery<T, TResult> {
     const compiled = this._compilePredicates();
     const sortField = this._sortAccessor
       ? extractFieldName(this._sortAccessor)
@@ -241,7 +252,7 @@ export class Query<T> implements PromiseLike<T[]> {
         limit: this._limit,
         offset: this._offset,
       });
-      return { type: 'query', query, fallbackQuery: null, config: this._config };
+      return { type: 'query', query, fallbackQuery: null, config: this._config, postProcess: this._postProcess };
     }
 
     // JS fallback — need all rows
@@ -256,6 +267,7 @@ export class Query<T> implements PromiseLike<T[]> {
       reversed: this._reversed,
       limit: this._limit,
       offset: this._offset,
+      postProcess: this._postProcess,
     };
   }
 
@@ -266,10 +278,10 @@ export class Query<T> implements PromiseLike<T[]> {
    * For SQL-compiled queries: just deserialize the rows.
    * For JS-fallback queries: filter, sort, and slice in JS.
    */
-  static _processResults<T>(
+  static _processResults<T, R = T[]>(
     result: SqlResult,
-    compiled: CompiledQuery<T>,
-  ): T[] {
+    compiled: CompiledQuery<T, R>,
+  ): R {
     const rows = result.rows.map(
       (row) =>
         deserializeRow(
@@ -279,7 +291,9 @@ export class Query<T> implements PromiseLike<T[]> {
     );
 
     // SQL path — rows are already filtered/sorted/limited
-    if (compiled.query) return rows;
+    if (compiled.query) {
+      return compiled.postProcess ? compiled.postProcess(rows) : rows as unknown as R;
+    }
 
     // JS fallback — apply predicates, sort, slice
     let filtered: T[] = compiled.predicates
@@ -304,24 +318,27 @@ export class Query<T> implements PromiseLike<T[]> {
       filtered = filtered.slice(start, end);
     }
 
-    return filtered;
+    return compiled.postProcess ? compiled.postProcess(filtered) : filtered as unknown as R;
   }
 
   // -------------------------------------------------------------------------
   // PromiseLike
   // -------------------------------------------------------------------------
 
-  then<TResult1 = T[], TResult2 = never>(
-    onfulfilled?: ((value: T[]) => TResult1 | PromiseLike<TResult1>) | null,
+  then<TResult1 = TResult, TResult2 = never>(
+    onfulfilled?: ((value: TResult) => TResult1 | PromiseLike<TResult1>) | null,
     onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
   ): Promise<TResult1 | TResult2> {
-    return this._execute().then(onfulfilled, onrejected);
+    const promise = this._execute().then(
+      (rows) => (this._postProcess ? this._postProcess(rows) : rows) as TResult,
+    );
+    return promise.then(onfulfilled, onrejected);
   }
 
   catch<TResult2 = never>(
     onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
-  ): Promise<T[] | TResult2> {
-    return this._execute().catch(onrejected);
+  ): Promise<TResult | TResult2> {
+    return this.then(undefined, onrejected) as Promise<TResult | TResult2>;
   }
 
   // -------------------------------------------------------------------------
@@ -432,7 +449,7 @@ export class Query<T> implements PromiseLike<T[]> {
  * Result of Query._compile(). Contains either a compiled SQL query
  * (fast path) or a fallback SELECT * with JS processing metadata.
  */
-export interface CompiledQuery<T> {
+export interface CompiledQuery<T, TResult = T[]> {
   type: 'query';
   /** Compiled SQL query, or null if JS fallback needed. */
   query: SqlQuery | null;
@@ -450,6 +467,8 @@ export interface CompiledQuery<T> {
   limit?: number;
   /** Offset (only for fallback). */
   offset?: number;
+  /** Post-process transform (e.g. first() extracts [0] ?? null). */
+  postProcess?: (rows: T[]) => TResult;
 }
 
 export function extractFieldName<T>(accessor: Accessor<T>): string | null {
