@@ -301,6 +301,17 @@ export interface AppDatabase {
 export interface AppContextResult {
   auth: AppAuthContext;
   databases: AppDatabase[];
+  authConfig?: AuthTableConfig;
+}
+
+/** Auth table config from the app manifest. Tells the SDK which table/columns are platform-managed. */
+export interface AuthTableConfig {
+  table: string;
+  columns: {
+    email?: string;
+    phone?: string;
+    roles?: string;
+  };
 }
 
 /** An OAuth connector service with its available actions. Third-party integration from the MindStudio Connector Registry. */

@@ -3,7 +3,7 @@ import { MindStudioError } from './errors.js';
 import { RateLimiter, type AuthType } from './rate-limit.js';
 import { loadConfig, type MindStudioConfig } from './config.js';
 import { AuthContext } from './auth/index.js';
-import { createDb, Table, type Db, type DefineTableOptions } from './db/index.js';
+import { createDb, Table, type Db, type DefineTableOptions, type TableConfig } from './db/index.js';
 import type {
   AgentOptions,
   StepExecutionOptions,
@@ -950,6 +950,8 @@ export class MindStudioAgent {
     this._db = createDb(
       context.databases,
       this._executeDbBatch.bind(this),
+      context.authConfig,
+      this._syncRoles.bind(this),
     );
   }
 
@@ -963,13 +965,18 @@ export class MindStudioAgent {
    */
   private _trySandboxHydration(): void {
     const ai = (globalThis as Record<string, unknown>).ai as
-      | { auth?: AppContextResult['auth']; databases?: AppContextResult['databases'] }
+      | {
+          auth?: AppContextResult['auth'];
+          databases?: AppContextResult['databases'];
+          authConfig?: AppContextResult['authConfig'];
+        }
       | undefined;
 
     if (ai?.auth && ai?.databases) {
       this._applyContext({
         auth: ai.auth,
         databases: ai.databases,
+        authConfig: ai.authConfig,
       });
     }
   }
@@ -1035,6 +1042,41 @@ export class MindStudioAgent {
   }
 
   /**
+   * @internal Sync a user's roles to the platform after a successful
+   * auth table write. Calls POST /_internal/v2/auth/sync-user.
+   * Fire-and-forget: errors are caught and logged, never propagated.
+   */
+  private async _syncRoles(userId: string, roles: unknown): Promise<void> {
+    try {
+      const url = `${this._httpConfig.baseUrl}/_internal/v2/auth/sync-user`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: this._token,
+        },
+        body: JSON.stringify({
+          appId: this._appId,
+          userId,
+          roles,
+        }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        console.warn(
+          `[mindstudio] Failed to sync roles for user ${userId}: ${res.status} ${text}`,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[mindstudio] Failed to sync roles for user ${userId}:`,
+        err,
+      );
+    }
+  }
+
+  /**
    * @internal Create a lazy Db proxy that auto-hydrates context.
    *
    * defineTable() returns Table instances immediately (no async needed).
@@ -1050,7 +1092,7 @@ export class MindStudioAgent {
         // calls ensureContext() first, then delegates to the real endpoint.
         const databaseHint = options?.database;
 
-        return new Table<T>({
+        const tableConfig: TableConfig = {
           databaseId: '',
           tableName: name,
           columns: [],
@@ -1058,6 +1100,16 @@ export class MindStudioAgent {
           defaults: options?.defaults as Record<string, unknown> | undefined,
           executeBatch: async (queries) => {
             await agent.ensureContext();
+
+            // Retroactively set managed columns + role sync once context is available
+            const ac = agent._context!.authConfig;
+            if (ac && ac.table === name && !tableConfig.managedColumns) {
+              tableConfig.managedColumns = ac.columns;
+              if (ac.columns.roles) {
+                tableConfig.syncRoles = agent._syncRoles.bind(agent);
+              }
+            }
+
             const databases = agent._context!.databases;
             let targetDb;
 
@@ -1074,7 +1126,9 @@ export class MindStudioAgent {
             const databaseId = targetDb?.id ?? databases[0]?.id ?? '';
             return agent._executeDbBatch(databaseId, queries);
           },
-        });
+        };
+
+        return new Table<T>(tableConfig);
       },
 
       // Time helpers work without context

@@ -26,6 +26,12 @@ const Orders = db.defineTable<Order>('orders');
 
 // If the app has multiple databases, specify which one:
 // const Orders = db.defineTable<Order>('orders', { database: 'main' });
+
+// Table options: unique constraints and defaults
+const Users = db.defineTable<User>('users', {
+  unique: [['email']],                    // required for upsert()
+  defaults: { plan: 'free' },            // applied client-side in push()/upsert()
+});
 ```
 
 ### Reading data
@@ -93,6 +99,14 @@ const orders = await Orders.push([
 
 // Partial update — only provided fields change
 const updated = await Orders.update(order.id, { status: 'approved' });
+
+// Upsert — insert or update on unique key conflict (requires unique constraint)
+const user = await Users.upsert('email', {
+  email: 'alice@example.com',
+  name: 'Alice',
+  plan: 'pro',
+});
+// → INSERT ... ON CONFLICT(email) DO UPDATE SET name=..., plan=... RETURNING *
 
 // Delete by ID
 await Orders.remove(order.id);
@@ -335,6 +349,7 @@ Write methods return `Mutation` objects that execute when awaited. Pass them to 
 | `push(data)` | `Mutation<T>` | Insert one row, returns created row with system fields |
 | `push(data[])` | `Mutation<T[]>` | Insert multiple rows |
 | `update(id, partial)` | `Mutation<T>` | Partial update by ID, returns updated row |
+| `upsert(key, data)` | `Mutation<T>` | Insert or update on unique key conflict, returns row |
 | `remove(id)` | `Mutation<void>` | Delete row by ID |
 | `removeAll(pred)` | `Mutation<number>` | Delete matching rows, returns count removed |
 | `clear()` | `Mutation<void>` | Delete all rows |
@@ -418,6 +433,35 @@ const Orders = db.defineTable<Order>('orders');
 const Orders = db.defineTable<Order>('orders', { database: 'main' });
 const Logs = db.defineTable<LogEntry>('entries', { database: 'analytics' });
 ```
+
+## Auth-managed columns
+
+When an app has auth enabled, the auth table (declared in `mindstudio.json`) has platform-managed columns for `email`, `phone`, and `roles`. The SDK enforces write restrictions automatically:
+
+- **`email` / `phone`** — read-only from code. Writing to these columns via `push()`, `update()`, or `upsert()` throws a `MindStudioError` (code `managed_column_write`). Use the auth API (`auth.requestEmailChange()`, etc.) to change these values.
+- **`roles`** — writable from code and the dashboard. When you write to the roles column, the SDK automatically syncs the change to the platform so `auth.hasRole()` and `auth.getUsersByRole()` reflect the update immediately.
+
+```ts
+import { db, auth } from '@mindstudio-ai/agent';
+
+const Users = db.defineTable<User>('users');
+
+// ✅ Reading auth-managed columns works normally
+const user = await Users.get(auth.userId);
+console.log(user.email, user.roles);
+
+// ✅ Writing to roles is allowed — SDK syncs to platform automatically
+await Users.update(userId, { roles: ['admin'] });
+
+// ✅ Pre-creating users with roles (invite/seeding flow)
+await Users.push({ roles: ['vendor'], displayName: 'New Vendor' });
+
+// ❌ Writing to email/phone throws — use auth API instead
+await Users.update(userId, { email: 'new@example.com' });
+// → MindStudioError: Cannot write to "email" — this column is managed by auth.
+```
+
+The managed column config comes from the platform's execution context (`globalThis.ai.authConfig` in the sandbox, or via the app-context endpoint). Apps without auth have no managed columns — all writes pass through normally.
 
 ## Context hydration
 

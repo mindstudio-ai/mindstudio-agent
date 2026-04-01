@@ -47,7 +47,7 @@
  */
 
 import { MindStudioError } from '../errors.js';
-import type { AppDatabase, AppDatabaseColumnSchema } from '../types.js';
+import type { AppDatabase, AppDatabaseColumnSchema, AuthTableConfig } from '../types.js';
 import { Table } from './table.js';
 import { Query } from './query.js';
 import { Mutation } from './mutation.js';
@@ -226,6 +226,8 @@ export interface Db {
 export function createDb(
   databases: AppDatabase[],
   executeBatch: (databaseId: string, queries: SqlQuery[]) => Promise<SqlResult[]>,
+  authConfig?: AuthTableConfig,
+  syncRoles?: (userId: string, roles: unknown) => Promise<void>,
 ): Db {
   return {
     defineTable<T>(name: string, options?: DefineTableOptions<T>): Table<T & SystemColumns> {
@@ -238,6 +240,12 @@ export function createDb(
         columns: resolved.columns,
         unique: options?.unique as string[][] | undefined,
         defaults: options?.defaults as Record<string, unknown> | undefined,
+        managedColumns:
+          authConfig?.table === name ? authConfig.columns : undefined,
+        syncRoles:
+          authConfig?.table === name && authConfig.columns.roles
+            ? syncRoles
+            : undefined,
         executeBatch: (queries: SqlQuery[]) =>
           executeBatch(resolved.databaseId, queries),
       };
