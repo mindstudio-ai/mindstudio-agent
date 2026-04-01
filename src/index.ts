@@ -42,6 +42,7 @@ export type {
   AppDatabaseTable,
   AppDatabase,
   AppContextResult,
+  AuthTableConfig,
   BatchStepInput,
   BatchStepResult,
   ExecuteStepBatchOptions,

@@ -136,6 +136,10 @@ export class Table<T> {
         : item,
     );
 
+    for (const item of items) {
+      this._checkManagedColumns(item as Record<string, unknown>);
+    }
+
     const queries = items.map((item) =>
       buildInsert(
         this._config.tableName,
@@ -154,7 +158,13 @@ export class Table<T> {
         }
         return undefined as unknown as T;
       });
-      return isArray ? rows : rows[0];
+      const result = isArray ? rows : rows[0];
+      this._syncRolesIfNeeded(
+        items as Record<string, unknown>[],
+        result,
+        isArray,
+      );
+      return result;
     });
   }
 
@@ -163,6 +173,7 @@ export class Table<T> {
    * Returns the updated row via `UPDATE ... RETURNING *`.
    */
   update(id: string, data: UpdateInput<T>): Mutation<T> {
+    this._checkManagedColumns(data as Record<string, unknown>);
     const query = buildUpdate(
       this._config.tableName,
       id,
@@ -170,12 +181,18 @@ export class Table<T> {
       this._config.columns,
     );
 
-    return new Mutation<T>(this._config, [query], (results) =>
-      deserializeRow(
+    return new Mutation<T>(this._config, [query], (results) => {
+      const result = deserializeRow(
         results[0].rows[0] as Record<string, unknown>,
         this._config.columns,
-      ) as T,
-    );
+      ) as T;
+      this._syncRolesIfNeeded(
+        [data as Record<string, unknown>],
+        result,
+        false,
+      );
+      return result;
+    });
   }
 
   remove(id: string): Mutation<void> {
@@ -257,6 +274,8 @@ export class Table<T> {
       ? ({ ...this._config.defaults, ...data } as Record<string, unknown>)
       : (data as Record<string, unknown>);
 
+    this._checkManagedColumns(withDefaults);
+
     const query = buildUpsert(
       this._config.tableName,
       withDefaults,
@@ -264,17 +283,70 @@ export class Table<T> {
       this._config.columns,
     );
 
-    return new Mutation<T>(this._config, [query], (results) =>
-      deserializeRow(
+    return new Mutation<T>(this._config, [query], (results) => {
+      const result = deserializeRow(
         results[0].rows[0] as Record<string, unknown>,
         this._config.columns,
-      ) as T,
-    );
+      ) as T;
+      this._syncRolesIfNeeded([withDefaults], result, false);
+      return result;
+    });
   }
 
   // -------------------------------------------------------------------------
   // Internal helpers
   // -------------------------------------------------------------------------
+
+  /** @internal Throw if data includes a platform-managed email/phone column. */
+  private _checkManagedColumns(data: Record<string, unknown>): void {
+    const mc = this._config.managedColumns;
+    if (!mc) return;
+
+    const keys = Object.keys(data);
+    for (const key of keys) {
+      if (
+        (mc.email && key === mc.email) ||
+        (mc.phone && key === mc.phone)
+      ) {
+        throw new MindStudioError(
+          `Cannot write to "${key}" — this column is managed by auth. ` +
+            `Use the auth API to change a user's ${key === mc.email ? 'email' : 'phone'}.`,
+          'managed_column_write',
+          400,
+        );
+      }
+    }
+  }
+
+  /**
+   * @internal Fire role sync for rows that wrote to the roles column.
+   * Called inside processResult (runs after SQL execution in both
+   * standalone and batch paths). Fire-and-forget.
+   */
+  private _syncRolesIfNeeded(
+    inputItems: Record<string, unknown>[],
+    result: unknown,
+    isArray: boolean,
+  ): void {
+    const rolesCol = this._config.managedColumns?.roles;
+    const syncRoles = this._config.syncRoles;
+    if (!rolesCol || !syncRoles) return;
+
+    if (!inputItems.some((item) => rolesCol in item)) return;
+
+    if (isArray) {
+      for (const row of result as Record<string, unknown>[]) {
+        if (row?.id) {
+          syncRoles(row.id as string, row[rolesCol]).catch(() => {});
+        }
+      }
+    } else {
+      const row = result as Record<string, unknown>;
+      if (row?.id) {
+        syncRoles(row.id as string, row[rolesCol]).catch(() => {});
+      }
+    }
+  }
 
   /** @internal Validate that the given columns match a declared unique constraint. */
   private _validateUniqueConstraint(columns: string[]): void {

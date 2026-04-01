@@ -53,14 +53,29 @@ async function requestWithRetry<T>(
   }
 
   if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({}));
-    throw new MindStudioError(
-      (errorBody as Record<string, string>).message ||
-        `${res.status} ${res.statusText}`,
-      (errorBody as Record<string, string>).code || 'api_error',
-      res.status,
-      errorBody,
-    );
+    let message = `${res.status} ${res.statusText}`;
+    let code = 'api_error';
+    let details: unknown;
+
+    try {
+      const text = await res.text();
+      try {
+        const body = JSON.parse(text) as Record<string, unknown>;
+        details = body;
+        const errMsg =
+          (body.error as string) ??
+          (body.message as string) ??
+          (body.details as string);
+        if (errMsg) message = errMsg;
+        if (body.code) code = body.code as string;
+      } catch {
+        if (text && text.length < 500) message = text;
+      }
+    } catch {
+      // Couldn't read response body
+    }
+
+    throw new MindStudioError(message, code, res.status, details);
   }
 
   const data = (await res.json()) as T;

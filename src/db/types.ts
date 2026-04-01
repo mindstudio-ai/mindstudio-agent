@@ -146,6 +146,23 @@ export interface TableConfig {
   defaults?: Record<string, unknown>;
 
   /**
+   * Platform-managed auth columns. Set when this table is the app's auth
+   * table. Writes to email/phone columns throw; roles writes are allowed.
+   */
+  managedColumns?: {
+    email?: string;
+    phone?: string;
+    roles?: string;
+  };
+
+  /**
+   * Sync role changes to the platform after a successful auth table write.
+   * Fire-and-forget: failures are caught and logged internally.
+   * @internal Provided by the agent instance; has closure over HTTP config.
+   */
+  syncRoles?: (userId: string, roles: unknown) => Promise<void>;
+
+  /**
    * Execute one or more SQL queries against the managed database in a
    * single round trip. All queries run on the same SQLite connection,
    * enabling RETURNING clauses and multi-statement batches.

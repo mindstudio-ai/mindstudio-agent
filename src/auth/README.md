@@ -141,9 +141,26 @@ If you access `auth` before context is loaded, you'll get a clear error:
 Auth context not yet loaded. Call `await agent.ensureContext()` or perform any db operation first.
 ```
 
+## Auth-managed user tables
+
+For v2 apps with auth enabled, users are app-managed (not MindStudio users). The developer defines a user table via `defineTable`, and the platform manages the `email`, `phone`, and `roles` columns on it. The `auth` API surface is unchanged — `auth.userId` returns the app user's row ID, `auth.roles` returns their roles, and `hasRole()`/`requireRole()`/`getUsersByRole()` all work the same way.
+
+Roles are writable from both developer code and the MindStudio dashboard:
+
+```ts
+// Update a user's roles from code — SDK syncs to platform automatically
+await Users.update(userId, { roles: ['admin', 'reviewer'] });
+
+// auth.hasRole() and getUsersByRole() reflect the change immediately
+```
+
+Email and phone columns are read-only from code — the SDK throws if you try to write to them. Use the auth API on the frontend (`@mindstudio-ai/interface`) for email/phone changes.
+
+See `src/db/README.md` for full details on managed column behavior.
+
 ## How it works internally
 
-1. **Hydration**: The SDK calls `GET /developer/v2/helpers/app-context` (with appId or CALLBACK_TOKEN) and receives `{ auth: { userId, roleAssignments[] }, databases: [...] }`. The role assignments contain the full map for the app — all users, all roles.
+1. **Hydration**: The SDK calls `GET /developer/v2/helpers/app-context` (with appId or CALLBACK_TOKEN) and receives `{ auth: { userId, roleAssignments[] }, databases: [...] }`. The role assignments contain the full map for the app — all users, all roles. For v2 apps with auth, roles are loaded from `v2_app_managed_users` in Postgres.
 
 2. **AuthContext creation**: The `AuthContext` class filters the role assignments to extract the current user's roles, and stores the full map for `getUsersByRole()` lookups.
 
