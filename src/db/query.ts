@@ -60,6 +60,9 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
   private readonly _limit: number | undefined;
   private readonly _offset: number | undefined;
   private readonly _config: TableConfig;
+  /** @internal Pre-compiled WHERE clause (bypasses predicate compiler). Used by Table.get(). */
+  private readonly _rawWhere: string | undefined;
+  private readonly _rawWhereParams: unknown[] | undefined;
   /** @internal Post-process transform applied after row deserialization. */
   readonly _postProcess: ((rows: T[]) => TResult) | undefined;
 
@@ -72,6 +75,8 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
       limit?: number;
       offset?: number;
       postProcess?: (rows: T[]) => TResult;
+      rawWhere?: string;
+      rawWhereParams?: unknown[];
     },
   ) {
     this._config = config;
@@ -81,6 +86,8 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
     this._limit = options?.limit;
     this._offset = options?.offset;
     this._postProcess = options?.postProcess;
+    this._rawWhere = options?.rawWhere;
+    this._rawWhereParams = options?.rawWhereParams;
   }
 
   private _clone(overrides: {
@@ -98,6 +105,8 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
       limit: overrides.limit ?? this._limit,
       offset: overrides.offset ?? this._offset,
       postProcess: overrides.postProcess as ((rows: T[]) => T[]) | undefined,
+      rawWhere: this._rawWhere,
+      rawWhereParams: this._rawWhereParams,
     });
   }
 
@@ -144,38 +153,17 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
     }) as unknown as Query<T, T | null>;
   }
 
-  async count(): Promise<number> {
-    const compiled = this._compilePredicates();
-
-    if (compiled.allSql) {
-      const query = buildCount(
-        this._config.tableName,
-        compiled.sqlWhere || undefined,
-      );
-      const results = await this._config.executeBatch([query]);
-      const row = results[0]?.rows[0] as { count: number } | undefined;
-      return row?.count ?? 0;
-    }
-
-    const rows = await this._fetchAndFilterInJs(compiled);
-    return rows.length;
+  count(): Query<T, number> {
+    return this._clone({
+      postProcess: (rows: T[]) => rows.length,
+    }) as unknown as Query<T, number>;
   }
 
-  async some(): Promise<boolean> {
-    const compiled = this._compilePredicates();
-
-    if (compiled.allSql) {
-      const query = buildExists(
-        this._config.tableName,
-        compiled.sqlWhere || undefined,
-      );
-      const results = await this._config.executeBatch([query]);
-      const row = results[0]?.rows[0] as { result: number } | undefined;
-      return row?.result === 1;
-    }
-
-    const rows = await this._fetchAndFilterInJs(compiled);
-    return rows.length > 0;
+  some(): Query<T, boolean> {
+    return this._clone({
+      limit: 1,
+      postProcess: (rows: T[]) => rows.length > 0,
+    }) as unknown as Query<T, boolean>;
   }
 
   async every(): Promise<boolean> {
@@ -209,21 +197,21 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
     return this.sortBy(accessor as Accessor<T>).reverse().first();
   }
 
-  async groupBy<K extends string | number>(
+  groupBy<K extends string | number>(
     accessor: Accessor<T, K>,
-  ): Promise<Map<K, T[]>> {
-    const rows = await this._execute();
-    const map = new Map<K, T[]>();
-    for (const row of rows) {
-      const key = accessor(row);
-      const group = map.get(key);
-      if (group) {
-        group.push(row);
-      } else {
-        map.set(key, [row]);
-      }
-    }
-    return map;
+  ): Query<T, Map<K, T[]>> {
+    return this._clone({
+      postProcess: (rows: T[]) => {
+        const map = new Map<K, T[]>();
+        for (const row of rows) {
+          const key = accessor(row);
+          const group = map.get(key);
+          if (group) group.push(row);
+          else map.set(key, [row]);
+        }
+        return map;
+      },
+    }) as unknown as Query<T, Map<K, T[]>>;
   }
 
   // -------------------------------------------------------------------------
@@ -239,6 +227,18 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
    * all rows and this query can filter them in JS post-fetch.
    */
   _compile(): CompiledQuery<T, TResult> {
+    // Raw WHERE path — bypass predicate compiler (used by Table.get())
+    if (this._rawWhere) {
+      const query = buildSelect(this._config.tableName, {
+        where: this._rawWhere,
+        whereParams: this._rawWhereParams,
+        orderBy: undefined,
+        limit: this._limit,
+        offset: this._offset,
+      });
+      return { type: 'query', query, fallbackQuery: null, config: this._config, postProcess: this._postProcess };
+    }
+
     const compiled = this._compilePredicates();
     const sortField = this._sortAccessor
       ? extractFieldName(this._sortAccessor)
@@ -346,6 +346,24 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
   // -------------------------------------------------------------------------
 
   private async _execute(): Promise<T[]> {
+    // Raw WHERE path — bypass predicate compiler (used by Table.get())
+    if (this._rawWhere) {
+      const query = buildSelect(this._config.tableName, {
+        where: this._rawWhere,
+        whereParams: this._rawWhereParams,
+        limit: this._limit,
+        offset: this._offset,
+      });
+      const results = await this._config.executeBatch([query]);
+      return results[0].rows.map(
+        (row) =>
+          deserializeRow(
+            row as Record<string, unknown>,
+            this._config.columns,
+          ) as T,
+      );
+    }
+
     const compiled = this._compilePredicates();
 
     if (compiled.allSql) {
@@ -421,9 +439,14 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
   ): Promise<Record<string, unknown>[]> {
     const allRows = await this._fetchAllRows();
 
-    if (compiled.compiled.some((c) => c.type === 'js')) {
+    const jsFallbacks = compiled.compiled.filter((c) => c.type === 'js');
+    if (jsFallbacks.length > 0) {
+      const reasons = jsFallbacks
+        .map((c) => c.type === 'js' ? c.reason : undefined)
+        .filter(Boolean);
+      const reasonSuffix = reasons.length > 0 ? ` (${reasons.join('; ')})` : '';
       console.warn(
-        `[mindstudio] Filter on ${this._config.tableName} could not be compiled to SQL — scanning ${allRows.length} rows in JS`,
+        `[mindstudio] Filter on '${this._config.tableName}' could not be compiled to SQL${reasonSuffix} — scanning ${allRows.length} rows in JS`,
       );
     }
 

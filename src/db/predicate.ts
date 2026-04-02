@@ -76,29 +76,28 @@ export function compilePredicate<T>(fn: Predicate<T>): CompiledPredicate<T> {
   try {
     const source = fn.toString();
     const paramName = extractParamName(source);
-    if (!paramName) return { type: 'js', fn };
+    if (!paramName) return { type: 'js', fn, reason: 'could not extract parameter name' };
 
     const body = extractBody(source);
-    if (!body) return { type: 'js', fn };
+    if (!body) return { type: 'js', fn, reason: 'could not extract function body' };
 
     const tokens = tokenize(body);
-    if (tokens.length === 0) return { type: 'js', fn };
+    if (tokens.length === 0) return { type: 'js', fn, reason: 'empty token stream' };
 
     // Parse into an AST and compile to SQL
     const parser = new Parser(tokens, paramName, fn);
     const ast = parser.parseExpression();
-    if (!ast) return { type: 'js', fn };
+    if (!ast) return { type: 'js', fn, reason: 'could not parse expression' };
 
     // Make sure we consumed all tokens (no trailing garbage)
-    if (parser.pos < tokens.length) return { type: 'js', fn };
+    if (parser.pos < tokens.length) return { type: 'js', fn, reason: 'unexpected tokens after expression' };
 
     const where = compileNode(ast);
-    if (!where) return { type: 'js', fn };
+    if (!where) return { type: 'js', fn, reason: 'could not compile to SQL' };
 
     return { type: 'sql', where };
-  } catch {
-    // Any unexpected error → fall back to JS safely
-    return { type: 'js', fn };
+  } catch (err) {
+    return { type: 'js', fn, reason: `compilation error: ${(err as Error)?.message || 'unknown'}` };
   }
 }
 

@@ -341,8 +341,9 @@ export function createDb(
         if (c.type === 'query') {
           // Log warning for JS fallback queries
           if (!c.query && c.predicates?.length) {
+            // Reason is not available at the batch level (predicates are pre-compiled)
             console.warn(
-              `[mindstudio] db.batch(): filter on ${c.config.tableName} could not be compiled to SQL — processing in JS`,
+              `[mindstudio] db.batch(): filter on '${c.config.tableName}' could not be compiled to SQL — processing in JS`,
             );
           }
           return Query._processResults(results[0], c);

@@ -18,4 +18,18 @@ export class MindStudioError extends Error {
   ) {
     super(message);
   }
+
+  override toString(): string {
+    return `MindStudioError [${this.code}] (${this.status}): ${this.message}`;
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      name: this.name,
+      message: this.message,
+      code: this.code,
+      status: this.status,
+      ...(this.details != null && { details: this.details }),
+    };
+  }
 }

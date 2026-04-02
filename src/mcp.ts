@@ -14,6 +14,7 @@ import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
 import { extname } from 'node:path';
 import { MindStudioAgent } from './client.js';
+import { MindStudioError } from './errors.js';
 import type { StepMetadata } from './generated/metadata.js';
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
@@ -551,7 +552,9 @@ export async function startMcpServer(options?: {
           });
         } catch (err: unknown) {
           const message =
-            err instanceof Error ? err.message : String(err);
+            err instanceof MindStudioError
+              ? `${err.code}: ${err.message}`
+              : err instanceof Error ? err.message : String(err);
           sendResult(id!, {
             content: [{ type: 'text', text: `Error: ${message}` }],
             isError: true,

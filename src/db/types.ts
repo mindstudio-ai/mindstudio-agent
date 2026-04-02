@@ -203,4 +203,4 @@ export interface SqlResult {
  */
 export type CompiledPredicate<T> =
   | { type: 'sql'; where: string }
-  | { type: 'js'; fn: Predicate<T> };
+  | { type: 'js'; fn: Predicate<T>; reason?: string };

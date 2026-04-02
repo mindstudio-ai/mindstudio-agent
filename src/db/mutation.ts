@@ -20,6 +20,7 @@
  * awaited standalone, but throw if passed to `db.batch()`.
  */
 
+import { MindStudioError } from '../errors.js';
 import type { TableConfig, SqlQuery, SqlResult } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -115,8 +116,10 @@ export class Mutation<TResult> implements PromiseLike<TResult> {
    */
   _compile(): CompiledMutation<TResult> {
     if (this._executor) {
-      throw new Error(
-        'This operation cannot be batched (e.g. removeAll with a predicate that cannot compile to SQL). Await it separately.',
+      throw new MindStudioError(
+        'This operation cannot be batched (e.g. removeAll with a JS-fallback predicate). Await it separately instead of passing to db.batch().',
+        'not_batchable',
+        400,
       );
     }
 

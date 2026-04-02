@@ -13,20 +13,18 @@
  * SQLite connection.
  */
 
-import { Query, extractFieldName } from './query.js';
+import { Query } from './query.js';
 import { Mutation } from './mutation.js';
 import { compilePredicate } from './predicate.js';
 import { MindStudioError } from '../errors.js';
 import {
   buildSelect,
-  buildCount,
   buildExists,
   buildInsert,
   buildUpdate,
   buildUpsert,
   buildDelete,
   deserializeRow,
-  escapeValue,
 } from './sql.js';
 import type { Predicate, Accessor, PushInput, UpdateInput, SystemFields, TableConfig } from './types.js';
 
@@ -39,44 +37,43 @@ export class Table<T> {
   }
 
   // -------------------------------------------------------------------------
-  // Reads — direct
+  // Reads — all return batchable Query objects (lazy until awaited)
   // -------------------------------------------------------------------------
 
-  async get(id: string): Promise<T | null> {
-    const query = buildSelect(this._config.tableName, {
-      where: `id = ?`,
-      whereParams: [id],
+  /** Get a single row by ID. Returns null if not found. */
+  get(id: string): Query<T, T | null> {
+    return new Query<T, T | null>(this._config, {
+      rawWhere: 'id = ?',
+      rawWhereParams: [id],
       limit: 1,
+      postProcess: (rows: T[]) => rows[0] ?? null,
     });
-    const results = await this._config.executeBatch([query]);
-    if (results[0].rows.length === 0) return null;
-    return deserializeRow(
-      results[0].rows[0] as Record<string, unknown>,
-      this._config.columns,
-    ) as T;
   }
 
-  async findOne(predicate: Predicate<T>): Promise<T | null> {
+  /** Find the first row matching a predicate. Returns null if none match. */
+  findOne(predicate: Predicate<T>): Query<T, T | null> {
     return this.filter(predicate).first();
   }
 
-  async count(predicate?: Predicate<T>): Promise<number> {
+  /** Count all rows, or rows matching a predicate. */
+  count(): Query<T, number>;
+  count(predicate: Predicate<T>): Query<T, number>;
+  count(predicate?: Predicate<T>): Query<T, number> {
     if (predicate) return this.filter(predicate).count();
-
-    const query = buildCount(this._config.tableName);
-    const results = await this._config.executeBatch([query]);
-    const row = results[0]?.rows[0] as { count: number } | undefined;
-    return row?.count ?? 0;
+    return this.toArray().count();
   }
 
-  async some(predicate: Predicate<T>): Promise<boolean> {
+  /** True if any row matches the predicate. */
+  some(predicate: Predicate<T>): Query<T, boolean> {
     return this.filter(predicate).some();
   }
 
+  /** True if all rows match the predicate. */
   async every(predicate: Predicate<T>): Promise<boolean> {
     return this.filter(predicate).every();
   }
 
+  /** True if the table has zero rows. */
   async isEmpty(): Promise<boolean> {
     const query = buildExists(this._config.tableName, undefined, undefined, true);
     const results = await this._config.executeBatch([query]);
@@ -84,28 +81,34 @@ export class Table<T> {
     return row?.result === 1;
   }
 
-  async min(accessor: Accessor<T, number>): Promise<T | null> {
+  /** Row with the minimum value for a field, or null if table is empty. */
+  min(accessor: Accessor<T, number>): Query<T, T | null> {
     return this.sortBy(accessor as Accessor<T>).first();
   }
 
-  async max(accessor: Accessor<T, number>): Promise<T | null> {
+  /** Row with the maximum value for a field, or null if table is empty. */
+  max(accessor: Accessor<T, number>): Query<T, T | null> {
     return this.sortBy(accessor as Accessor<T>).reverse().first();
   }
 
-  async groupBy<K extends string | number>(
+  /** Group rows by a field. Returns a Map. */
+  groupBy<K extends string | number>(
     accessor: Accessor<T, K>,
-  ): Promise<Map<K, T[]>> {
-    return new Query<T>(this._config).groupBy(accessor);
+  ): Query<T, Map<K, T[]>> {
+    return new Query<T>(this._config).groupBy(accessor) as Query<T, Map<K, T[]>>;
   }
 
-  // -------------------------------------------------------------------------
-  // Reads — chainable
-  // -------------------------------------------------------------------------
+  /** Get all rows as an array. */
+  toArray(): Query<T> {
+    return new Query<T>(this._config);
+  }
 
+  /** Filter rows by a predicate. Returns a chainable Query. */
   filter(predicate: Predicate<T>): Query<T> {
     return new Query<T>(this._config).filter(predicate);
   }
 
+  /** Sort rows by a field. Returns a chainable Query. */
   sortBy(accessor: Accessor<T>): Query<T> {
     return new Query<T>(this._config).sortBy(accessor);
   }
@@ -156,7 +159,11 @@ export class Table<T> {
             this._config.columns,
           ) as T;
         }
-        return undefined as unknown as T;
+        throw new MindStudioError(
+          `Insert into '${this._config.tableName}' succeeded but returned no row. This may indicate a constraint violation.`,
+          'insert_failed',
+          500,
+        );
       });
       const result = isArray ? rows : rows[0];
       this._syncRolesIfNeeded(
@@ -182,6 +189,13 @@ export class Table<T> {
     );
 
     return new Mutation<T>(this._config, [query], (results) => {
+      if (!results[0]?.rows[0]) {
+        throw new MindStudioError(
+          `Row not found: no row with ID '${id}' in table '${this._config.tableName}'`,
+          'row_not_found',
+          404,
+        );
+      }
       const result = deserializeRow(
         results[0].rows[0] as Record<string, unknown>,
         this._config.columns,
@@ -195,9 +209,11 @@ export class Table<T> {
     });
   }
 
-  remove(id: string): Mutation<void> {
+  remove(id: string): Mutation<{ deleted: boolean }> {
     const query = buildDelete(this._config.tableName, `id = ?`, [id]);
-    return new Mutation<void>(this._config, [query], () => undefined as void);
+    return new Mutation<{ deleted: boolean }>(this._config, [query], (results) => ({
+      deleted: results[0].changes > 0,
+    }));
   }
 
   /**
@@ -242,9 +258,9 @@ export class Table<T> {
     });
   }
 
-  clear(): Mutation<void> {
+  clear(): Mutation<number> {
     const query = buildDelete(this._config.tableName);
-    return new Mutation<void>(this._config, [query], () => undefined as void);
+    return new Mutation<number>(this._config, [query], (results) => results[0].changes);
   }
 
   /**
@@ -276,6 +292,16 @@ export class Table<T> {
 
     this._checkManagedColumns(withDefaults);
 
+    for (const col of conflictColumns) {
+      if (!(col in withDefaults)) {
+        throw new MindStudioError(
+          `Upsert on ${this._config.tableName} requires "${col}" in data (conflict key)`,
+          'missing_conflict_key',
+          400,
+        );
+      }
+    }
+
     const query = buildUpsert(
       this._config.tableName,
       withDefaults,
@@ -284,6 +310,13 @@ export class Table<T> {
     );
 
     return new Mutation<T>(this._config, [query], (results) => {
+      if (!results[0]?.rows[0]) {
+        throw new MindStudioError(
+          `Upsert into ${this._config.tableName} returned no row`,
+          'upsert_failed',
+          500,
+        );
+      }
       const result = deserializeRow(
         results[0].rows[0] as Record<string, unknown>,
         this._config.columns,

@@ -72,7 +72,11 @@ async function requestWithRetry<T>(
         }
         if (body.code) code = body.code as string;
       } catch {
-        if (text && text.length < 500) message = text;
+        if (text) {
+          // Strip HTML tags and collapse whitespace for readable error text
+          const stripped = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          if (stripped) message = stripped.slice(0, 200);
+        }
       }
     } catch {
       // Couldn't read response body

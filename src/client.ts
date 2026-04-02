@@ -194,7 +194,7 @@ export class MindStudioAgent {
       const res = await fetch(data.outputUrl);
       if (!res.ok) {
         throw new MindStudioError(
-          `Failed to fetch output from S3: ${res.status} ${res.statusText}`,
+          `Failed to fetch ${stepType} output from S3: ${res.status} ${res.statusText}`,
           'output_fetch_error',
           res.status,
         );
@@ -280,14 +280,29 @@ export class MindStudioAgent {
 
     if (!res.ok) {
       this._httpConfig.rateLimiter.release();
-      const errorBody = await res.json().catch(() => ({}));
-      throw new MindStudioError(
-        (errorBody as Record<string, string>).message ||
-          `${res.status} ${res.statusText}`,
-        (errorBody as Record<string, string>).code || 'api_error',
-        res.status,
-        errorBody,
-      );
+      let message = `${res.status} ${res.statusText}`;
+      let code = 'api_error';
+      let details: unknown;
+      try {
+        const text = await res.text();
+        try {
+          const body = JSON.parse(text) as Record<string, unknown>;
+          details = body;
+          const errMsg =
+            (typeof body.error === 'string' ? body.error : undefined) ??
+            (typeof body.message === 'string' ? body.message : undefined) ??
+            (typeof body.details === 'string' ? body.details : undefined);
+          if (errMsg) message = errMsg;
+          else if (body.error || body.message || body.details) {
+            message = JSON.stringify(body.error ?? body.message ?? body.details);
+          }
+          if (body.code) code = body.code as string;
+        } catch {
+          const stripped = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          if (stripped) message = stripped.slice(0, 200);
+        }
+      } catch {}
+      throw new MindStudioError(`[${stepType}] ${message}`, code, res.status, details);
     }
 
     // Capture headers from the initial response (same as non-streaming path)
@@ -335,7 +350,7 @@ export class MindStudioAgent {
               };
             } else if (event.type === 'error') {
               throw new MindStudioError(
-                (event.error as string) || 'Step execution failed',
+                `[${stepType}] ${(event.error as string) || 'Step execution failed'}`,
                 'step_error',
                 500,
               );
@@ -380,7 +395,7 @@ export class MindStudioAgent {
 
       if (!doneEvent) {
         throw new MindStudioError(
-          'Stream ended without a done event',
+          `[${stepType}] Stream ended unexpectedly without completing. The step execution may have been interrupted.`,
           'stream_error',
           500,
         );
@@ -394,7 +409,7 @@ export class MindStudioAgent {
         const s3Res = await fetch(doneEvent.outputUrl);
         if (!s3Res.ok) {
           throw new MindStudioError(
-            `Failed to fetch output from S3: ${s3Res.status} ${s3Res.statusText}`,
+            `Failed to fetch ${stepType} output from S3: ${s3Res.status} ${s3Res.statusText}`,
             'output_fetch_error',
             s3Res.status,
           );
@@ -858,9 +873,7 @@ export class MindStudioAgent {
     }
     if (!this._auth) {
       throw new MindStudioError(
-        'Auth context not yet loaded. Call `await agent.ensureContext()` ' +
-          'or perform any db operation first (which auto-hydrates context). ' +
-          'Inside the MindStudio sandbox, context is loaded automatically.',
+        'Auth context not loaded. Call `await agent.ensureContext()` first, or perform any db operation (which auto-loads context).',
         'context_not_loaded',
         400,
       );
@@ -1080,13 +1093,14 @@ export class MindStudioAgent {
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         console.warn(
-          `[mindstudio] Failed to sync roles for user ${userId}: ${res.status} ${text}`,
+          `[mindstudio] Role sync failed for user ${userId} (${res.status}${text ? ': ' + text.slice(0, 100) : ''}). ` +
+            'Roles were saved to the database but may not be reflected in auth.hasRole() until the next successful write.',
         );
       }
     } catch (err) {
       console.warn(
-        `[mindstudio] Failed to sync roles for user ${userId}:`,
-        err,
+        `[mindstudio] Role sync failed for user ${userId}: network error. ` +
+          'Roles were saved to the database but may not be reflected in auth.hasRole() until the next successful write.',
       );
     }
   }
