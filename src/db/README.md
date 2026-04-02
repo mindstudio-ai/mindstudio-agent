@@ -108,29 +108,36 @@ const user = await Users.upsert('email', {
 });
 // → INSERT ... ON CONFLICT(email) DO UPDATE SET name=..., plan=... RETURNING *
 
-// Delete by ID
-await Orders.remove(order.id);
+// Delete by ID — returns { deleted: boolean }
+const { deleted } = await Orders.remove(order.id);
 
 // Delete matching rows — returns count
 const removed = await Orders.removeAll(o => o.status === 'rejected');
 
-// Delete everything
-await Orders.clear();
+// Delete everything — returns count of deleted rows
+const cleared = await Orders.clear();
 ```
 
 ### Batching reads and writes
 
 Use `db.batch()` to execute multiple operations in a single round trip. All operations run on the same SQLite connection — writes execute in argument order, and subsequent reads see prior writes.
 
+Almost every Table and Query method returns a batchable object — `get()`, `findOne()`, `count()`, `some()`, `min()`, `max()`, `groupBy()`, `first()`, `last()`, `filter()`, `push()`, `update()`, `remove()`, etc. can all go in a single `db.batch()` call.
+
 ```ts
 // All of these execute as a single HTTP request
+const [user, orderCount, recentPending] = await db.batch(
+  Users.get(auth.userId),
+  Orders.count(o => o.status === 'pending'),
+  Orders.filter(o => o.status === 'pending').sortBy(o => o.createdAt).reverse().take(10),
+);
+
+// Reads + writes in one batch — writes are visible to subsequent reads
 const [, newOrder, pending] = await db.batch(
   Orders.update(existingId, { status: 'approved' }),
   Orders.push({ item: 'Laptop', amount: 999, status: 'pending', requestedBy: auth.userId }),
   Orders.filter(o => o.status === 'pending').take(10),
 );
-
-// newOrder has the created row, pending includes results of the update above
 ```
 
 This is especially useful for operations that modify multiple rows:
@@ -293,26 +300,24 @@ For most apps (hundreds to low thousands of rows), the fallback is fast enough.
 
 ## Table API reference
 
-### Reads — direct (return Promises)
+### Reads (return `Query` — lazy, batchable)
 
-| Method | Description | SQL |
-|--------|-------------|-----|
-| `get(id)` | Single row by ID, or null | `SELECT * WHERE id = ?` |
-| `findOne(pred)` | First matching row, or null | `SELECT * WHERE ... LIMIT 1` |
-| `count(pred?)` | Count rows (all, or matching predicate) | `SELECT COUNT(*)` |
-| `some(pred)` | True if any row matches | `SELECT EXISTS(...)` |
-| `every(pred)` | True if all rows match | `SELECT NOT EXISTS(... WHERE NOT ...)` |
-| `isEmpty()` | True if table has zero rows | `SELECT NOT EXISTS(SELECT 1 ...)` |
-| `min(fn)` | Row with minimum value for field | `ORDER BY field ASC LIMIT 1` |
-| `max(fn)` | Row with maximum value for field | `ORDER BY field DESC LIMIT 1` |
-| `groupBy(fn)` | Group rows into `Map<K, T[]>` | Fetch all, group in JS |
+All read methods return `Query` objects. Nothing executes until you `await` the result or pass it to `db.batch()`. This means every read method — including `get()`, `findOne()`, `count()`, etc. — can be batched into a single round trip.
 
-### Reads — chainable (return `Query<T>`)
-
-| Method | Description |
-|--------|-------------|
-| `filter(pred)` | Add a WHERE condition |
-| `sortBy(fn)` | Set ORDER BY field (ascending) |
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `get(id)` | `T \| null` | Single row by ID, or null |
+| `findOne(pred)` | `T \| null` | First matching row, or null |
+| `toArray()` | `T[]` | All rows in the table |
+| `count(pred?)` | `number` | Count rows (all, or matching predicate) |
+| `some(pred)` | `boolean` | True if any row matches |
+| `every(pred)` | `boolean` | True if all rows match (not batchable) |
+| `isEmpty()` | `boolean` | True if table has zero rows (not batchable) |
+| `min(fn)` | `T \| null` | Row with minimum value for field |
+| `max(fn)` | `T \| null` | Row with maximum value for field |
+| `groupBy(fn)` | `Map<K, T[]>` | Group rows by field |
+| `filter(pred)` | `T[]` | Filter rows, returns chainable Query |
+| `sortBy(fn)` | `T[]` | Sort rows, returns chainable Query |
 
 ### Query chain methods
 
@@ -326,19 +331,21 @@ Chain methods return a new immutable Query. Nothing executes until you `await`.
 | `.take(n)` | Limit results (SQL LIMIT) |
 | `.skip(n)` | Skip first n results (SQL OFFSET) |
 
-### Query terminal methods (execute the query)
+### Query terminal methods
+
+Terminal methods return a Query with a post-processing transform. They're still lazy and batchable — they just change the result type from `T[]` to something else.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `await query` | `T[]` | Execute and return all matching rows |
-| `.first()` | `T \| null` | First matching row |
-| `.last()` | `T \| null` | Last matching row (flips sort direction) |
-| `.count()` | `number` | Count of matching rows |
-| `.some()` | `boolean` | True if any row matches |
-| `.every()` | `boolean` | True if all rows match |
-| `.min(fn)` | `T \| null` | Row with minimum value |
-| `.max(fn)` | `T \| null` | Row with maximum value |
-| `.groupBy(fn)` | `Map<K, T[]>` | Group results by field |
+| `.first()` | `T \| null` | First matching row (batchable) |
+| `.last()` | `T \| null` | Last matching row (batchable) |
+| `.count()` | `number` | Count of matching rows (batchable) |
+| `.some()` | `boolean` | True if any row matches (batchable) |
+| `.every()` | `boolean` | True if all rows match (not batchable) |
+| `.min(fn)` | `T \| null` | Row with minimum value (batchable) |
+| `.max(fn)` | `T \| null` | Row with maximum value (batchable) |
+| `.groupBy(fn)` | `Map<K, T[]>` | Group results by field (batchable) |
 
 ### Writes (return `Mutation<T>` — lazy, batchable)
 
@@ -346,13 +353,13 @@ Write methods return `Mutation` objects that execute when awaited. Pass them to 
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `push(data)` | `Mutation<T>` | Insert one row, returns created row with system fields |
-| `push(data[])` | `Mutation<T[]>` | Insert multiple rows |
-| `update(id, partial)` | `Mutation<T>` | Partial update by ID, returns updated row |
-| `upsert(key, data)` | `Mutation<T>` | Insert or update on unique key conflict, returns row |
-| `remove(id)` | `Mutation<void>` | Delete row by ID |
+| `push(data)` | `Mutation<T>` | Insert one row, returns created row. Throws if insert fails. |
+| `push(data[])` | `Mutation<T[]>` | Insert multiple rows. Throws if any insert fails. |
+| `update(id, partial)` | `Mutation<T>` | Partial update by ID, returns updated row. Throws `row_not_found` (404) if ID doesn't exist. |
+| `upsert(key, data)` | `Mutation<T>` | Insert or update on unique key conflict. Throws if conflict key missing from data. |
+| `remove(id)` | `Mutation<{ deleted: boolean }>` | Delete row by ID. `deleted` is false if row didn't exist. |
 | `removeAll(pred)` | `Mutation<number>` | Delete matching rows, returns count removed |
-| `clear()` | `Mutation<void>` | Delete all rows |
+| `clear()` | `Mutation<number>` | Delete all rows, returns count deleted |
 
 ### Batch execution
 

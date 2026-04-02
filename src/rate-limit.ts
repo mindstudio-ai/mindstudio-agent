@@ -23,8 +23,7 @@ export class RateLimiter {
   async acquire(): Promise<void> {
     if (this.callCount >= this.callCap) {
       throw new MindStudioError(
-        `Call cap reached (${this.callCap} calls). ` +
-          'Internal tokens are limited to 500 calls per execution.',
+        `Call cap exceeded (${this.callCap} calls per execution). Reduce the number of API calls or use executeStepBatch() to combine multiple steps.`,
         'call_cap_exceeded',
         429,
       );

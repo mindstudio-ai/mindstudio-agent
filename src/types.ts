@@ -271,8 +271,8 @@ export interface AppRoleAssignment {
 
 /** Auth context for an app. */
 export interface AppAuthContext {
-  /** The authenticated user ID. */
-  userId: string;
+  /** The authenticated user ID, or null for unauthenticated users. */
+  userId: string | null;
   /** All role assignments for this app (all users, all roles). */
   roleAssignments: AppRoleAssignment[];
 }

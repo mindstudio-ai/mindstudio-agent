@@ -24,8 +24,8 @@ const admins = auth.getUsersByRole(Roles.admin);
 
 ## API
 
-### `auth.userId: string`
-The current user's ID. Read-only.
+### `auth.userId: string | null`
+The current user's ID, or `null` for unauthenticated users (no-auth apps, or auth-enabled apps before login). Read-only.
 
 ### `auth.roles: readonly string[]`
 The current user's roles in this app. Read-only array. Empty if the user has no roles assigned.
@@ -42,7 +42,7 @@ if (auth.hasRole(Roles.admin, Roles.approver, Roles.reviewer)) { ... }
 ```
 
 ### `auth.requireRole(...roles: string[]): void`
-Throws `MindStudioError` (code `'forbidden'`, status 403) if the user lacks **all** of the given roles. Use at the top of route handlers to gate access. If the user has at least one of the listed roles, execution continues normally.
+Throws `MindStudioError` (code `'unauthenticated'`, status 401) if there is no authenticated user. Throws `MindStudioError` (code `'forbidden'`, status 403) if the user lacks **all** of the given roles. Use at the top of route handlers to gate access. If the user has at least one of the listed roles, execution continues normally.
 
 ```ts
 // Only admins can proceed

@@ -52,8 +52,8 @@ import type { AppAuthContext, AppRoleAssignment } from '../types.js';
  * context hydration time.
  */
 export class AuthContext {
-  /** The current user's ID. */
-  readonly userId: string;
+  /** The current user's ID, or null for unauthenticated users. */
+  readonly userId: string | null;
 
   /** The current user's roles in this app. */
   readonly roles: readonly string[];
@@ -100,9 +100,16 @@ export class AuthContext {
    * ```
    */
   requireRole(...roles: string[]): void {
+    if (this.userId == null) {
+      throw new MindStudioError(
+        'No authenticated user',
+        'unauthenticated',
+        401,
+      );
+    }
     if (!this.hasRole(...roles)) {
       throw new MindStudioError(
-        `User does not have required role: ${roles.join(', ')}`,
+        `User has role(s) [${this.roles.join(', ') || 'none'}] but requires one of: [${roles.join(', ')}]`,
         'forbidden',
         403,
       );

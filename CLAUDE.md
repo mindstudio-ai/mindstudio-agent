@@ -162,9 +162,14 @@ const Memberships = db.defineTable<Membership>('memberships', {
 
 ### Reading data
 
+All read methods return lazy `Query` objects — nothing executes until `await`. Every read method (including `get()`, `findOne()`, `count()`, etc.) is batchable via `db.batch()`.
+
 ```typescript
 // Get by ID
 const order = await PurchaseOrders.get(orderId);
+
+// Get all rows
+const allOrders = await PurchaseOrders.toArray();
 
 // Filter — compiles to SQL WHERE when possible
 const active = await PurchaseOrders.filter(o => o.status === 'active');
@@ -225,11 +230,13 @@ const user = await Users.upsert('email', {
 });
 // → INSERT ... ON CONFLICT(email) DO UPDATE SET name=..., role=... RETURNING *
 
-// Delete
-await PurchaseOrders.remove(po.id);
+// Delete — remove() returns { deleted: boolean }, clear() returns count
+const { deleted } = await PurchaseOrders.remove(po.id);
 const removed = await PurchaseOrders.removeAll(o => o.status === 'rejected');
-await PurchaseOrders.clear();
+const cleared = await PurchaseOrders.clear();
 ```
+
+Write methods throw `MindStudioError` on failure: `push()` throws `insert_failed` if the insert returns no row, `update()` throws `row_not_found` (404) if the ID doesn't exist, `upsert()` throws `missing_conflict_key` if the conflict column is missing from the data.
 
 ### Batching reads and writes
 
@@ -267,14 +274,14 @@ db.ago(db.days(7) + db.hours(12)) // 7.5 days ago (composable)
 ```typescript
 import { auth, Roles } from '@mindstudio-ai/agent';
 
-// Current user
-const userId = auth.userId;
+// Current user (null if unauthenticated)
+const userId = auth.userId;         // string | null
 const myRoles = auth.roles;         // readonly string[]
 
 // Check roles (OR logic — true if user has ANY of the listed roles)
 if (auth.hasRole(Roles.admin, Roles.approver)) { ... }
 
-// Gate access — throws 403 if user lacks all listed roles
+// Gate access — throws 401 if no user, 403 if user lacks all listed roles
 auth.requireRole(Roles.admin);
 
 // Look up users by role
@@ -309,7 +316,7 @@ const { users } = await agent.resolveUsers(['user-1', 'user-2']);
 
 - **Predicate compilation** (`src/db/predicate.ts`): parses `fn.toString()` → tokenizer → recursive descent parser → SQL WHERE. Falls back to JS for unrecognized patterns.
 - **SQL generation** (`src/db/sql.ts`): uses `parameterize: false` on `queryAppDatabase` step, builds fully-formed SQL with inline escaped values. SQLite escaping (single quotes doubled). System columns stripped from writes. `@@user@@` prefix added/stripped for user-type columns.
-- **Query execution** (`src/db/query.ts`): `Query<T>` is immutable and lazy (implements `PromiseLike<T[]>`). Tries SQL fast path; if any predicate fails to compile, entire chain falls back to JS array operations on all rows.
+- **Query execution** (`src/db/query.ts`): `Query<T, TResult>` is immutable and lazy (implements `PromiseLike<TResult>`). The second type parameter defaults to `T[]` but changes for terminal methods (e.g., `first()` → `Query<T, T | null>`, `count()` → `Query<T, number>`). Terminal methods use a `postProcess` transform applied after row deserialization. All Query objects are batchable via `db.batch()` (except `every()` which stays async). Tries SQL fast path; if any predicate fails to compile, entire chain falls back to JS array operations on all rows.
 - **Mutation execution** (`src/db/mutation.ts`): `Mutation<T>` is lazy (implements `PromiseLike<T>`). Write methods (`push`, `update`, `upsert`, `remove`, `removeAll`, `clear`) return Mutations instead of Promises. When awaited standalone, behavior is identical. When passed to `db.batch()`, SQL is bundled into a single round trip. `removeAll` with JS-fallback predicates creates a non-batchable Mutation (works standalone, throws in `db.batch()`).
 - **Unique constraints**: Declared via `defineTable({ unique: [['email']] })`. Stored in `TableConfig.unique`. Schema sync (creating SQLite UNIQUE indexes) is handled by a separate platform service — the SDK only uses the declaration for `upsert()` validation (conflict keys must match a declared constraint) and generating `ON CONFLICT` SQL.
 - **Defaults**: Declared via `defineTable({ defaults: { status: 'pending' } })`. Applied client-side in `push()` and `upsert()` — spread before user data so explicit values override.
