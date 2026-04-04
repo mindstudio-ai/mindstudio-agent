@@ -20,6 +20,7 @@ export const instructions = `<instructions>
   - **Missing MindStudioError handling** — the SDK has structured errors with \`code\`, \`status\`, \`details\`. Catching generic \`Error\` loses actionable information. Always include \`MindStudioError\` handling in code examples.
   - **One-at-a-time db writes when batch exists** — N sequential \`update()\` or \`push()\` calls should be a single \`db.batch()\` call. One round trip instead of N.
   - **Hardcoded model IDs without context** — model IDs can change. When writing code with a specific model, include a comment noting which model it is and why it was chosen, so the caller can swap it later.
+  - **Adding a userId column to the auth users table** — \`auth.userId\` IS the row's \`id\` in the users table. The platform creates the row on login. Don't add a separate \`userId\` column — just use \`Users.get(auth.userId)\` to access the user's row.
   - Do not recommend using thread persistence. This is an advanced feature - if someone needs this they will discover it on their own.
   - Generate text is great for one-off text generation requests to models. For sustained conversations, conversations that require history, persistence, or multiple threads or tool use, recommend that the developer add an Agent interface to their MindStudio app and use that directly. They will understand what you mean by this.
   </anti_patterns>
