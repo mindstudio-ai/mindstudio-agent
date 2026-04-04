@@ -117,6 +117,11 @@ export function deserializeRow(
       } catch {
         result[key] = value;
       }
+    } else if (col?.type === 'boolean' && typeof value === 'number') {
+      result[key] = value !== 0;
+    } else if (col?.type === 'number' && typeof value === 'string') {
+      const num = Number(value);
+      result[key] = Number.isNaN(num) ? value : num;
     } else {
       result[key] = value;
     }
