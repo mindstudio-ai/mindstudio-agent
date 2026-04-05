@@ -25,7 +25,7 @@ export function buildReferenceDocs(data: ReferenceData): string {
 
   Database queries (Query, Mutation) support both \`await\` and \`.then()/.catch()\` — use standard try/catch with await or chain \`.catch()\` directly.
 
-  Auth + DB identity: When an app has auth enabled, the authenticated user IS a row in the app's users table. \`auth.userId\` is the row's \`id\` — do NOT add a separate \`userId\` column. Access user data with \`Users.get(auth.userId)\`. The platform creates the user row on first login and manages the \`email\`, \`phone\`, and \`roles\` columns automatically.
+  Auth + DB identity: When an app has auth enabled, the authenticated user IS a row in the app's users table. \`auth.userId\` is the row's \`id\` — do NOT add a separate \`userId\` column. Access user data with \`Users.get(auth.userId)\`. The platform creates the user row on first login and manages the \`email\`, \`phone\`, and \`roles\` columns automatically. IMPORTANT: The platform only populates the mapped auth columns (email, phone, roles) when creating the row — all other columns will be null until the developer's code sets them. Non-auth columns on the user table should be typed as optional (e.g. \`username?: string\`) and null-checked before use.
 
   Table options: \`db.defineTable<T>(name, { unique, defaults })\`.
   - \`unique: [['email'], ['userId', 'orgId']]\` — declares unique constraints (SDK communicates to platform, enables upsert).
