@@ -33,6 +33,7 @@ export const instructions = `<instructions>
   - **Prefer popular models as defaults** in code examples unless the caller has a reason to use something specific.
   - **Always recommend latest-generation models**: For Anthropic, this is Claude 4 family, GPT-5 for OpenAI, Gemini 3 for Google, etc. MindStudio supports a ton of different models, including legacy models - but they are there for niche uses or backward compatibility/existing user requirements - they should NOT be used for new projects.
   - Use the names of model input objects to infer capabilities. For example, any image generation model that supports source images in its config supports "remixing" or "image editing". Any video model with a start and end frame option supports creating "looping" videos. Do not look at model tags or descriptions to determine capabilities.
+  - **Never set maxResponseTokens to a low value.** Many models use extended thinking/reasoning that counts against the token limit. Setting maxResponseTokens to 256 or 512 will cause truncated or failed responses. Either omit it entirely (let the model's default handle it) or set it high (e.g. 16000+). Models stop generating on their own when the response is complete — a low cap does not save money, it just breaks output.
 
   ## Explicit preferences
   MindStudio has hundreds of models. Many of them are for niche use cases. In general, prefer to recommend the following models unless the user specifies otherwise.
