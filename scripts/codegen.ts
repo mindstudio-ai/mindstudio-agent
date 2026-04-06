@@ -590,7 +590,9 @@ function generateSnippets(steps: StepInfo[]): string {
   chunks.push(
     "export type MonacoSnippetFieldType = 'string' | 'number' | 'boolean' | 'array' | 'object' | string[];",
   );
-  chunks.push('export type MonacoSnippetField = [name: string, type: MonacoSnippetFieldType];');
+  chunks.push(
+    'export type MonacoSnippetField = [name: string, type: MonacoSnippetFieldType];',
+  );
   chunks.push('');
   chunks.push('export interface MonacoSnippet {');
   chunks.push('  fields: MonacoSnippetField[];');
@@ -642,9 +644,7 @@ function generateSnippets(steps: StepInfo[]): string {
 
   allMethods.sort((a, b) => a.method.localeCompare(b.method));
 
-  chunks.push(
-    'export const monacoSnippets: Record<string, MonacoSnippet> = {',
-  );
+  chunks.push('export const monacoSnippets: Record<string, MonacoSnippet> = {');
 
   for (const { method, schema, outputSchema } of allMethods) {
     const required = new Set(schema.required ?? []);
@@ -672,11 +672,10 @@ function generateSnippets(steps: StepInfo[]): string {
   // Block-type aliases: maps public method name → original step type name.
   // For the 2 renamed steps, consumers can use this to reverse-map.
   const aliasEntries = Object.entries(METHOD_ALIASES).map(
-    ([stepType, alias]) => `  ${JSON.stringify(alias)}: ${JSON.stringify(stepType)},`,
+    ([stepType, alias]) =>
+      `  ${JSON.stringify(alias)}: ${JSON.stringify(stepType)},`,
   );
-  chunks.push(
-    'export const blockTypeAliases: Record<string, string> = {',
-  );
+  chunks.push('export const blockTypeAliases: Record<string, string> = {');
   for (const entry of aliasEntries) {
     chunks.push(entry);
   }
@@ -738,14 +737,17 @@ function schemaToJsonSchema(
   }
 
   if (schema.anyOf) {
-    const resolved = schema.anyOf.map((s) => schemaToJsonSchema(s, definitions)).filter(Boolean);
+    const resolved = schema.anyOf
+      .map((s) => schemaToJsonSchema(s, definitions))
+      .filter(Boolean);
     if (resolved.length === 1) return resolved[0];
     return { anyOf: resolved };
   }
 
   if (schema.enum) {
     const base: Record<string, unknown> = { enum: schema.enum };
-    if (schema.type) base.type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
+    if (schema.type)
+      base.type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
     if (schema.description) base.description = schema.description;
     return base;
   }
@@ -773,21 +775,27 @@ function schemaToJsonSchema(
   }
 
   if (schema.type === 'object') {
-    const result: Record<string, unknown> = { type: 'object', properties: {}, required: [] };
+    const result: Record<string, unknown> = {
+      type: 'object',
+      properties: {},
+      required: [],
+    };
     if (schema.description) result.description = schema.description;
     return result;
   }
 
   if (schema.type === 'array') {
     const result: Record<string, unknown> = { type: 'array' };
-    if (schema.items) result.items = schemaToJsonSchema(schema.items, definitions);
+    if (schema.items)
+      result.items = schemaToJsonSchema(schema.items, definitions);
     if (schema.description) result.description = schema.description;
     return result;
   }
 
   // Primitive types
   const result: Record<string, unknown> = {};
-  if (schema.type) result.type = schema.type === 'integer' ? 'number' : schema.type;
+  if (schema.type)
+    result.type = schema.type === 'integer' ? 'number' : schema.type;
   if (schema.description) result.description = schema.description;
   return result;
 }
@@ -824,10 +832,18 @@ function generateMetadata(
     if (aliases) {
       for (const alias of aliases) {
         entries.push({ methodName: alias, stepType: step.stepType, step });
-        entries.push({ methodName: step.methodName, stepType: step.stepType, step });
+        entries.push({
+          methodName: step.methodName,
+          stepType: step.stepType,
+          step,
+        });
       }
     } else {
-      entries.push({ methodName: step.methodName, stepType: step.stepType, step });
+      entries.push({
+        methodName: step.methodName,
+        stepType: step.stepType,
+        step,
+      });
     }
   }
 
@@ -839,18 +855,26 @@ function generateMetadata(
     const description = step.operation.description ?? '';
     const usageNotes = step.operation['x-usage-notes'] ?? '';
 
-    const inputJsonSchema = schemaToJsonSchema(step.inputSchema, definitions) ?? {
+    const inputJsonSchema = schemaToJsonSchema(
+      step.inputSchema,
+      definitions,
+    ) ?? {
       type: 'object',
       properties: {},
     };
-    const outputJsonSchema = schemaToJsonSchema(step.outputSchema ?? undefined, definitions);
+    const outputJsonSchema = schemaToJsonSchema(
+      step.outputSchema ?? undefined,
+      definitions,
+    );
 
     chunks.push(`  ${JSON.stringify(methodName)}: {`);
     chunks.push(`    stepType: ${JSON.stringify(stepType)},`);
     chunks.push(`    description: ${JSON.stringify(description)},`);
     chunks.push(`    usageNotes: ${JSON.stringify(usageNotes)},`);
     chunks.push(`    inputSchema: ${JSON.stringify(inputJsonSchema)},`);
-    chunks.push(`    outputSchema: ${outputJsonSchema ? JSON.stringify(outputJsonSchema) : 'null'},`);
+    chunks.push(
+      `    outputSchema: ${outputJsonSchema ? JSON.stringify(outputJsonSchema) : 'null'},`,
+    );
     chunks.push('  },');
   }
 
@@ -1052,13 +1076,13 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     '- **OAuth third-party integrations** (Slack, Google, HubSpot, etc.): These are optional OAuth connectors from the MindStudio Connector Registry — for most tasks, use actions directly instead. If you need a third-party integration: call `listConnectors()` to browse services → `getConnectorAction(serviceId, actionId)` for input fields → execute via `runFromConnectorRegistry`. Requires an OAuth connection set up in MindStudio first — call `listConnections()` to check available connections.',
   );
   lines.push(
-    '- **Pre-built agents**: Call `listAgents()` to see what\'s available → `runAgent({ appId })` to execute one. **Important:** Not all agents are configured for API use. Do not try to run an agent just because it appears in the list — only run agents the user specifically asks you to run.',
+    "- **Pre-built agents**: Call `listAgents()` to see what's available → `runAgent({ appId })` to execute one. **Important:** Not all agents are configured for API use. Do not try to run an agent just because it appears in the list — only run agents the user specifically asks you to run.",
   );
   lines.push(
     '- **Model selection**: Call `listModelsSummary()` or `listModelsSummaryByType("llm_chat")` to browse models, then pass the model ID as `modelOverride.model` to actions like `generateText`. Use the summary endpoints (not `listModels`) to keep token usage low.',
   );
   lines.push(
-    '- **Cost estimation**: AI-powered actions (text generation, image generation, video, audio, etc.) cost money. Call `estimateStepCost(stepType, stepInput)` before running these and confirm with the user before proceeding — unless they\'ve explicitly given permission to go ahead. Non-AI actions (data lookups, OAuth connectors, etc.) are generally free.',
+    "- **Cost estimation**: AI-powered actions (text generation, image generation, video, audio, etc.) cost money. Call `estimateStepCost(stepType, stepInput)` before running these and confirm with the user before proceeding — unless they've explicitly given permission to go ahead. Non-AI actions (data lookups, OAuth connectors, etc.) are generally free.",
   );
   lines.push('');
 
@@ -1087,14 +1111,10 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('```bash');
   lines.push('# Execute with named flags (kebab-case)');
-  lines.push(
-    'mindstudio generate-image --prompt "A mountain landscape"',
-  );
+  lines.push('mindstudio generate-image --prompt "A mountain landscape"');
   lines.push('');
   lines.push('# Execute with JSON input (JSON5-tolerant)');
-  lines.push(
-    "mindstudio generate-image '{prompt: \"A mountain landscape\"}'",
-  );
+  lines.push('mindstudio generate-image \'{prompt: "A mountain landscape"}\'');
   lines.push('');
   lines.push('# Extract a single output field');
   lines.push(
@@ -1111,9 +1131,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('mindstudio info generate-image');
   lines.push('');
   lines.push('# Run via npx without installing');
-  lines.push(
-    'npx @mindstudio-ai/agent generate-text --message "Hello"',
-  );
+  lines.push('npx @mindstudio-ai/agent generate-text --message "Hello"');
   lines.push('```');
   lines.push('');
   lines.push(
@@ -1131,7 +1149,9 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('### Authentication');
   lines.push('');
   lines.push('```bash');
-  lines.push('# Interactive login (opens browser, saves key to ~/.mindstudio/config.json)');
+  lines.push(
+    '# Interactive login (opens browser, saves key to ~/.mindstudio/config.json)',
+  );
   lines.push('mindstudio login');
   lines.push('');
   lines.push('# Check current auth status');
@@ -1213,9 +1233,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push('```typescript');
-  lines.push(
-    "const { models } = await agent.listModelsByType('llm_chat');",
-  );
+  lines.push("const { models } = await agent.listModelsByType('llm_chat');");
   lines.push('const model = models.find(m => m.name.includes("Gemini"));');
   lines.push('');
   lines.push('const { content } = await agent.generateText({');
@@ -1223,7 +1241,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('  modelOverride: {');
   lines.push('    model: model.id,');
   lines.push('    temperature: 0.7,');
-  lines.push('    maxResponseTokens: 1024,');
+  lines.push('    maxResponseTokens: 16000,');
   lines.push('  },');
   lines.push('});');
   lines.push('```');
@@ -1341,19 +1359,21 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('```typescript');
   lines.push('const result = await agent.executeStepBatch([');
-  lines.push(
-    "  { stepType: 'generateImage', step: { prompt: 'a sunset' } },",
-  );
-  lines.push(
-    "  { stepType: 'textToSpeech', step: { text: 'hello world' } },",
-  );
+  lines.push("  { stepType: 'generateImage', step: { prompt: 'a sunset' } },");
+  lines.push("  { stepType: 'textToSpeech', step: { text: 'hello world' } },");
   lines.push('], { appId?, threadId? });');
   lines.push('');
   lines.push('// Result:');
-  lines.push('result.results;          // BatchStepResult[] — same order as input');
+  lines.push(
+    'result.results;          // BatchStepResult[] — same order as input',
+  );
   lines.push('result.results[0].stepType;  // string');
-  lines.push('result.results[0].output;    // object | undefined (step output on success)');
-  lines.push('result.results[0].error;     // string | undefined (error message on failure)');
+  lines.push(
+    'result.results[0].output;    // object | undefined (step output on success)',
+  );
+  lines.push(
+    'result.results[0].error;     // string | undefined (error message on failure)',
+  );
   lines.push(
     'result.results[0].billingCost; // number | undefined (cost on success)',
   );
@@ -1564,8 +1584,12 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('```typescript');
   lines.push('{');
   lines.push('  connections: {');
-  lines.push('    id: string;       // Connection ID to pass to connector actions');
-  lines.push('    provider: string; // Integration provider (e.g. slack, google)');
+  lines.push(
+    '    id: string;       // Connection ID to pass to connector actions',
+  );
+  lines.push(
+    '    provider: string; // Integration provider (e.g. slack, google)',
+  );
   lines.push('    name: string;     // Display name or account identifier');
   lines.push('  }[]');
   lines.push('}');
@@ -1583,7 +1607,9 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('```');
   lines.push('');
   lines.push('- `stepType`: string — The action name (e.g. `"generateText"`).');
-  lines.push('- `step`: object — Optional action input parameters for more accurate estimates.');
+  lines.push(
+    '- `step`: object — Optional action input parameters for more accurate estimates.',
+  );
   lines.push(
     '- `options`: `{ appId?: string, workflowId?: string }` — Optional context for pricing.',
   );
@@ -1596,8 +1622,12 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('    eventType: string;       // Billing event type');
   lines.push('    label: string;           // Human-readable cost label');
   lines.push('    unitPrice: number;       // Price per unit in billing units');
-  lines.push('    unitType: string;        // What constitutes a unit (e.g. "token", "request")');
-  lines.push('    estimatedCost?: number;  // Estimated total cost, or null if not estimable');
+  lines.push(
+    '    unitType: string;        // What constitutes a unit (e.g. "token", "request")',
+  );
+  lines.push(
+    '    estimatedCost?: number;  // Estimated total cost, or null if not estimable',
+  );
   lines.push('    quantity: number;        // Number of billable units');
   lines.push('  }[]');
   lines.push('}');
@@ -1618,7 +1648,9 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push('```typescript');
-  lines.push("await agent.changeProfilePicture('https://example.com/avatar.png');");
+  lines.push(
+    "await agent.changeProfilePicture('https://example.com/avatar.png');",
+  );
   lines.push('```');
   lines.push('');
   lines.push('#### `uploadFile(content, options)`');
@@ -1628,12 +1660,18 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('```typescript');
   lines.push("import { readFileSync } from 'fs';");
-  lines.push("const { url } = await agent.uploadFile(readFileSync('photo.png'), { extension: 'png', type: 'image/png' });");
+  lines.push(
+    "const { url } = await agent.uploadFile(readFileSync('photo.png'), { extension: 'png', type: 'image/png' });",
+  );
   lines.push('```');
   lines.push('');
   lines.push('- `content`: `Buffer | Uint8Array` — The file content.');
-  lines.push('- `options.extension`: string — File extension without the dot (e.g. `"png"`, `"jpg"`, `"mp4"`).');
-  lines.push('- `options.type`: string (optional) — MIME type (e.g. `"image/png"`). Determines which CDN subdomain is used.');
+  lines.push(
+    '- `options.extension`: string — File extension without the dot (e.g. `"png"`, `"jpg"`, `"mp4"`).',
+  );
+  lines.push(
+    '- `options.type`: string (optional) — MIME type (e.g. `"image/png"`). Determines which CDN subdomain is used.',
+  );
   lines.push('');
   lines.push('Output: `{ url: string }` — The permanent public CDN URL.');
   lines.push('');
