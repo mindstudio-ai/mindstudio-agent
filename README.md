@@ -13,12 +13,14 @@ Generate text, images, video, and audio. Scrape the web. Search Google. Post to 
 No dependencies required — downloads a standalone binary:
 
 **macOS / Linux:**
+
 ```bash
 curl -fsSL https://msagent.ai/install.sh | bash
 mindstudio login
 ```
 
 **Windows (PowerShell):**
+
 ```
 irm https://msagent.ai/install.ps1 | iex
 mindstudio login
@@ -114,6 +116,7 @@ npx @mindstudio-ai/agent generate-text --message "Hello"
 ### MCP server
 
 **Claude Code** (one-time setup):
+
 ```bash
 claude mcp add mindstudio -- mindstudio mcp
 ```
@@ -137,6 +140,7 @@ That's it — Claude Code will discover the MCP server on next launch. Auth is p
 ```
 
 **With npx** (no install needed):
+
 ```json
 {
   "mcpServers": {
@@ -175,6 +179,7 @@ echo "I need to connect to HubSpot and create a contact" | mindstudio ask
 **For AI agents:** Shell out to `mindstudio ask "..."` from any agent (Remy, Claude Code, custom agents) to get SDK expertise on demand. The response is clean markdown on stdout, ready to parse. Or use the `ask` MCP tool directly if connected via MCP.
 
 **Example questions:**
+
 - `"what actions are available for image generation?"` — discovery
 - `"give me TypeScript code to generate an image with DALL-E 3"` — resolution with real model IDs and config
 - `"what connectors could I configure?"` — OAuth service discovery
@@ -222,18 +227,19 @@ Direct access to models from every major provider — all through a single API k
 const { models } = await agent.listModelsSummary();
 
 // Filter by type
-const { models: imageModels } = await agent.listModelsSummaryByType('image_generation');
+const { models: imageModels } =
+  await agent.listModelsSummaryByType('image_generation');
 
 // Use a specific model
 const { models: chatModels } = await agent.listModelsByType('llm_chat');
-const gemini = chatModels.find(m => m.name.includes('Gemini'));
+const gemini = chatModels.find((m) => m.name.includes('Gemini'));
 
 const { content } = await agent.generateText({
   message: 'Hello',
   modelOverride: {
     model: gemini.id,
     temperature: 0.7,
-    maxResponseTokens: 1024,
+    maxResponseTokens: 16000,
   },
 });
 ```
@@ -247,7 +253,10 @@ Model types: `llm_chat`, `image_generation`, `video_generation`, `video_analysis
 ```typescript
 // Browse connectors and their actions
 const { services } = await agent.listConnectors();
-const { action } = await agent.getConnectorAction('slack', 'slack/send-message');
+const { action } = await agent.getConnectorAction(
+  'slack',
+  'slack/send-message',
+);
 
 // Check which services are connected in your org
 const { connections } = await agent.listConnections();
@@ -267,21 +276,21 @@ Connectors require the user to connect to the third-party service in MindStudio 
 
 Every action has a dedicated typed method. A few highlights:
 
-| Method | Description |
-| --- | --- |
-| `generateText()` | Send a message to any AI model |
-| `generateImage()` | Generate an image from a prompt |
-| `generateVideo()` | Generate a video from a prompt |
-| `generateAsset()` | Generate an HTML/PDF/PNG/video asset |
-| `analyzeImage()` | Analyze an image with a vision model |
-| `textToSpeech()` | Convert text to speech |
-| `transcribeAudio()` | Transcribe audio to text |
-| `scrapeUrl()` | Scrape a web page |
-| `searchGoogle()` | Search Google |
-| `httpRequest()` | Make an HTTP request |
-| `sendEmail()` | Send an email |
-| `postToSlackChannel()` | Post to a Slack channel |
-| `runPackagedWorkflow()` | Run another MindStudio workflow |
+| Method                  | Description                          |
+| ----------------------- | ------------------------------------ |
+| `generateText()`        | Send a message to any AI model       |
+| `generateImage()`       | Generate an image from a prompt      |
+| `generateVideo()`       | Generate a video from a prompt       |
+| `generateAsset()`       | Generate an HTML/PDF/PNG/video asset |
+| `analyzeImage()`        | Analyze an image with a vision model |
+| `textToSpeech()`        | Convert text to speech               |
+| `transcribeAudio()`     | Transcribe audio to text             |
+| `scrapeUrl()`           | Scrape a web page                    |
+| `searchGoogle()`        | Search Google                        |
+| `httpRequest()`         | Make an HTTP request                 |
+| `sendEmail()`           | Send an email                        |
+| `postToSlackChannel()`  | Post to a Slack channel              |
+| `runPackagedWorkflow()` | Run another MindStudio workflow      |
 
 ...and 130+ more for Google Docs/Sheets/Calendar, YouTube, LinkedIn, HubSpot, Airtable, Notion, Coda, Telegram, media processing, PII detection, and more.
 
@@ -397,14 +406,17 @@ import { db, auth, Roles, resolveUser, User } from '@mindstudio-ai/agent';
 const Orders = db.defineTable<Order>('orders');
 
 // Query with a chainable API
-const pending = await Orders
-  .filter(o => o.status === 'pending')
-  .sortBy(o => o.createdAt)
+const pending = await Orders.filter((o) => o.status === 'pending')
+  .sortBy((o) => o.createdAt)
   .reverse()
   .take(20);
 
 // Write
-const order = await Orders.push({ item: 'Laptop', amount: 999, status: 'pending' });
+const order = await Orders.push({
+  item: 'Laptop',
+  amount: 999,
+  status: 'pending',
+});
 await Orders.update(order.id, { status: 'approved' });
 
 // Role-based access control
@@ -457,7 +469,7 @@ Every result includes optional billing metadata:
 
 ```typescript
 const result = await agent.generateImage({ prompt: 'A sunset' });
-console.log(result.$billingCost);   // cost in credits for this call
+console.log(result.$billingCost); // cost in credits for this call
 console.log(result.$billingEvents); // itemized billing events
 ```
 
@@ -471,8 +483,8 @@ try {
 } catch (err) {
   if (err instanceof MindStudioError) {
     console.error(err.message); // Human-readable message
-    console.error(err.code);    // "invalid_step_config", "api_error", "call_cap_exceeded", etc.
-    console.error(err.status);  // HTTP status (400, 401, 429, etc.)
+    console.error(err.code); // "invalid_step_config", "api_error", "call_cap_exceeded", etc.
+    console.error(err.status); // HTTP status (400, 401, 429, etc.)
     console.error(err.details); // Raw API error body
   }
 }
@@ -567,6 +579,7 @@ Options:
 Method names use kebab-case on the CLI (`generate-image`), though camelCase (`generateImage`) is also accepted. Typos get a "did you mean?" suggestion. Parameter flags are also kebab-case (`--video-url` for `videoUrl`).
 
 Input can be provided as:
+
 - **Named flags**: `--prompt "a sunset" --mode "background"`
 - **JSON argument**: `'{"prompt": "a sunset"}'` (JSON5-tolerant: unquoted keys, single quotes, trailing commas)
 - **Piped stdin**: `echo '{"prompt": "a sunset"}' | mindstudio generate-image`
@@ -641,6 +654,7 @@ Or configure your MCP client (standalone binary or npx):
 ```
 
 The MCP server:
+
 - Uses stdio transport (JSON-RPC 2.0)
 - Creates one agent per session with automatic thread reuse
 - Returns structured JSON results for each tool call
