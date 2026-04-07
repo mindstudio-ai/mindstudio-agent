@@ -14,6 +14,8 @@ export const MindStudioAgent = _MindStudioAgent as unknown as {
 
 export { MindStudioError } from './errors.js';
 export { AuthContext, Roles } from './auth/index.js';
+export { runWithContext, getRequestContext } from './context.js';
+export type { RequestContext } from './context.js';
 export type { Db, DefineTableOptions, Table, Query, Predicate, Accessor, PushInput, UpdateInput, SystemFields } from './db/index.js';
 export type {
   AgentOptions,

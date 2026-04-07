@@ -1,5 +1,6 @@
 import { request, type HttpClientConfig } from './http.js';
 import { MindStudioError } from './errors.js';
+import { getRequestContext } from './context.js';
 import { RateLimiter, type AuthType } from './rate-limit.js';
 import { loadConfig, type MindStudioConfig } from './config.js';
 import { AuthContext } from './auth/index.js';
@@ -104,15 +105,46 @@ export class MindStudioAgent {
   private _authType: AuthType;
 
   /**
-   * @internal Resolve the current auth token. For internal (CALLBACK_TOKEN)
-   * auth, re-reads the env var each time so that long-lived singleton
-   * instances pick up token rotations from the host process.
+   * @internal Resolve the current auth token. Checks ALS request context
+   * first, then CALLBACK_TOKEN env var, then static config token.
    */
   private get _token(): string {
+    const rctx = getRequestContext();
+    if (rctx?.callbackToken) return rctx.callbackToken;
     if (this._authType === 'internal' && process.env.CALLBACK_TOKEN) {
       return process.env.CALLBACK_TOKEN;
     }
     return this._httpConfig.token;
+  }
+
+  /**
+   * @internal HTTP config with ALS-aware baseUrl and token resolution.
+   * Used instead of `_httpConfig` at all `request()` call sites.
+   */
+  private get _currentHttpConfig(): HttpClientConfig {
+    const rctx = getRequestContext();
+    if (rctx?.remoteHostname) {
+      return { ...this._httpConfig, baseUrl: rctx.remoteHostname, token: this._token };
+    }
+    return this._httpConfig;
+  }
+
+  /**
+   * @internal Stream ID with ALS-aware resolution.
+   */
+  private get _currentStreamId(): string | undefined {
+    return getRequestContext()?.streamId ?? this._streamId;
+  }
+
+  /**
+   * @internal Get resolved app context from ALS or instance cache.
+   */
+  private _getContext(): AppContextResult | undefined {
+    const rctx = getRequestContext();
+    if (rctx?.auth && rctx?.databases) {
+      return { auth: rctx.auth, databases: rctx.databases, authConfig: rctx.authConfig };
+    }
+    return this._context;
   }
 
   constructor(options: AgentOptions = {}) {
@@ -175,7 +207,7 @@ export class MindStudioAgent {
     }
 
     const threadId =
-      options?.threadId ?? (this._reuseThreadId ? this._threadId : undefined);
+      options?.threadId ?? (this._reuseThreadId && !getRequestContext() ? this._threadId : undefined);
 
     const { data, headers } = await request<{
       output?: TOutput;
@@ -184,7 +216,7 @@ export class MindStudioAgent {
       step,
       ...(options?.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
-      ...(this._streamId != null && { streamId: this._streamId }),
+      ...(this._currentStreamId != null && { streamId: this._currentStreamId }),
     });
 
     let output: TOutput;
@@ -206,7 +238,7 @@ export class MindStudioAgent {
     }
 
     const returnedThreadId = headers.get('x-mindstudio-thread-id') ?? '';
-    if (this._reuseThreadId && returnedThreadId) {
+    if (this._reuseThreadId && returnedThreadId && !getRequestContext()) {
       this._threadId = returnedThreadId;
     }
 
@@ -214,7 +246,7 @@ export class MindStudioAgent {
     // If no explicit appId was set, store the one from the first API response
     // so that subsequent ensureContext() calls can use it.
     const returnedAppId = headers.get('x-mindstudio-app-id');
-    if (!this._appId && returnedAppId) {
+    if (!this._appId && returnedAppId && !getRequestContext()) {
       this._appId = returnedAppId;
     }
 
@@ -247,14 +279,14 @@ export class MindStudioAgent {
     options: StepExecutionOptions & { onLog: (event: StepLogEvent) => void },
   ): Promise<StepExecutionResult<TOutput>> {
     const threadId =
-      options.threadId ?? (this._reuseThreadId ? this._threadId : undefined);
+      options.threadId ?? (this._reuseThreadId && !getRequestContext() ? this._threadId : undefined);
 
-    const url = `${this._httpConfig.baseUrl}/developer/v2/steps/${stepType}/execute`;
+    const url = `${this._currentHttpConfig.baseUrl}/developer/v2/steps/${stepType}/execute`;
     const body = {
       step,
       ...(options.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
-      ...(this._streamId != null && { streamId: this._streamId }),
+      ...(this._currentStreamId != null && { streamId: this._currentStreamId }),
     };
 
     await this._httpConfig.rateLimiter.acquire();
@@ -423,12 +455,12 @@ export class MindStudioAgent {
       // Process headers — same as non-streaming path
       const returnedThreadId =
         headers.get('x-mindstudio-thread-id') ?? '';
-      if (this._reuseThreadId && returnedThreadId) {
+      if (this._reuseThreadId && returnedThreadId && !getRequestContext()) {
         this._threadId = returnedThreadId;
       }
 
       const returnedAppId = headers.get('x-mindstudio-app-id');
-      if (!this._appId && returnedAppId) {
+      if (!this._appId && returnedAppId && !getRequestContext()) {
         this._appId = returnedAppId;
       }
 
@@ -467,7 +499,7 @@ export class MindStudioAgent {
     options?: ExecuteStepBatchOptions,
   ): Promise<ExecuteStepBatchResult> {
     const threadId =
-      options?.threadId ?? (this._reuseThreadId ? this._threadId : undefined);
+      options?.threadId ?? (this._reuseThreadId && !getRequestContext() ? this._threadId : undefined);
 
     const { data } = await request<{
       results: Array<{
@@ -522,7 +554,7 @@ export class MindStudioAgent {
       }),
     );
 
-    if (this._reuseThreadId && data.threadId) {
+    if (this._reuseThreadId && data.threadId && !getRequestContext()) {
       this._threadId = data.threadId;
     }
 
@@ -602,7 +634,7 @@ export class MindStudioAgent {
     });
 
     const token = data.callbackToken;
-    const pollUrl = `${this._httpConfig.baseUrl}/developer/v2/agents/run/poll/${token}`;
+    const pollUrl = `${this._currentHttpConfig.baseUrl}/developer/v2/agents/run/poll/${token}`;
 
     // Poll until complete or error
     while (true) {
@@ -804,14 +836,15 @@ export class MindStudioAgent {
    * ```
    */
   stream = async (data: string | Record<string, unknown>): Promise<void> => {
-    if (!this._streamId) return;
+    const streamId = this._currentStreamId;
+    if (!streamId) return;
 
-    const url = `${this._httpConfig.baseUrl}/_internal/v2/stream-chunk`;
+    const url = `${this._currentHttpConfig.baseUrl}/_internal/v2/stream-chunk`;
 
     const body =
       typeof data === 'string'
-        ? { streamId: this._streamId, type: 'token', text: data }
-        : { streamId: this._streamId, type: 'data', data };
+        ? { streamId, type: 'token', text: data }
+        : { streamId, type: 'data', data };
 
     const res = await fetch(url, {
       method: 'POST',
@@ -854,6 +887,12 @@ export class MindStudioAgent {
    * ```
    */
   get auth(): AuthContext {
+    // ALS mode — read from request-scoped context
+    const rctx = getRequestContext();
+    if (rctx?.auth) {
+      return new AuthContext(rctx.auth);
+    }
+
     // In sandbox mode, re-read globalThis.ai.auth on every access so that
     // persistent workers pick up fresh identity on each method invocation.
     // The platform sets globalThis.ai before each call.
@@ -897,6 +936,11 @@ export class MindStudioAgent {
    * ```
    */
   get db(): Db {
+    // ALS mode — always use lazy proxy (context comes from request store)
+    if (getRequestContext()) {
+      return this._createLazyDb();
+    }
+
     if (!this._db) {
       // Try sandbox hydration lazily — global.ai may have been set after
       // the constructor ran (e.g. ESM imports hoist before inline code)
@@ -932,7 +976,10 @@ export class MindStudioAgent {
    * ```
    */
   async ensureContext(): Promise<void> {
-    // Already hydrated — nothing to do
+    // ALS mode — context comes from the request store, no fetch needed
+    if (this._getContext()) return;
+
+    // Already hydrated on instance — nothing to do
     if (this._context) return;
 
     // Deduplicate concurrent calls: if a fetch is already in-flight,
@@ -989,6 +1036,9 @@ export class MindStudioAgent {
    * - `ai.databases`: [{ id, name, tables[] }]
    */
   private _trySandboxHydration(): void {
+    // Skip when running in ALS mode — context comes from the request store
+    if (getRequestContext()) return;
+
     const ai = (globalThis as Record<string, unknown>).ai as
       | {
           auth?: AppContextResult['auth'];
@@ -1018,7 +1068,7 @@ export class MindStudioAgent {
     databaseId: string,
     queries: { sql: string; params?: unknown[] }[],
   ): Promise<{ rows: unknown[]; changes: number }[]> {
-    const url = `${this._httpConfig.baseUrl}/_internal/v2/db/query`;
+    const url = `${this._currentHttpConfig.baseUrl}/_internal/v2/db/query`;
 
     const res = await fetch(url, {
       method: 'POST',
@@ -1076,7 +1126,7 @@ export class MindStudioAgent {
    */
   private async _syncRoles(userId: string, roles: unknown): Promise<void> {
     try {
-      const url = `${this._httpConfig.baseUrl}/_internal/v2/auth/sync-user`;
+      const url = `${this._currentHttpConfig.baseUrl}/_internal/v2/auth/sync-user`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -1131,7 +1181,8 @@ export class MindStudioAgent {
             await agent.ensureContext();
 
             // Retroactively set managed columns + role sync once context is available
-            const ac = agent._context!.authConfig;
+            const ctx = agent._getContext()!;
+            const ac = ctx.authConfig;
             if (ac && ac.table === name && !tableConfig.managedColumns) {
               tableConfig.managedColumns = ac.columns;
               if (ac.columns.roles) {
@@ -1139,7 +1190,7 @@ export class MindStudioAgent {
               }
             }
 
-            const databases = agent._context!.databases;
+            const databases = ctx.databases;
             let targetDb;
 
             if (databaseHint) {
@@ -1172,7 +1223,13 @@ export class MindStudioAgent {
       batch: ((...queries: PromiseLike<unknown>[]) => {
         return (async () => {
           await agent.ensureContext();
-          return agent._db!.batch(...queries);
+          const resolvedDb = agent._db ?? createDb(
+            agent._getContext()!.databases,
+            agent._executeDbBatch.bind(agent),
+            agent._getContext()!.authConfig,
+            agent._syncRoles.bind(agent),
+          );
+          return resolvedDb.batch(...queries);
         })();
       }) as Db['batch'],
     };
@@ -1279,14 +1336,14 @@ export class MindStudioAgent {
 
   /** Update the display name of the authenticated user/agent. */
   async changeName(displayName: string): Promise<void> {
-    await request(this._httpConfig, 'POST', '/account/change-name', {
+    await request(this._currentHttpConfig, 'POST', '/account/change-name', {
       name: displayName,
     });
   }
 
   /** Update the profile picture of the authenticated user/agent. */
   async changeProfilePicture(url: string): Promise<void> {
-    await request(this._httpConfig, 'POST', '/account/change-profile-picture', {
+    await request(this._currentHttpConfig, 'POST', '/account/change-profile-picture', {
       url,
     });
   }
