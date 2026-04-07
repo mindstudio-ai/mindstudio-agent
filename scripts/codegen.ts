@@ -1084,6 +1084,9 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push(
     "- **Cost estimation**: AI-powered actions (text generation, image generation, video, audio, etc.) cost money. Call `estimateStepCost(stepType, stepInput)` before running these and confirm with the user before proceeding — unless they've explicitly given permission to go ahead. Non-AI actions (data lookups, OAuth connectors, etc.) are generally free.",
   );
+  lines.push(
+    '- **Task agents**: For multi-step tasks that need autonomous tool use (research, content creation, data enrichment), use `runTask()`. Provide a prompt, input, SDK action names as tools, and a structured output example. The platform runs a tool-use loop — calling the model, executing actions, feeding results back — until structured output is produced. Example: `runTask({ prompt: "Find info about this restaurant", input: { name: "Tartine" }, tools: ["searchGoogle", "fetchUrl"], structuredOutputExample: \'{"name":"...","url":"..."}\', model: "claude-4-6-sonnet" })`.',
+  );
   lines.push('');
 
   // --- Install ---

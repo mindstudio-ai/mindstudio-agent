@@ -27,6 +27,8 @@ export function buildReferenceDocs(data: ReferenceData): string {
 
   Auth + DB identity: When an app has auth enabled, the authenticated user IS a row in the app's users table. \`auth.userId\` is the row's \`id\` — do NOT add a separate \`userId\` column. Access user data with \`Users.get(auth.userId)\`. The platform creates the user row on first login and manages the \`email\`, \`phone\`, and \`roles\` columns automatically. IMPORTANT: The platform only populates the mapped auth columns (email, phone, roles) when creating the row — all other columns will be null until the developer's code sets them. Non-auth columns on the user table should be typed as optional (e.g. \`username?: string\`) and null-checked before use.
 
+  Task agents: For multi-step tasks requiring autonomous tool use, use \`runTask()\`. Provide a prompt, input, SDK action names as tools (with optional default overrides), a \`structuredOutputExample\`, and a model. The platform runs a tool-use loop and returns structured output. Tools can include any SDK action — e.g. \`['searchGoogle', 'fetchUrl', { method: 'generateImage', defaults: { imageModelOverride: { model: 'seedream-4.5' } } }]\`. Supports SSE streaming via \`onEvent\` callback.
+
   Table options: \`db.defineTable<T>(name, { unique, defaults })\`.
   - \`unique: [['email'], ['userId', 'orgId']]\` — declares unique constraints (SDK communicates to platform, enables upsert).
   - \`defaults: { status: 'pending' }\` — client-side defaults applied in push() and upsert().

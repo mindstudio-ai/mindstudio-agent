@@ -50,6 +50,13 @@ export type {
   ExecuteStepBatchOptions,
   ExecuteStepBatchResult,
 } from './types.js';
+export type {
+  TaskToolConfig,
+  RunTaskOptions,
+  RunTaskResult,
+  TaskEvent,
+  TaskUsage,
+} from './task/index.js';
 
 // Re-export all generated types
 export * from './generated/types.js';
