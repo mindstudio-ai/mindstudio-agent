@@ -445,6 +445,8 @@ export interface ExecuteStepBatchOptions {
   appId?: string;
   /** Thread ID for state persistence. If omitted, an ephemeral thread is created. */
   threadId?: string;
+  /** Progress callback, called on each poll while the batch is running. */
+  onProgress?: (completedSteps: number, totalSteps: number) => void;
 }
 
 /** Result of {@link MindStudioAgent.executeStepBatch}. */
