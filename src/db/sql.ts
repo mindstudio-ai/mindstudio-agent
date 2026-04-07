@@ -122,6 +122,13 @@ export function deserializeRow(
     } else if (col?.type === 'number' && typeof value === 'string') {
       const num = Number(value);
       result[key] = Number.isNaN(num) ? value : num;
+    } else if (!col && typeof value === 'string' && (value[0] === '[' || value[0] === '{')) {
+      // No column schema — try to parse as JSON (SQLite stores arrays/objects as text)
+      try {
+        result[key] = JSON.parse(value);
+      } catch {
+        result[key] = value;
+      }
     } else {
       result[key] = value;
     }

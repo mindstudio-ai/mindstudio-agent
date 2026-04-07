@@ -1205,6 +1205,14 @@ export class MindStudioAgent {
               );
             }
 
+            // Backfill column schema for deserialization (JSON, boolean, user-type handling)
+            if (tableConfig.columns.length === 0 && targetDb) {
+              const tableSchema = targetDb.tables.find((t) => t.name === name);
+              if (tableSchema) {
+                tableConfig.columns = tableSchema.schema;
+              }
+            }
+
             const databaseId = targetDb?.id ?? databases[0]?.id ?? '';
             return agent._executeDbBatch(databaseId, queries);
           },
