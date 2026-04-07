@@ -5,6 +5,13 @@ import { RateLimiter, type AuthType } from './rate-limit.js';
 import { loadConfig, type MindStudioConfig } from './config.js';
 import { AuthContext } from './auth/index.js';
 import { createDb, Table, type Db, type DefineTableOptions, type TableConfig } from './db/index.js';
+import {
+  buildTaskRequestBody,
+  runTaskPoll,
+  runTaskStream,
+  type RunTaskOptions,
+  type RunTaskResult,
+} from './task/index.js';
 import type {
   AgentOptions,
   StepExecutionOptions,
@@ -626,6 +633,32 @@ export class MindStudioAgent {
         threadId: resultThreadId,
       };
     }
+  }
+
+  /**
+   * Run a task agent — a multi-step tool-use loop that composes SDK actions
+   * to produce structured output. The model receives the prompt and tools,
+   * calls actions as needed, and returns JSON matching the output example.
+   *
+   * ```ts
+   * const result = await agent.runTask<{ name: string; url: string }>({
+   *   prompt: 'Find canonical info for this restaurant.',
+   *   input: { restaurantName: 'Tartine Bakery SF' },
+   *   tools: ['searchGoogle', 'fetchUrl'],
+   *   structuredOutputExample: JSON.stringify({ name: 'Tartine Bakery', url: 'https://tartinebakery.com' }),
+   *   model: 'claude-4-6-sonnet',
+   * });
+   * console.log(result.output.name); // 'Tartine Bakery'
+   * ```
+   */
+  async runTask<T = unknown>(
+    options: RunTaskOptions,
+  ): Promise<RunTaskResult<T>> {
+    const body = buildTaskRequestBody(options);
+    if (options.onEvent) {
+      return runTaskStream<T>(this._currentHttpConfig, body, options.onEvent);
+    }
+    return runTaskPoll<T>(this._currentHttpConfig, body);
   }
 
   /**

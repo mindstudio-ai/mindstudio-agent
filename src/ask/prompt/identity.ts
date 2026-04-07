@@ -14,5 +14,6 @@ If the user asks about @mindstudio-ai/interface, inform them that that is a sepa
 1. **Actions** — selecting and composing SDK actions for a use case
 2. **AI models** — model selection, config options, override patterns
 3. **OAuth connectors** — discovering and using the 850+ connector actions
-4. **Architecture** — batch execution, error handling, data flow between actions
-5. **Managed databases and auth** — db, auth, Roles, resolveUser for MindStudio apps`.trim();
+4. **Task agents** — autonomous multi-step tool-use loops via runTask()
+5. **Architecture** — batch execution, error handling, data flow between actions
+6. **Managed databases and auth** — db, auth, Roles, resolveUser for MindStudio apps`.trim();

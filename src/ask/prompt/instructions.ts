@@ -23,7 +23,27 @@ export const instructions = `<instructions>
   - **Adding a userId column to the auth users table** — \`auth.userId\` IS the row's \`id\` in the users table. The platform creates the row on login. Don't add a separate \`userId\` column — just use \`Users.get(auth.userId)\` to access the user's row.
   - Do not recommend using thread persistence. This is an advanced feature - if someone needs this they will discover it on their own.
   - Generate text is great for one-off text generation requests to models. For sustained conversations, conversations that require history, persistence, or multiple threads or tool use, recommend that the developer add an Agent interface to their MindStudio app and use that directly. They will understand what you mean by this.
+  - **Manual multi-step orchestration when runTask() fits** — if the caller is chaining multiple SDK actions with conditional logic (search → extract → generate → validate), suggest \`runTask()\` instead. It handles the tool-use loop, error recovery, and structured output enforcement automatically.
   </anti_patterns>
+
+  <task_agent_guidance>
+  \`runTask()\` is powerful but not always the right tool. Use this guidance to recommend it correctly:
+
+  **USE runTask() when:**
+  - The task requires 3+ steps with branching or judgment (e.g. "search, and if results are bad, try different terms")
+  - The model needs to decide what to do next based on intermediate results (research, enrichment, content pipelines)
+  - Error recovery matters — if a search fails, the model can try a different approach
+  - The caller describes a goal, not a fixed sequence of steps
+  - Examples: "find contact info for this person", "research this company and create a summary with logo", "generate product content in multiple formats"
+
+  **DO NOT use runTask() when:**
+  - The pipeline is simple and linear (2-3 steps, no decisions) — just call the actions directly in sequence, it's simpler and cheaper
+  - The task is a single action call — just use the SDK method directly (\`generateText\`, \`searchGoogle\`, etc.)
+  - The caller needs a persistent conversation — recommend an Agent interface in MindStudio instead
+  - The caller just needs text generation — use \`generateText()\` directly
+
+  When recommending \`runTask()\`, always include: a clear prompt, the specific tools needed (not every action — just the relevant ones), and a concrete \`structuredOutputExample\`. The output example is critical — it tells the model exactly what shape to produce.
+  </task_agent_guidance>
 
   <model_guidance>
   Each model in the reference above includes a \`popularity\` score (0.0–1.0) reflecting real platform usage over the last 30 days, normalized per model type. Use this to guide recommendations:
@@ -49,6 +69,15 @@ export const instructions = `<instructions>
     - Elevenlabs TTS
   Image analysis:
     - Prefer using a text generation model from the recommendations above - they all support image inputs
+
+  ## Task agent models
+  When recommending models for \`runTask()\`, ONLY use models with strong tool-use support. The model must be one of:
+
+  Anthropic: \`claude-4-5-haiku\`, \`claude-4-5-sonnet\`, \`claude-4-6-sonnet\`, \`claude-4-5-opus\`, \`claude-4-6-opus\`
+  Google: \`gemini-3-flash\`, \`gemini-3-pro\`, \`gemini-3.1-pro\`
+  OpenAI: \`gpt-4o-mini\`, \`gpt-4o\`, \`gpt-5-mini\`, \`gpt-5\`, \`gpt-5.1\`, \`gpt-5.2\`
+
+  Default to \`claude-4-6-sonnet\` unless the user has a preference. Do NOT recommend o-series reasoning models (o3, o4) for tasks — they are optimized for reasoning, not tool-use loops. Do NOT recommend Gemini 2.x when 3.x is available.
   </model_guidance>
 
   <tools>

@@ -20,6 +20,9 @@ src/
     sql.ts              # SQL string builders (SELECT, INSERT, UPDATE, UPSERT, DELETE) + value escaping + row deserialization
     types.ts            # Internal types (Predicate, Accessor, TableConfig, SystemFields, PushInput, UpdateInput)
     README.md           # DB namespace docs — architecture, API reference, execution strategy
+  task/
+    index.ts            # runTask() — poll + SSE modes, tool mapping, alias resolution
+    types.ts            # RunTaskOptions, RunTaskResult, TaskEvent, TaskUsage, TaskToolConfig
   config.ts             # Config file read/write for ~/.mindstudio/config.json (login persistence)
   cli.ts                # CLI entry point (bin script) — login, exec, list, agents, run, mcp commands
   mcp.ts                # Minimal MCP server (JSON-RPC 2.0 over stdio, zero deps)
@@ -97,6 +100,7 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
   - `estimateStepCost(stepType, step?, options?)` — `POST /developer/v2/helpers/step-cost-estimate` (returns `{ costType?, estimates? }` with per-event pricing info)
 - **Agent methods** (`listAgents`, `runAgent`) are hand-written on `MindStudioAgent` (not generated). `listAgents()` calls `GET /developer/v2/agents/load`. `runAgent()` posts to `POST /developer/v2/agents/run` with `async: true`, then polls `GET /developer/v2/agents/run/poll/:callbackToken` until complete/error. Poll requests bypass the rate limiter (no auth needed, token is the secret). Default poll interval is 1s, configurable via `pollIntervalMs`.
 - **Batch execution** (`executeStepBatch`) is hand-written on `MindStudioAgent`. POSTs to `POST /developer/v2/steps/execute-batch` with `{ steps: [{ stepType, step }], appId?, threadId? }`. Max 50 steps per batch. Steps run in parallel server-side. Results come back in input order. Individual failures don't affect other steps. S3 output URLs are resolved in parallel. Returns `{ results: BatchStepResult[], totalBillingCost?, appId?, threadId? }`. Types: `BatchStepInput`, `BatchStepResult`, `ExecuteStepBatchOptions`, `ExecuteStepBatchResult`.
+- **Task agents** (`runTask`) are hand-written on `MindStudioAgent`. POSTs to `POST /developer/v2/task` which runs a multi-step tool-use loop server-side. The model receives the developer's prompt and a set of SDK actions as tools, calls them as needed, and produces structured JSON output matching a `structuredOutputExample`. Two modes: async poll (default, same backoff pattern as batch) and SSE streaming (when `onEvent` provided). Tools are SDK method names with optional default overrides — aliases are resolved via `resolveStepType()`. Types: `RunTaskOptions`, `RunTaskResult`, `TaskEvent`, `TaskUsage`, `TaskToolConfig`. Implementation in `src/task/`.
 - **CLI command help** — commands that require arguments (`batch`, `run-agent`, `upload`, `estimate-cost`, `change-name`, `change-profile-picture`, `info`, and the catch-all action runner) display rich usage help via `usageBlock()` when called without required args, instead of terse error messages.
 
 ## `db`, `auth`, and `resolveUser` (apps v2)
