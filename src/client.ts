@@ -150,8 +150,10 @@ export class MindStudioAgent {
   constructor(options: AgentOptions = {}) {
     const config = loadConfig();
     const { token, authType } = resolveToken(options.apiKey, config);
+    const rctx = getRequestContext();
     const baseUrl =
       options.baseUrl ??
+      rctx?.remoteHostname ??
       process.env.MINDSTUDIO_BASE_URL ??
       process.env.REMOTE_HOSTNAME ??
       config.baseUrl ??
@@ -1413,6 +1415,11 @@ function resolveToken(
   token: string;
   authType: AuthType;
 } {
+  // ALS request context takes highest priority — when running inside
+  // runWithContext(), the request-scoped token must be used.
+  const rctx = getRequestContext();
+  if (rctx?.callbackToken)
+    return { token: rctx.callbackToken, authType: 'internal' };
   // CALLBACK_TOKEN takes priority — when running inside the MindStudio
   // sandbox, the hook token must be used regardless of other auth sources.
   if (process.env.CALLBACK_TOKEN)
