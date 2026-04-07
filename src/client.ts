@@ -503,69 +503,129 @@ export class MindStudioAgent {
     const threadId =
       options?.threadId ?? (this._reuseThreadId && !getRequestContext() ? this._threadId : undefined);
 
-    const { data } = await request<{
-      results: Array<{
-        stepType: string;
-        output?: Record<string, unknown>;
-        outputUrl?: string;
-        billingCost?: number;
-        error?: string;
-      }>;
-      totalBillingCost?: number;
-      appId?: string;
+    // 1. POST to async endpoint — returns immediately with a poll token
+    const { data: asyncData } = await request<{
+      batchToken: string;
       threadId?: string;
-    }>(this._httpConfig, 'POST', '/steps/execute-batch', {
+    }>(this._currentHttpConfig, 'POST', '/steps/execute-batch-async', {
       steps: steps.map((s) => ({ ...s, stepType: resolveStepType(s.stepType) })),
       ...(options?.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
     });
 
-    // Resolve S3 outputs in parallel
-    const results: BatchStepResult[] = await Promise.all(
-      data.results.map(async (r) => {
-        if (r.output != null) {
+    const pollUrl = `${this._currentHttpConfig.baseUrl}/developer/v2/steps/execute-batch-async/poll/${asyncData.batchToken}`;
+
+    // 2. Poll with backoff until complete
+    let pollDelay = 300;
+    while (true) {
+      await sleep(pollDelay);
+      pollDelay = Math.min(pollDelay * 1.5, 3000);
+
+      const res = await fetch(pollUrl, {
+        headers: { 'User-Agent': '@mindstudio-ai/agent' },
+      });
+
+      if (res.status === 404) {
+        throw new MindStudioError(
+          'Batch poll token not found or expired.',
+          'poll_token_expired',
+          404,
+        );
+      }
+
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => ({}));
+        throw new MindStudioError(
+          (errorBody as Record<string, string>).message ??
+            (errorBody as Record<string, string>).error ??
+            `Batch poll failed: ${res.status} ${res.statusText}`,
+          (errorBody as Record<string, string>).code ?? 'poll_error',
+          res.status,
+          errorBody,
+        );
+      }
+
+      const poll = (await res.json()) as {
+        status: 'pending' | 'complete' | 'error';
+        totalSteps?: number;
+        completedSteps?: number;
+        results?: Array<{
+          stepType: string;
+          output?: Record<string, unknown>;
+          outputUrl?: string;
+          billingCost?: number;
+          error?: string;
+        }>;
+        totalBillingCost?: number;
+        appId?: string;
+        threadId?: string;
+        error?: string;
+      };
+
+      if (poll.status === 'pending') {
+        if (options?.onProgress && poll.totalSteps != null && poll.completedSteps != null) {
+          options.onProgress(poll.completedSteps, poll.totalSteps);
+        }
+        continue;
+      }
+
+      if (poll.status === 'error') {
+        throw new MindStudioError(
+          poll.error ?? 'Batch execution failed.',
+          'batch_execution_error',
+          500,
+        );
+      }
+
+      // 3. Resolve S3 outputs in parallel
+      const results: BatchStepResult[] = await Promise.all(
+        poll.results!.map(async (r) => {
+          if (r.output != null) {
+            return {
+              stepType: r.stepType,
+              output: r.output,
+              billingCost: r.billingCost,
+              error: r.error,
+            };
+          }
+          if (r.outputUrl) {
+            const s3Res = await fetch(r.outputUrl);
+            if (!s3Res.ok) {
+              return {
+                stepType: r.stepType,
+                error: `Failed to fetch output from S3: ${s3Res.status} ${s3Res.statusText}`,
+              };
+            }
+            const envelope = (await s3Res.json()) as {
+              value: Record<string, unknown>;
+            };
+            return {
+              stepType: r.stepType,
+              output: envelope.value,
+              billingCost: r.billingCost,
+            };
+          }
           return {
             stepType: r.stepType,
-            output: r.output,
             billingCost: r.billingCost,
             error: r.error,
           };
-        }
-        if (r.outputUrl) {
-          const res = await fetch(r.outputUrl);
-          if (!res.ok) {
-            return {
-              stepType: r.stepType,
-              error: `Failed to fetch output from S3: ${res.status} ${res.statusText}`,
-            };
-          }
-          const envelope = (await res.json()) as {
-            value: Record<string, unknown>;
-          };
-          return {
-            stepType: r.stepType,
-            output: envelope.value,
-            billingCost: r.billingCost,
-          };
-        }
-        return {
-          stepType: r.stepType,
-          billingCost: r.billingCost,
-          error: r.error,
-        };
-      }),
-    );
+        }),
+      );
 
-    if (this._reuseThreadId && data.threadId && !getRequestContext()) {
-      this._threadId = data.threadId;
+      // 4. Thread reuse
+      const resultThreadId = poll.threadId ?? asyncData.threadId;
+      if (this._reuseThreadId && resultThreadId && !getRequestContext()) {
+        this._threadId = resultThreadId;
+      }
+
+      return {
+        results,
+        totalBillingCost: poll.totalBillingCost,
+        appId: poll.appId,
+        threadId: resultThreadId,
+      };
     }
-
-    return {
-      results,
-      totalBillingCost: data.totalBillingCost,
-      appId: data.appId,
-      threadId: data.threadId,
-    };
   }
 
   /**
