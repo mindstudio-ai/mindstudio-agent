@@ -56,6 +56,7 @@ export type {
   RunTaskResult,
   TaskEvent,
   TaskUsage,
+  TaskToolCall,
 } from './task/index.js';
 
 // Re-export all generated types

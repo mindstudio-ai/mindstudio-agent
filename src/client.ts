@@ -532,6 +532,9 @@ export class MindStudioAgent {
         headers: { 'User-Agent': '@mindstudio-ai/agent' },
       });
 
+      // Retry silently on transient server errors
+      if (res.status === 502 || res.status === 503 || res.status === 504) continue;
+
       if (res.status === 404) {
         throw new MindStudioError(
           'Batch poll token not found or expired.',
@@ -738,6 +741,9 @@ export class MindStudioAgent {
       const res = await fetch(pollUrl, {
         headers: { 'User-Agent': '@mindstudio-ai/agent' },
       });
+
+      // Retry silently on transient server errors
+      if (res.status === 502 || res.status === 503 || res.status === 504) continue;
 
       if (res.status === 404) {
         throw new MindStudioError(

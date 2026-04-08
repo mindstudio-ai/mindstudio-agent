@@ -12,6 +12,7 @@
 
 import { request, type HttpClientConfig } from '../http.js';
 import { MindStudioError } from '../errors.js';
+import { getRequestContext } from '../context.js';
 import { stepMetadata } from '../generated/metadata.js';
 import type {
   TaskToolConfig,
@@ -20,6 +21,7 @@ import type {
   TaskEvent,
   TaskRequestBody,
   TaskUsage,
+  TaskToolCall,
 } from './types.js';
 
 export type {
@@ -28,6 +30,7 @@ export type {
   RunTaskResult,
   TaskEvent,
   TaskUsage,
+  TaskToolCall,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -58,7 +61,10 @@ export function buildTaskRequestBody(options: RunTaskOptions): TaskRequestBody {
     prompt: options.prompt,
     input: options.input,
     tools: mapTools(options.tools),
-    structuredOutputExample: options.structuredOutputExample,
+    structuredOutputExample:
+      typeof options.structuredOutputExample === 'string'
+        ? options.structuredOutputExample
+        : JSON.stringify(options.structuredOutputExample),
     model: options.model,
     ...(options.maxTurns != null && { maxTurns: options.maxTurns }),
     ...(options.appId != null && { appId: options.appId }),
@@ -72,6 +78,27 @@ export function buildTaskRequestBody(options: RunTaskOptions): TaskRequestBody {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Check if running in managed/sandbox mode (dev tunnel or ALS). */
+function isDevMode(): boolean {
+  return !!(process.env.CALLBACK_TOKEN || getRequestContext()?.callbackToken);
+}
+
+/** Log task result summary to console in dev mode. */
+function logTaskResult(result: RunTaskResult<unknown>): void {
+  if (!isDevMode()) return;
+
+  const toolSummary = result.toolCalls
+    .map((tc) => `${tc.name} (${tc.durationMs}ms) ${tc.success ? '✓' : '✗'}`)
+    .join(', ');
+
+  console.log(
+    `[task] ${result.turns} turn${result.turns === 1 ? '' : 's'}` +
+      (toolSummary ? `: ${toolSummary}` : '') +
+      ` | ${result.parsedSuccessfully ? 'output OK' : '⚠ output not valid JSON'}` +
+      ` | cost: ${result.usage.totalBillingCost}`,
+  );
 }
 
 /** Run a task agent via async polling. */
@@ -99,6 +126,9 @@ export async function runTaskPoll<T = unknown>(
       headers: { 'User-Agent': '@mindstudio-ai/agent' },
     });
 
+    // Retry silently on transient server errors
+    if (res.status === 502 || res.status === 503 || res.status === 504) continue;
+
     if (res.status === 404) {
       throw new MindStudioError(
         'Task poll token not found or expired.',
@@ -124,12 +154,20 @@ export async function runTaskPoll<T = unknown>(
       currentTurn?: number;
       maxTurns?: number;
       output?: T;
+      outputRaw?: string;
+      parsedSuccessfully?: boolean;
       turns?: number;
       usage?: TaskUsage;
+      toolCalls?: TaskToolCall[];
       error?: string;
     };
 
-    if (poll.status === 'pending') continue;
+    if (poll.status === 'pending') {
+      if (isDevMode() && poll.currentTurn != null) {
+        console.log(`[task] running... turn ${poll.currentTurn}/${poll.maxTurns ?? '?'}`);
+      }
+      continue;
+    }
 
     if (poll.status === 'error') {
       throw new MindStudioError(
@@ -139,11 +177,17 @@ export async function runTaskPoll<T = unknown>(
       );
     }
 
-    return {
+    const result: RunTaskResult<T> = {
       output: poll.output as T,
+      outputRaw: poll.outputRaw ?? '',
+      parsedSuccessfully: poll.parsedSuccessfully ?? true,
       turns: poll.turns ?? 0,
       usage: poll.usage ?? { inputTokens: 0, outputTokens: 0, totalBillingCost: 0 },
+      toolCalls: poll.toolCalls ?? [],
     };
+
+    logTaskResult(result);
+    return result;
   }
 }
 
@@ -224,12 +268,15 @@ export async function runTaskStream<T = unknown>(
         if (event.type === 'done') {
           result = {
             output: event.output as T,
+            outputRaw: (event.outputRaw as string) ?? '',
+            parsedSuccessfully: (event.parsedSuccessfully as boolean) ?? true,
             turns: (event.turns as number) ?? 0,
             usage: (event.usage as TaskUsage) ?? {
               inputTokens: 0,
               outputTokens: 0,
               totalBillingCost: 0,
             },
+            toolCalls: (event.toolCalls as TaskToolCall[]) ?? [],
           };
         }
       } catch (err) {
@@ -256,12 +303,15 @@ export async function runTaskStream<T = unknown>(
       if (event.type === 'done') {
         result = {
           output: event.output as T,
+          outputRaw: (event.outputRaw as string) ?? '',
+          parsedSuccessfully: (event.parsedSuccessfully as boolean) ?? true,
           turns: (event.turns as number) ?? 0,
           usage: (event.usage as TaskUsage) ?? {
             inputTokens: 0,
             outputTokens: 0,
             totalBillingCost: 0,
           },
+          toolCalls: (event.toolCalls as TaskToolCall[]) ?? [],
         };
       }
     } catch (err) {
@@ -277,5 +327,6 @@ export async function runTaskStream<T = unknown>(
     );
   }
 
+  logTaskResult(result);
   return result;
 }
