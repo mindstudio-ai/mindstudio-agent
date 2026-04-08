@@ -23,11 +23,11 @@ export interface RunTaskOptions {
   input: Record<string, unknown>;
   /** SDK method names to make available as tools, with optional default overrides. */
   tools: TaskToolConfig[];
-  /** JSON string showing the expected output shape. Model conforms to this. */
-  structuredOutputExample: string;
+  /** Expected output shape. Pass a JSON string or an object (will be stringified automatically). */
+  structuredOutputExample: string | Record<string, unknown>;
   /** Model ID for the task agent. Must support tool use. */
   model: string;
-  /** Max loop iterations before forcing final output. Default 10, max 25. */
+  /** Max loop iterations before forcing final output. Default 20, max 100. */
   maxTurns?: number;
   /** App ID to execute within. */
   appId?: string;
@@ -43,8 +43,25 @@ export interface RunTaskOptions {
 
 /** An event from a streaming task agent execution. */
 export interface TaskEvent {
-  type: 'text' | 'tool_call_start' | 'tool_call_result' | 'thinking' | 'error' | 'done';
+  type:
+    | 'text'
+    | 'thinking'
+    | 'thinking_complete'
+    | 'tool_use'
+    | 'tool_input_delta'
+    | 'tool_input_args'
+    | 'tool_call_start'
+    | 'tool_call_result'
+    | 'error'
+    | 'done';
   [key: string]: unknown;
+}
+
+/** Summary of a single tool call within a task execution. */
+export interface TaskToolCall {
+  name: string;
+  success: boolean;
+  durationMs: number;
 }
 
 /** Usage stats from a task agent execution. */
@@ -58,10 +75,16 @@ export interface TaskUsage {
 export interface RunTaskResult<T = unknown> {
   /** Structured output from the task agent, parsed as JSON. */
   output: T;
+  /** Raw model text before JSON parse. Useful for debugging when output is garbage. */
+  outputRaw: string;
+  /** Whether the output was valid JSON. When false, `output` is the raw string. */
+  parsedSuccessfully: boolean;
   /** Number of loop iterations used. */
   turns: number;
   /** Token and cost usage. */
   usage: TaskUsage;
+  /** Summary of every tool call made during execution. */
+  toolCalls: TaskToolCall[];
 }
 
 /** @internal API request body shape for POST /developer/v2/task. */

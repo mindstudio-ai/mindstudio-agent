@@ -45,9 +45,12 @@ async function requestWithRetry<T>(
   // Update rate limiter with latest server-reported limits
   config.rateLimiter.updateFromHeaders(res.headers);
 
-  if (res.status === 429 && attempt < config.maxRetries) {
+  // Retry on rate limits and transient server errors (502, 503, 504)
+  if (attempt < config.maxRetries && (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504)) {
     const retryAfter = res.headers.get('retry-after');
-    const waitMs = retryAfter ? parseFloat(retryAfter) * 1000 : 1000;
+    const waitMs = retryAfter
+      ? parseFloat(retryAfter) * 1000
+      : Math.min(1000 * Math.pow(2, attempt), 10000); // 1s, 2s, 4s, 8s, 10s cap
     await sleep(waitMs);
     return requestWithRetry<T>(config, method, url, body, attempt + 1);
   }
