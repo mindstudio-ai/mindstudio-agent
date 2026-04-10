@@ -445,7 +445,7 @@ const Logs = db.defineTable<LogEntry>('entries', { database: 'analytics' });
 
 When an app has auth enabled, the auth table (declared in `mindstudio.json`) has platform-managed columns for `email`, `phone`, and `roles`. The SDK enforces write restrictions automatically:
 
-- **`email` / `phone`** — read-only from code. Writing to these columns via `push()`, `update()`, or `upsert()` throws a `MindStudioError` (code `managed_column_write`). Use the auth API (`auth.requestEmailChange()`, etc.) to change these values.
+- **`email` / `phone` / `apiKey`** — read-only from code. Writing to these columns via `push()`, `update()`, or `upsert()` throws a `MindStudioError` (code `managed_column_write`). Use the auth API to change these values (`auth.requestEmailChange()`, `auth.createApiKey()`, etc.).
 - **`roles`** — writable from code and the dashboard. When you write to the roles column, the SDK automatically syncs the change to the platform so `auth.hasRole()` and `auth.getUsersByRole()` reflect the update immediately.
 
 ```ts

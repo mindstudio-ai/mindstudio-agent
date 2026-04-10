@@ -147,12 +147,13 @@ export interface TableConfig {
 
   /**
    * Platform-managed auth columns. Set when this table is the app's auth
-   * table. Writes to email/phone columns throw; roles writes are allowed.
+   * table. Writes to email/phone/apiKey columns throw; roles writes are allowed.
    */
   managedColumns?: {
     email?: string;
     phone?: string;
     roles?: string;
+    apiKey?: string;
   };
 
   /**
