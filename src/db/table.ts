@@ -330,7 +330,7 @@ export class Table<T> {
   // Internal helpers
   // -------------------------------------------------------------------------
 
-  /** @internal Throw if data includes a platform-managed email/phone column. */
+  /** @internal Throw if data includes a platform-managed read-only column. */
   private _checkManagedColumns(data: Record<string, unknown>): void {
     const mc = this._config.managedColumns;
     if (!mc) return;
@@ -339,11 +339,16 @@ export class Table<T> {
     for (const key of keys) {
       if (
         (mc.email && key === mc.email) ||
-        (mc.phone && key === mc.phone)
+        (mc.phone && key === mc.phone) ||
+        (mc.apiKey && key === mc.apiKey)
       ) {
+        const friendly =
+          key === mc.email ? 'email' :
+          key === mc.phone ? 'phone' :
+          'API key';
         throw new MindStudioError(
           `Cannot write to "${key}" — this column is managed by auth. ` +
-            `Use the auth API to change a user's ${key === mc.email ? 'email' : 'phone'}.`,
+            `Use the auth API to change a user's ${friendly}.`,
           'managed_column_write',
           400,
         );

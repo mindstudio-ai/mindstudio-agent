@@ -218,64 +218,116 @@ export class MindStudioAgent {
     const threadId =
       options?.threadId ?? (this._reuseThreadId && !getRequestContext() ? this._threadId : undefined);
 
-    const { data, headers } = await request<{
-      output?: TOutput;
-      outputUrl?: string;
-    }>(this._httpConfig, 'POST', `/steps/${stepType}/execute`, {
+    // 1. POST to async endpoint — returns immediately with a poll token
+    const { data: asyncData, headers } = await request<{
+      executionToken: string;
+      appId?: string;
+      threadId?: string;
+    }>(this._currentHttpConfig, 'POST', `/steps/${stepType}/execute-async`, {
       step,
       ...(options?.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
       ...(this._currentStreamId != null && { streamId: this._currentStreamId }),
     });
 
-    let output: TOutput;
-    if (data.output != null) {
-      output = data.output;
-    } else if (data.outputUrl) {
-      const res = await fetch(data.outputUrl);
-      if (!res.ok) {
-        throw new MindStudioError(
-          `Failed to fetch ${stepType} output from S3: ${res.status} ${res.statusText}`,
-          'output_fetch_error',
-          res.status,
-        );
-      }
-      const envelope = (await res.json()) as { value: TOutput };
-      output = envelope.value;
-    } else {
-      output = undefined as TOutput;
-    }
+    // Capture rate limit from initial POST headers
+    const remaining = headers.get('x-ratelimit-remaining');
 
-    const returnedThreadId = headers.get('x-mindstudio-thread-id') ?? '';
+    // Thread reuse + appId capture from initial response
+    const returnedThreadId = asyncData.threadId ?? '';
     if (this._reuseThreadId && returnedThreadId && !getRequestContext()) {
       this._threadId = returnedThreadId;
     }
-
-    // Auto-capture appId from response headers for zero-config db/auth.
-    // If no explicit appId was set, store the one from the first API response
-    // so that subsequent ensureContext() calls can use it.
-    const returnedAppId = headers.get('x-mindstudio-app-id');
-    if (!this._appId && returnedAppId && !getRequestContext()) {
-      this._appId = returnedAppId;
+    if (!this._appId && asyncData.appId && !getRequestContext()) {
+      this._appId = asyncData.appId;
     }
 
-    const remaining = headers.get('x-ratelimit-remaining');
-    const billingCost = headers.get('x-mindstudio-billing-cost');
-    const billingEvents = headers.get('x-mindstudio-billing-events');
+    // 2. Poll with backoff until complete
+    const pollUrl = `${this._currentHttpConfig.baseUrl}/developer/v2/steps/${stepType}/execute-async/poll/${asyncData.executionToken}`;
+    let pollDelay = 100;
 
-    return {
-      ...(output as object),
-      $appId: headers.get('x-mindstudio-app-id') ?? '',
-      $threadId: returnedThreadId,
-      $rateLimitRemaining:
-        remaining != null ? parseInt(remaining, 10) : undefined,
-      $billingCost:
-        billingCost != null ? parseFloat(billingCost) : undefined,
-      $billingEvents:
-        billingEvents != null
-          ? (JSON.parse(billingEvents) as Array<Record<string, unknown>>)
-          : undefined,
-    } as StepExecutionResult<TOutput>;
+    while (true) {
+      await sleep(pollDelay);
+      pollDelay = Math.min(pollDelay * 2, 5000);
+
+      const res = await fetch(pollUrl, {
+        headers: { 'User-Agent': '@mindstudio-ai/agent' },
+      });
+
+      // Retry silently on transient server errors
+      if (res.status === 502 || res.status === 503 || res.status === 504) continue;
+
+      if (res.status === 404) {
+        throw new MindStudioError(
+          `[${stepType}] Execution token expired.`,
+          'poll_token_expired',
+          404,
+        );
+      }
+
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => ({}));
+        throw new MindStudioError(
+          (errorBody as Record<string, string>).message ??
+            (errorBody as Record<string, string>).error ??
+            `[${stepType}] Poll failed: ${res.status} ${res.statusText}`,
+          (errorBody as Record<string, string>).code ?? 'poll_error',
+          res.status,
+          errorBody,
+        );
+      }
+
+      const poll = (await res.json()) as {
+        status: 'pending' | 'complete' | 'error';
+        output?: TOutput;
+        outputUrl?: string;
+        billingCost?: number;
+        billingEvents?: Array<Record<string, unknown>>;
+        appId?: string;
+        threadId?: string;
+        error?: string;
+      };
+
+      if (poll.status === 'pending') continue;
+
+      if (poll.status === 'error') {
+        throw new MindStudioError(
+          `[${stepType}] ${poll.error ?? 'Step execution failed.'}`,
+          'step_error',
+          500,
+        );
+      }
+
+      // 3. Resolve output — same S3 logic as before
+      let output: TOutput;
+      if (poll.output != null) {
+        output = poll.output;
+      } else if (poll.outputUrl) {
+        const s3Res = await fetch(poll.outputUrl);
+        if (!s3Res.ok) {
+          throw new MindStudioError(
+            `Failed to fetch ${stepType} output from S3: ${s3Res.status} ${s3Res.statusText}`,
+            'output_fetch_error',
+            s3Res.status,
+          );
+        }
+        const envelope = (await s3Res.json()) as { value: TOutput };
+        output = envelope.value;
+      } else {
+        output = undefined as TOutput;
+      }
+
+      // 4. Build result — same shape as before
+      return {
+        ...(output as object),
+        $appId: poll.appId ?? asyncData.appId ?? '',
+        $threadId: poll.threadId ?? returnedThreadId,
+        $rateLimitRemaining:
+          remaining != null ? parseInt(remaining, 10) : undefined,
+        $billingCost: poll.billingCost,
+        $billingEvents: poll.billingEvents,
+      } as StepExecutionResult<TOutput>;
+    }
   }
 
   /**
