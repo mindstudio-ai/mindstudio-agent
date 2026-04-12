@@ -112,10 +112,10 @@ See `src/db/README.md` and `src/auth/README.md` for full API references with exa
 ### Imports
 
 ```typescript
-import { db, auth, Roles, resolveUser, User } from '@mindstudio-ai/agent';
+import { mindstudio, db, auth, Roles, resolveUser, User } from '@mindstudio-ai/agent';
 ```
 
-All five are the primary imports for building data-driven apps. `db` and `auth` are proxies bound to the lazy `mindstudio` singleton. `Roles` is a standalone string proxy. `resolveUser` is a convenience wrapper. `User` is a branded string type for user ID columns.
+For step execution (actions), use the `mindstudio` singleton: `await mindstudio.generateImage(...)`, `await mindstudio.runTask(...)`. `db` and `auth` are proxies bound to the same singleton. `Roles` is a standalone string proxy. `resolveUser` is a convenience wrapper. `User` is a branded string type for user ID columns. `new MindStudioAgent()` is only needed for external usage with a custom API key.
 
 ### Defining tables
 

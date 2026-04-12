@@ -1,8 +1,6 @@
-import { MindStudioAgent } from '@mindstudio-ai/agent';
+import { mindstudio } from '@mindstudio-ai/agent';
 
-const agent = new MindStudioAgent();
-
-const { content } = await agent.scrapeUrl({
+const { content } = await mindstudio.scrapeUrl({
   url: 'https://news.ycombinator.com/',
   service: 'default',
   autoEnhance: false,

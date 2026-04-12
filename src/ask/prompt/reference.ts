@@ -15,7 +15,7 @@ export interface ReferenceData {
 export function buildReferenceDocs(data: ReferenceData): string {
   return `<sdk_reference>
   <quick_reference>
-  Auth is always pre-configured. Use \`new MindStudioAgent()\` with no arguments in code examples.
+  Auth is always pre-configured. Use the \`mindstudio\` singleton for actions: \`import { mindstudio } from '@mindstudio-ai/agent'\`. Use \`db\`, \`auth\`, \`Roles\`, \`stream\` as direct named imports. Do NOT use \`new MindStudioAgent()\` in code examples for MindStudio apps — the singleton handles auth automatically.
   Calling convention: \`const result = await agent.methodName({ ...input })\`
   Results are flat: output fields + \`$appId\`, \`$threadId\`, \`$billingCost\` metadata.
   Thread persistence: pass \`{ threadId: result.$threadId, appId: result.$appId }\` as second arg.
@@ -39,9 +39,9 @@ export function buildReferenceDocs(data: ReferenceData): string {
   Actions that use AI models accept a model override object. Each model has its own config options (dimensions, seed, etc.) defined in its \`inputs\` array. The \`inputs[].variable\` values are the keys for the \`config\` object:
 
   \`\`\`typescript
-  const agent = new MindStudioAgent();
+  import { mindstudio } from '@mindstudio-ai/agent';
 
-  await agent.generateImage({
+  await mindstudio.generateImage({
     prompt: 'a sunset',
     imageModelOverride: {
       model: 'flux-pro-2',
