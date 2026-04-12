@@ -32,30 +32,29 @@ export interface RequestContext {
   streamId?: string;
 }
 
-// Lazy-load AsyncLocalStorage to avoid crashing in browser environments
-// (e.g. when the package is imported only for monacoSnippets/types).
+// AsyncLocalStorage: available in Node.js, no-op in browsers.
+// Dynamic import avoids top-level node:async_hooks reference that crashes browsers.
 interface AlsLike {
   getStore(): RequestContext | undefined;
   run(store: RequestContext, fn: () => unknown): unknown;
 }
 
-let als: AlsLike | undefined;
+const noopAls: AlsLike = {
+  getStore: () => undefined,
+  run: (_store: RequestContext, fn: () => unknown) => fn(),
+};
 
-function getAls(): AlsLike {
-  if (!als) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { AsyncLocalStorage } = require('node:async_hooks');
-      als = new AsyncLocalStorage() as AlsLike;
-    } catch {
-      // Browser or runtime without async_hooks — ALS is unavailable
-      als = {
-        getStore: () => undefined,
-        run: (_store: RequestContext, fn: () => unknown) => fn(),
-      };
-    }
+let als: AlsLike = noopAls;
+
+// Synchronous init: if we're in Node.js, load AsyncLocalStorage immediately.
+// The top-level await on a dynamic import resolves before any user code runs.
+try {
+  if (typeof process !== 'undefined' && process.versions?.node) {
+    const mod = await import('node:async_hooks');
+    als = new mod.AsyncLocalStorage() as AlsLike;
   }
-  return als;
+} catch {
+  // Not available — als stays as noopAls
 }
 
 /**
@@ -64,7 +63,7 @@ function getAls(): AlsLike {
  * @internal
  */
 export function getRequestContext(): RequestContext | undefined {
-  return getAls().getStore();
+  return als.getStore();
 }
 
 /**
@@ -93,5 +92,5 @@ export function runWithContext<T>(
   ctx: RequestContext,
   fn: () => T | Promise<T>,
 ): T | Promise<T> {
-  return getAls().run(ctx, fn) as T | Promise<T>;
+  return als.run(ctx, fn) as T | Promise<T>;
 }

@@ -11,6 +11,7 @@ export default defineConfig([
     clean: true,
     splitting: false,
     sourcemap: true,
+    external: ['node:async_hooks', 'node:module'],
     define: {
       'process.env.PACKAGE_VERSION': JSON.stringify(version),
     },
