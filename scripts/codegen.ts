@@ -1247,13 +1247,23 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('Every method has the signature:');
   lines.push('```typescript');
   lines.push(
-    'mindstudio.methodName(input: InputType, options?: { appId?: string, threadId?: string }): Promise<OutputType & StepExecutionMeta>',
+    'mindstudio.methodName(input: InputType, options?: { appId?, threadId?, onLog? }): Promise<OutputType & StepExecutionMeta>',
   );
   lines.push('```');
   lines.push('');
   lines.push(
-    'The first argument is the step-specific input object. The optional second argument controls thread/app context.',
+    'The first argument is the step-specific input object. The optional second argument controls thread/app context and debug logging.',
   );
+  lines.push('');
+  lines.push(
+    '**Debug logging**: Pass `onLog` in the options to get real-time debug logs during execution (SSE streaming). Works on ALL step methods:',
+  );
+  lines.push('```typescript');
+  lines.push("await mindstudio.generateImage({ prompt: '...' }, {");
+  lines.push('  onLog: (event) => console.log(`[${event.tag}] ${event.value}`),');
+  lines.push('});');
+  lines.push('// event: { value: string, tag: string, ts: number }');
+  lines.push('```');
   lines.push('');
   lines.push(
     '**Results are returned flat** — output fields are spread at the top level alongside metadata:',

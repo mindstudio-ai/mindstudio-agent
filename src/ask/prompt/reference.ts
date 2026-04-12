@@ -16,10 +16,15 @@ export function buildReferenceDocs(data: ReferenceData): string {
   return `<sdk_reference>
   <quick_reference>
   Auth is always pre-configured. Use the \`mindstudio\` singleton for actions: \`import { mindstudio } from '@mindstudio-ai/agent'\`. Use \`db\`, \`auth\`, \`Roles\`, \`stream\` as direct named imports. Do NOT use \`new MindStudioAgent()\` in code examples for MindStudio apps — the singleton handles auth automatically.
-  Calling convention: \`const result = await agent.methodName({ ...input })\`
+  Calling convention: \`const result = await mindstudio.methodName({ ...input })\`
   Results are flat: output fields + \`$appId\`, \`$threadId\`, \`$billingCost\` metadata.
   Thread persistence: pass \`{ threadId: result.$threadId, appId: result.$appId }\` as second arg.
   All 200+ models accessed through one API key — MindStudio routes to the provider server-side.
+
+  Debug logging / execution visibility:
+  - **All step methods** (generateImage, generateText, searchGoogle, etc.) accept an \`onLog\` callback in the OPTIONS object (second argument). This enables SSE streaming with real-time debug logs during execution. Example: \`await mindstudio.generateImage({ prompt: '...' }, { onLog: (event) => console.log(event.tag, event.value) })\`. The event has \`{ value: string, tag: string, ts: number }\`. This is the programmatic equivalent of the CLI's stderr logging. It works on ANY step method — not just generateText.
+  - **Task agents** use \`onEvent\` (on the options object itself, not a second arg) for streaming events during the tool-use loop.
+  - **\`stream()\`** is for pushing SSE chunks to the frontend UI — it is NOT for debug logging.
 
   Streaming: \`stream()\` is a separate function for sending SSE chunks to the frontend — it is NOT an option you pass to step methods. Streaming is automatic when the sandbox sets STREAM_ID. Import as \`import { stream } from '@mindstudio-ai/agent'\` and call \`await stream('Processing...')\` or \`await stream({ progress: 50 })\`. When there's no active stream, calls are silently ignored.
 
