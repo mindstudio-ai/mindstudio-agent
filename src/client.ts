@@ -43,12 +43,16 @@ const DEFAULT_MAX_RETRIES = 3;
 /**
  * Client for the MindStudio direct step execution API.
  *
- * Create an instance and call typed step methods directly:
+ * Inside MindStudio apps, use the `mindstudio` singleton (auth is automatic):
+ * ```ts
+ * import { mindstudio } from '@mindstudio-ai/agent';
+ * const { imageUrl } = await mindstudio.generateImage({ prompt: "a sunset" });
+ * ```
  *
+ * For external usage with an API key:
  * ```ts
  * const agent = new MindStudioAgent({ apiKey: "your-key" });
- * const { imageUrl } = await agent.generateImage({ prompt: "a sunset", mode: "background" });
- * console.log(imageUrl);
+ * const { imageUrl } = await agent.generateImage({ prompt: "a sunset" });
  * ```
  *
  * Authentication is resolved in order:

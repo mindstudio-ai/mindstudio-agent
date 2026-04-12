@@ -1197,31 +1197,22 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   // --- Setup ---
   lines.push('## Setup');
   lines.push('');
+  lines.push('Inside MindStudio apps (auth is automatic):');
+  lines.push('```typescript');
+  lines.push("import { mindstudio, db, auth, Roles, stream } from '@mindstudio-ai/agent';");
+  lines.push('');
+  lines.push("const { imageUrl } = await mindstudio.generateImage({ prompt: 'a sunset' });");
+  lines.push('```');
+  lines.push('');
+  lines.push('External usage (API key required):');
   lines.push('```typescript');
   lines.push("import { MindStudioAgent } from '@mindstudio-ai/agent';");
-  lines.push('');
-  lines.push('// With API key (or set MINDSTUDIO_API_KEY env var)');
   lines.push("const agent = new MindStudioAgent({ apiKey: 'your-key' });");
   lines.push('```');
   lines.push('');
   lines.push(
     'Your MindStudio API key authenticates all requests. MindStudio routes to the correct AI provider (OpenAI, Google, Anthropic, etc.) server-side — you do NOT need separate provider API keys.',
   );
-  lines.push('');
-  lines.push('Constructor options:');
-  lines.push('```typescript');
-  lines.push('new MindStudioAgent({');
-  lines.push(
-    '  apiKey?: string,     // Auth token. Falls back to MINDSTUDIO_API_KEY env var.',
-  );
-  lines.push(
-    '  baseUrl?: string,    // API base URL. Defaults to "https://v1.mindstudio-api.com".',
-  );
-  lines.push(
-    '  maxRetries?: number, // Retries on 429 rate limit (default: 3). Uses Retry-After header for delay.',
-  );
-  lines.push('})');
-  lines.push('```');
   lines.push('');
 
   // --- Models ---
@@ -1236,10 +1227,10 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push('```typescript');
-  lines.push("const { models } = await agent.listModelsByType('llm_chat');");
+  lines.push("const { models } = await mindstudio.listModelsByType('llm_chat');");
   lines.push('const model = models.find(m => m.name.includes("Gemini"));');
   lines.push('');
-  lines.push('const { content } = await agent.generateText({');
+  lines.push('const { content } = await mindstudio.generateText({');
   lines.push("  message: 'Hello',");
   lines.push('  modelOverride: {');
   lines.push('    model: model.id,');
@@ -1256,7 +1247,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('Every method has the signature:');
   lines.push('```typescript');
   lines.push(
-    'agent.methodName(input: InputType, options?: { appId?: string, threadId?: string }): Promise<OutputType & StepExecutionMeta>',
+    'mindstudio.methodName(input: InputType, options?: { appId?: string, threadId?: string }): Promise<OutputType & StepExecutionMeta>',
   );
   lines.push('```');
   lines.push('');
@@ -1270,11 +1261,11 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('```typescript');
   lines.push(
-    "const { content } = await agent.generateText({ message: 'Hello' });",
+    "const { content } = await mindstudio.generateText({ message: 'Hello' });",
   );
   lines.push('');
   lines.push('// Full result shape for any method:');
-  lines.push('const result = await agent.generateText({ message: `Hello` });');
+  lines.push('const result = await mindstudio.generateText({ message: `Hello` });');
   lines.push('result.content;              // step-specific output field');
   lines.push(
     'result.$appId;               // string — app ID for this execution',
@@ -1303,9 +1294,9 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('```typescript');
   lines.push(
-    "const r1 = await agent.generateText({ message: 'My name is Alice' });",
+    "const r1 = await mindstudio.generateText({ message: 'My name is Alice' });",
   );
-  lines.push('const r2 = await agent.generateText(');
+  lines.push('const r2 = await mindstudio.generateText(');
   lines.push("  { message: 'What is my name?' },");
   lines.push('  { threadId: r1.$threadId, appId: r1.$appId },');
   lines.push(');');
@@ -1321,7 +1312,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push("import { MindStudioError } from '@mindstudio-ai/agent';");
   lines.push('');
   lines.push('try {');
-  lines.push("  await agent.generateImage({ prompt: '...' });");
+  lines.push("  await mindstudio.generateImage({ prompt: '...' });");
   lines.push('} catch (err) {');
   lines.push('  if (err instanceof MindStudioError) {');
   lines.push('    err.message; // Human-readable error message');
@@ -1345,7 +1336,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('For action types not covered by generated methods:');
   lines.push('```typescript');
   lines.push(
-    "const result = await agent.executeStep('stepType', { ...params });",
+    "const result = await mindstudio.executeStep('stepType', { ...params });",
   );
   lines.push('```');
   lines.push('');
@@ -1361,7 +1352,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push('```typescript');
-  lines.push('const result = await agent.executeStepBatch([');
+  lines.push('const result = await mindstudio.executeStepBatch([');
   lines.push("  { stepType: 'generateImage', step: { prompt: 'a sunset' } },");
   lines.push("  { stepType: 'textToSpeech', step: { text: 'hello world' } },");
   lines.push('], { appId?, threadId? });');
@@ -1605,7 +1596,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('```typescript');
   lines.push(
-    "const estimate = await agent.estimateStepCost('generateText', { message: 'Hello' });",
+    "const estimate = await mindstudio.estimateStepCost('generateText', { message: 'Hello' });",
   );
   lines.push('```');
   lines.push('');
@@ -1642,7 +1633,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push('```typescript');
-  lines.push("await agent.changeName('My Agent');");
+  lines.push("await mindstudio.changeName('My Agent');");
   lines.push('```');
   lines.push('');
   lines.push('#### `changeProfilePicture(profilePictureUrl)`');
@@ -1652,7 +1643,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('```typescript');
   lines.push(
-    "await agent.changeProfilePicture('https://example.com/avatar.png');",
+    "await mindstudio.changeProfilePicture('https://example.com/avatar.png');",
   );
   lines.push('```');
   lines.push('');
@@ -1664,7 +1655,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('```typescript');
   lines.push("import { readFileSync } from 'fs';");
   lines.push(
-    "const { url } = await agent.uploadFile(readFileSync('photo.png'), { extension: 'png', type: 'image/png' });",
+    "const { url } = await mindstudio.uploadFile(readFileSync('photo.png'), { extension: 'png', type: 'image/png' });",
   );
   lines.push('```');
   lines.push('');

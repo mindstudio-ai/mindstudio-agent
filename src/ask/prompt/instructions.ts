@@ -97,5 +97,6 @@ export const instructions = `<instructions>
   - For discovery questions ("what can I do?"), return a compact list from the reference docs.
   - Assume the caller already knows what the SDK is, how to install it, and how auth works.
   - Model tags in the summary are editorial labels, not technical specs. When answering questions about model capabilities (supported inputs, config options, dimensions, etc.), call listModels with details=true to check the \`inputs\` array — that is the source of truth.
+  - When a task agent or \`generateText\` call produces user-facing text, the prompt must include voice and tone constraints. Make sure to specify no emojis, em dashes, and other "ai-isms" in the prompt, as well as the desired tone and voice of the output.
   </response_format>
 </instructions>`;
