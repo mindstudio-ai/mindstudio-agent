@@ -10,7 +10,6 @@
  * fall back to the existing global/env-based behavior.
  */
 
-import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AppAuthContext, AppDatabase, AuthTableConfig } from './types.js';
 
 /**
@@ -33,7 +32,31 @@ export interface RequestContext {
   streamId?: string;
 }
 
-const als = new AsyncLocalStorage<RequestContext>();
+// Lazy-load AsyncLocalStorage to avoid crashing in browser environments
+// (e.g. when the package is imported only for monacoSnippets/types).
+interface AlsLike {
+  getStore(): RequestContext | undefined;
+  run(store: RequestContext, fn: () => unknown): unknown;
+}
+
+let als: AlsLike | undefined;
+
+function getAls(): AlsLike {
+  if (!als) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { AsyncLocalStorage } = require('node:async_hooks');
+      als = new AsyncLocalStorage() as AlsLike;
+    } catch {
+      // Browser or runtime without async_hooks — ALS is unavailable
+      als = {
+        getStore: () => undefined,
+        run: (_store: RequestContext, fn: () => unknown) => fn(),
+      };
+    }
+  }
+  return als;
+}
 
 /**
  * Get the current request context from AsyncLocalStorage, if any.
@@ -41,7 +64,7 @@ const als = new AsyncLocalStorage<RequestContext>();
  * @internal
  */
 export function getRequestContext(): RequestContext | undefined {
-  return als.getStore();
+  return getAls().getStore();
 }
 
 /**
@@ -70,5 +93,5 @@ export function runWithContext<T>(
   ctx: RequestContext,
   fn: () => T | Promise<T>,
 ): T | Promise<T> {
-  return als.run(ctx, fn);
+  return getAls().run(ctx, fn) as T | Promise<T>;
 }
