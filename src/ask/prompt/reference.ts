@@ -21,12 +21,24 @@ export function buildReferenceDocs(data: ReferenceData): string {
   Thread persistence: pass \`{ threadId: result.$threadId, appId: result.$appId }\` as second arg.
   All 200+ models accessed through one API key — MindStudio routes to the provider server-side.
 
-  Debug logging / execution visibility:
-  - **All step methods** (generateImage, generateText, searchGoogle, etc.) accept an \`onLog\` callback in the OPTIONS object (second argument). This enables SSE streaming with real-time debug logs during execution. Example: \`await mindstudio.generateImage({ prompt: '...' }, { onLog: (event) => console.log(event.tag, event.value) })\`. The event has \`{ value: string, tag: string, ts: number }\`. This is the programmatic equivalent of the CLI's stderr logging. It works on ANY step method — not just generateText.
+  Execution visibility (\`onLog\`):
+  - **All step methods** (generateImage, generateText, searchGoogle, etc.) accept an \`onLog\` callback in the OPTIONS object (second argument). This enables SSE streaming with real-time progress during execution. Example: \`await mindstudio.generateImage({ prompt: '...' }, { onLog: (event) => console.log(event.tag, event.value) })\`. The event has \`{ value: string, tag: string, ts: number }\`. It works on ANY step method.
   - **Task agents** use \`onEvent\` (on the options object itself, not a second arg) for streaming events during the tool-use loop.
-  - **\`stream()\`** is for pushing SSE chunks to the frontend UI — it is NOT for debug logging.
 
-  Streaming: \`stream()\` is a separate function for sending SSE chunks to the frontend — it is NOT an option you pass to step methods. Streaming is automatic when the sandbox sets STREAM_ID. Import as \`import { stream } from '@mindstudio-ai/agent'\` and call \`await stream('Processing...')\` or \`await stream({ progress: 50 })\`. When there's no active stream, calls are silently ignored.
+  Progress for long-running operations:
+  For any step that takes more than a few seconds (video generation, image generation, audio generation, lipsync, upscaling, etc.), ALWAYS use \`onLog\` combined with \`stream()\` to keep the user informed. This is the standard pattern, not optional:
+  \`\`\`typescript
+  import { mindstudio, stream } from '@mindstudio-ai/agent';
+
+  await stream('Generating your video...');
+  const { videoUrl } = await mindstudio.generateVideo({
+    prompt: '...',
+  }, {
+    onLog: (event) => stream({ status: event.value }),
+  });
+  await stream({ status: 'done', videoUrl });
+  \`\`\`
+  Without this pattern, long-running operations appear to hang with no feedback to the user. \`stream()\` calls are silently ignored when there is no active SSE connection (CLI, background jobs), so it is always safe to include.
 
   Database queries (Query, Mutation) support both \`await\` and \`.then()/.catch()\` — use standard try/catch with await or chain \`.catch()\` directly.
 
