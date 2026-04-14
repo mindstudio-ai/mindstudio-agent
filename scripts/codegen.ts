@@ -1266,6 +1266,22 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('```');
   lines.push('');
   lines.push(
+    '**`stream()` — push real-time updates to the frontend:**',
+  );
+  lines.push('```typescript');
+  lines.push("import { mindstudio, stream } from '@mindstudio-ai/agent';");
+  lines.push('');
+  lines.push("// String → 'token' event (frontend receives via onToken, accumulated text)");
+  lines.push("await stream('Processing...');");
+  lines.push('');
+  lines.push("// Object → 'data' event (frontend receives via onStreamData, NOT onToken)");
+  lines.push("await stream({ status: 'generating', progress: 50 });");
+  lines.push('```');
+  lines.push(
+    'These are different event types — do not mix them up. `stream()` is silently ignored when no SSE connection is active (safe to include unconditionally). For long-running steps, combine `onLog` with `stream()` to push progress to the frontend.',
+  );
+  lines.push('');
+  lines.push(
     '**Results are returned flat** — output fields are spread at the top level alongside metadata:',
   );
   lines.push('');
