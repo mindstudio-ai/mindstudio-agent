@@ -13,7 +13,7 @@ import { loadConfig } from '../config.js';
 import { MindStudioAgent } from '../client.js';
 import { streamChat } from './sse.js';
 import { ASK_TOOLS, executeTool } from './tools.js';
-import { buildSystemPrompt } from './prompt.js';
+import { buildSystemPrompt } from './prompt/index.js';
 import type { Message, ToolCall } from './types.js';
 
 const DEFAULT_BASE_URL = 'https://v1.mindstudio-api.com';
