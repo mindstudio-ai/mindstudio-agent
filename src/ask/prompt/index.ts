@@ -20,12 +20,6 @@ import { buildReferenceDocs } from './reference.js';
 import { instructions } from './instructions.js';
 import { playbook } from './playbook.js';
 
-export { identity } from './identity.js';
-export { buildReferenceDocs } from './reference.js';
-export type { ReferenceData } from './reference.js';
-export { instructions } from './instructions.js';
-export { playbook } from './playbook.js';
-
 export async function buildSystemPrompt(
   agent: MindStudioAgent,
 ): Promise<string> {
