@@ -730,7 +730,7 @@ export class MindStudioAgent {
    */
   async getUserInfo(): Promise<UserInfoResult> {
     const { data } = await request<UserInfoResult>(
-      this._httpConfig,
+      this._currentHttpConfig,
       'GET',
       '/account/userinfo',
     );
@@ -747,7 +747,7 @@ export class MindStudioAgent {
    */
   async listAgents(): Promise<ListAgentsResult> {
     const { data } = await request<ListAgentsResult>(
-      this._httpConfig,
+      this._currentHttpConfig,
       'GET',
       '/agents/load',
     );
@@ -775,7 +775,7 @@ export class MindStudioAgent {
       success: boolean;
       threadId: string;
       callbackToken: string;
-    }>(this._httpConfig, 'POST', '/agents/run', {
+    }>(this._currentHttpConfig, 'POST', '/agents/run', {
       appId: options.appId,
       async: true,
       ...(options.variables != null && { variables: options.variables }),
@@ -843,7 +843,7 @@ export class MindStudioAgent {
 
   /** @internal Used by generated action methods. */
   _request<T>(method: 'GET' | 'POST', path: string, body?: unknown) {
-    return request<T>(this._httpConfig, method, path, body);
+    return request<T>(this._currentHttpConfig, method, path, body);
   }
 
   // -------------------------------------------------------------------------
@@ -853,7 +853,7 @@ export class MindStudioAgent {
   /** List all available AI models. */
   async listModels(): Promise<{ models: MindStudioModel[] }> {
     const { data } = await request<{ models: MindStudioModel[] }>(
-      this._httpConfig,
+      this._currentHttpConfig,
       'GET',
       '/helpers/models',
     );
@@ -865,7 +865,7 @@ export class MindStudioAgent {
     modelType: ModelType,
   ): Promise<{ models: MindStudioModel[] }> {
     const { data } = await request<{ models: MindStudioModel[] }>(
-      this._httpConfig,
+      this._currentHttpConfig,
       'GET',
       `/helpers/models/${modelType}`,
     );
@@ -875,7 +875,7 @@ export class MindStudioAgent {
   /** List all available AI models (summary). Returns only id, name, type, and tags. */
   async listModelsSummary(): Promise<{ models: MindStudioModelSummary[] }> {
     const { data } = await request<{ models: MindStudioModelSummary[] }>(
-      this._httpConfig,
+      this._currentHttpConfig,
       'GET',
       '/helpers/models-summary',
     );
@@ -887,7 +887,7 @@ export class MindStudioAgent {
     modelType: ModelType,
   ): Promise<{ models: MindStudioModelSummary[] }> {
     const { data } = await request<{ models: MindStudioModelSummary[] }>(
-      this._httpConfig,
+      this._currentHttpConfig,
       'GET',
       `/helpers/models-summary/${modelType}`,
     );
@@ -906,7 +906,7 @@ export class MindStudioAgent {
    */
   async listConnectors(): Promise<{ services: ConnectorService[] }> {
     const { data } = await request<{ services: ConnectorService[] }>(
-      this._httpConfig,
+      this._currentHttpConfig,
       'GET',
       '/helpers/connectors',
     );
@@ -918,7 +918,7 @@ export class MindStudioAgent {
     serviceId: string,
   ): Promise<{ service: ConnectorService }> {
     const { data } = await request<{ service: ConnectorService }>(
-      this._httpConfig,
+      this._currentHttpConfig,
       'GET',
       `/helpers/connectors/${serviceId}`,
     );
@@ -931,7 +931,7 @@ export class MindStudioAgent {
     actionId: string,
   ): Promise<{ action: ConnectorActionDetail }> {
     const { data } = await request<{ action: ConnectorActionDetail }>(
-      this._httpConfig,
+      this._currentHttpConfig,
       'GET',
       `/helpers/connectors/${serviceId}/${actionId}`,
     );
@@ -941,7 +941,7 @@ export class MindStudioAgent {
   /** List OAuth connections for the organization. These are authenticated third-party service links. */
   async listConnections(): Promise<{ connections: Connection[] }> {
     const { data } = await request<{ connections: Connection[] }>(
-      this._httpConfig,
+      this._currentHttpConfig,
       'GET',
       '/helpers/connections',
     );
@@ -961,7 +961,7 @@ export class MindStudioAgent {
     const { data } = await request<{
       costType?: string;
       estimates?: StepCostEstimateEntry[];
-    }>(this._httpConfig, 'POST', '/helpers/step-cost-estimate', {
+    }>(this._currentHttpConfig, 'POST', '/helpers/step-cost-estimate', {
       step: { type: resolveStepType(stepType), ...step },
       ...options,
     });
@@ -1458,7 +1458,7 @@ export class MindStudioAgent {
     userIds: string[],
   ): Promise<{ users: ResolvedUser[] }> {
     const { data } = await request<{ users: ResolvedUser[] }>(
-      this._httpConfig,
+      this._currentHttpConfig,
       'POST',
       '/helpers/resolve-users',
       { userIds },
@@ -1488,7 +1488,7 @@ export class MindStudioAgent {
   async getAppContext(appId?: string): Promise<AppContextResult> {
     const query = appId ? `?appId=${encodeURIComponent(appId)}` : '';
     const { data } = await request<AppContextResult>(
-      this._httpConfig,
+      this._currentHttpConfig,
       'GET',
       `/helpers/app-context${query}`,
     );
@@ -1524,7 +1524,7 @@ export class MindStudioAgent {
     options: { extension: string; type?: string },
   ): Promise<UploadFileResult> {
     const { data } = await request<{ uploadUrl: string; url: string }>(
-      this._httpConfig,
+      this._currentHttpConfig,
       'POST',
       '/account/upload',
       {
