@@ -1384,6 +1384,9 @@ export class MindStudioAgent {
       ago: (ms: number) => Date.now() - ms,
       fromNow: (ms: number) => Date.now() + ms,
 
+      userRef: (id: string) =>
+        id.startsWith('@@user@@') ? id.slice('@@user@@'.length) : id,
+
       // Batch needs context — hydrate first, then delegate to real db
       batch: ((...queries: PromiseLike<unknown>[]) => {
         return (async () => {

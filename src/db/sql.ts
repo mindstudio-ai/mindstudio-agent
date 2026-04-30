@@ -50,6 +50,9 @@ export function serializeParam(val: unknown): unknown {
 /**
  * Serialize a value for a specific column, handling the @@user@@ prefix
  * for user-type columns.
+ *
+ * Idempotent: if a caller passes an already-prefixed value (e.g. from a raw
+ * SQL read or a cross-path copy), we don't double-prefix it.
  */
 export function serializeColumnParam(
   val: unknown,
@@ -58,9 +61,8 @@ export function serializeColumnParam(
 ): unknown {
   const col = columns.find((c) => c.name === columnName);
 
-  // User-type columns: add @@user@@ prefix to non-null string values
   if (col?.type === 'user' && typeof val === 'string') {
-    return `@@user@@${val}`;
+    return val.startsWith(USER_PREFIX) ? val : `${USER_PREFIX}${val}`;
   }
 
   return serializeParam(val);
@@ -92,11 +94,14 @@ export function escapeValue(val: unknown): string {
 // Row deserialization — strips @@user@@ prefixes, parses JSON columns
 // ---------------------------------------------------------------------------
 
-const USER_PREFIX = '@@user@@';
+export const USER_PREFIX = '@@user@@';
 
 /**
  * Deserialize a row from the database, handling:
- * - Stripping `@@user@@` prefix from user-type columns
+ * - Stripping `@@user@@` prefix from any string value that carries it
+ *   (platform-managed audit columns like `last_updated_by` are sometimes
+ *   typed as `text` in schema metadata but still store user refs with the
+ *   prefix — strip defensively so app code always sees bare UUIDs)
  * - Parsing JSON strings for json-type columns
  */
 export function deserializeRow(
@@ -109,7 +114,7 @@ export function deserializeRow(
   for (const [key, value] of Object.entries(row)) {
     const col = columns.find((c) => c.name === key);
 
-    if (col?.type === 'user' && typeof value === 'string' && value.startsWith(USER_PREFIX)) {
+    if (typeof value === 'string' && value.startsWith(USER_PREFIX)) {
       result[key] = value.slice(USER_PREFIX.length);
     } else if (col?.type === 'json' && typeof value === 'string') {
       try {
