@@ -208,6 +208,21 @@ const page2 = await PurchaseOrders.sortBy(o => o.createdAt).reverse().skip(50).t
 
 **Filter predicates** that compile to SQL (efficient): field comparisons (`===`, `!==`, `<`, `>`, `<=`, `>=`), null checks, `&&`/`||`, `!`, `.includes()` for IN/LIKE, boolean fields. Anything else falls back to JS (works correctly, just scans all rows).
 
+**Predicate bindings** — for filters that compare to outer-scope values (`o.companyId === input.companyId`), pass the values explicitly via a second predicate parameter so the filter compiles to SQL instead of falling back to JS:
+
+```typescript
+// Falls back to JS — closure variables can't be resolved from outside the function
+PurchaseOrders.filter(o => o.companyId === input.companyId);
+
+// Compiles to SQL — bindings provide the values explicitly
+PurchaseOrders.filter(
+  (o, $) => o.companyId === $.companyId,
+  { companyId: input.companyId },
+);
+```
+
+Bindings are supported on every predicate-accepting method (`filter`, `findOne`, `count`, `some`, `every`, `removeAll`). Missing keys or `undefined` values in the bindings object cause the predicate to fall back to JS — the SDK does not silently substitute NULL into the WHERE clause.
+
 ### Writing data
 
 ```typescript

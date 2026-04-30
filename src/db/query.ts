@@ -42,6 +42,8 @@ import {
 } from './sql.js';
 import type {
   Predicate,
+  PredicateBindings,
+  PredicateEntry,
   Accessor,
   TableConfig,
   CompiledPredicate,
@@ -54,7 +56,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
-  private readonly _predicates: Predicate<T>[];
+  private readonly _predicates: PredicateEntry<T>[];
   private readonly _sortAccessor: Accessor<T> | undefined;
   private readonly _reversed: boolean;
   private readonly _limit: number | undefined;
@@ -69,7 +71,7 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
   constructor(
     config: TableConfig,
     options?: {
-      predicates?: Predicate<T>[];
+      predicates?: PredicateEntry<T>[];
       sortAccessor?: Accessor<T>;
       reversed?: boolean;
       limit?: number;
@@ -91,7 +93,7 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
   }
 
   private _clone(overrides: {
-    predicates?: Predicate<T>[];
+    predicates?: PredicateEntry<T>[];
     sortAccessor?: Accessor<T>;
     reversed?: boolean;
     limit?: number;
@@ -114,8 +116,15 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
   // Chain methods
   // -------------------------------------------------------------------------
 
-  filter(predicate: Predicate<T>): Query<T> {
-    return this._clone({ predicates: [...this._predicates, predicate] });
+  filter(predicate: Predicate<T>): Query<T>;
+  filter<B extends PredicateBindings>(
+    predicate: (row: T, bindings: B) => boolean,
+    bindings: B,
+  ): Query<T>;
+  filter(predicate: Predicate<T>, bindings?: PredicateBindings): Query<T> {
+    return this._clone({
+      predicates: [...this._predicates, { fn: predicate, bindings }],
+    });
   }
 
   sortBy(accessor: Accessor<T>): Query<T> {
@@ -185,7 +194,7 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
 
     const allRows = await this._fetchAllRows();
     return allRows.every((row) =>
-      this._predicates.every((pred) => pred(row as T)),
+      this._predicates.every((p) => p.fn(row as T, p.bindings)),
     );
   }
 
@@ -297,7 +306,7 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
 
     // JS fallback — apply predicates, sort, slice
     let filtered: T[] = compiled.predicates
-      ? rows.filter((row) => compiled.predicates!.every((pred) => pred(row)))
+      ? rows.filter((row) => compiled.predicates!.every((p) => p.fn(row, p.bindings)))
       : rows;
 
     if (compiled.sortAccessor) {
@@ -421,7 +430,7 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
       return { allSql: true, sqlWhere: '', compiled: [] };
     }
 
-    const compiled = this._predicates.map((pred) => compilePredicate(pred));
+    const compiled = this._predicates.map((p) => compilePredicate(p.fn, p.bindings));
     const allSql = compiled.every((c) => c.type === 'sql');
 
     let sqlWhere = '';
@@ -451,7 +460,7 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
     }
 
     return allRows.filter((row) =>
-      this._predicates.every((pred) => pred(row as T)),
+      this._predicates.every((p) => p.fn(row as T, p.bindings)),
     );
   }
 
@@ -481,7 +490,7 @@ export interface CompiledQuery<T, TResult = T[]> {
   /** Table config for deserialization. */
   config: TableConfig;
   /** JS predicates (only for fallback). */
-  predicates?: Predicate<T>[];
+  predicates?: PredicateEntry<T>[];
   /** Sort accessor (only for fallback). */
   sortAccessor?: Accessor<T>;
   /** Sort direction (only for fallback). */
