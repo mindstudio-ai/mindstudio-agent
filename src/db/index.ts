@@ -47,10 +47,11 @@
  */
 
 import { MindStudioError } from '../errors.js';
-import type { AppDatabase, AppDatabaseColumnSchema, AuthTableConfig } from '../types.js';
+import type { AppDatabase, AppDatabaseColumnSchema, AuthTableConfig, User } from '../types.js';
 import { Table } from './table.js';
 import { Query } from './query.js';
 import { Mutation } from './mutation.js';
+import { USER_PREFIX } from './sql.js';
 import type { TableConfig, SqlQuery, SqlResult, SystemColumns, SystemFields } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -180,6 +181,26 @@ export interface Db {
   /** Returns a unix timestamp for (now + duration). Use with days/hours/minutes. */
   fromNow(ms: number): number;
 
+  // --- User references ---
+
+  /**
+   * Type a plain UUID string as a `User` reference, for writing into
+   * user-typed columns without an `as any` cast. Strips any existing
+   * `@@user@@` prefix so the input is always a bare UUID in app code.
+   *
+   * The SDK adds the `@@user@@` prefix automatically on write — you do
+   * not need to (and should not) add it yourself.
+   *
+   * @example
+   * ```ts
+   * await Orders.push({
+   *   requestedBy: db.userRef(someUuid),
+   *   ...
+   * });
+   * ```
+   */
+  userRef(id: string): User;
+
   // --- Batch execution ---
 
   /**
@@ -262,6 +283,11 @@ export function createDb(
     minutes: (n: number) => n * 60_000,
     ago: (ms: number) => Date.now() - ms,
     fromNow: (ms: number) => Date.now() + ms,
+
+    // --- User references ---
+
+    userRef: (id: string): User =>
+      id.startsWith(USER_PREFIX) ? id.slice(USER_PREFIX.length) : id,
 
     // --- Batch execution ---
 

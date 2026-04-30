@@ -94,8 +94,32 @@ export type UpdateInput<T> = Partial<Omit<T, SystemFields>>;
  * compile to efficient SQL. If the predicate can't be compiled (function
  * calls, regex, computed expressions), the SDK falls back to fetching all
  * rows and evaluating in JS. Both paths produce identical results.
+ *
+ * For predicates that compare to outer-scope values (e.g.
+ * `o => o.companyId === input.companyId`), prefer the explicit-bindings
+ * form so the filter compiles to SQL instead of falling back to JS:
+ *
+ * ```ts
+ * Investments.filter(
+ *   (i, $) => i.companyId === $.companyId,
+ *   { companyId: input.companyId },
+ * )
+ * ```
  */
-export type Predicate<T> = (row: T) => boolean;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type Predicate<T> = (row: T, bindings?: any) => boolean;
+
+/**
+ * Bindings for an explicit-bindings predicate — a plain object of named
+ * scalar values referenced via the predicate's second parameter.
+ *
+ * @example
+ * ```ts
+ * const bindings: PredicateBindings = { companyId: 'abc', minAmount: 1000 };
+ * Investments.filter((i, $) => i.companyId === $.companyId && i.amount >= $.minAmount, bindings);
+ * ```
+ */
+export type PredicateBindings = Record<string, unknown>;
 
 /**
  * A field accessor function used by sortBy(), min(), max(), groupBy().
@@ -205,3 +229,13 @@ export interface SqlResult {
 export type CompiledPredicate<T> =
   | { type: 'sql'; where: string }
   | { type: 'js'; fn: Predicate<T>; reason?: string };
+
+/**
+ * A predicate paired with its bindings. Stored internally on Query so that
+ * each filter call's bindings travel with its predicate through the chain.
+ * @internal
+ */
+export interface PredicateEntry<T> {
+  fn: Predicate<T>;
+  bindings?: PredicateBindings;
+}

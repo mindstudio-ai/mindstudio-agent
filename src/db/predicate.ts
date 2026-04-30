@@ -29,7 +29,13 @@
  * - Boolean fields: `o.active` (truthy), `!o.deleted` (falsy)
  * - Array.includes for IN: `['a','b'].includes(o.field)` → `field IN ('a','b')`
  * - Field.includes for LIKE: `o.field.includes('text')` → `field LIKE '%text%'`
- * - Closure variables: values captured from the enclosing scope
+ * - Explicit bindings: `(o, $) => o.field === $.value` with a bindings arg.
+ *   The second predicate parameter holds outer-scope values that the SDK
+ *   resolves at compile time. This is the recommended pattern when the
+ *   filter compares to a value from the enclosing function — without it,
+ *   the predicate falls back to JS.
+ * - Closure variables (without bindings): not resolvable from outside the
+ *   function — falls back to JS. Use the bindings form instead.
  *
  * ## Fallback strategy
  *
@@ -51,7 +57,7 @@
  */
 
 import { escapeValue } from './sql.js';
-import type { CompiledPredicate, Predicate } from './types.js';
+import type { CompiledPredicate, Predicate, PredicateBindings } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -72,11 +78,14 @@ import type { CompiledPredicate, Predicate } from './types.js';
  * // { type: 'js', fn: [original function] }
  * ```
  */
-export function compilePredicate<T>(fn: Predicate<T>): CompiledPredicate<T> {
+export function compilePredicate<T>(
+  fn: Predicate<T>,
+  bindings?: PredicateBindings,
+): CompiledPredicate<T> {
   try {
     const source = fn.toString();
-    const paramName = extractParamName(source);
-    if (!paramName) return { type: 'js', fn, reason: 'could not extract parameter name' };
+    const names = extractParamNames(source);
+    if (!names) return { type: 'js', fn, reason: 'could not extract parameter name' };
 
     const body = extractBody(source);
     if (!body) return { type: 'js', fn, reason: 'could not extract function body' };
@@ -85,7 +94,7 @@ export function compilePredicate<T>(fn: Predicate<T>): CompiledPredicate<T> {
     if (tokens.length === 0) return { type: 'js', fn, reason: 'empty token stream' };
 
     // Parse into an AST and compile to SQL
-    const parser = new Parser(tokens, paramName, fn);
+    const parser = new Parser(tokens, names.row, names.bindings, bindings, fn);
     const ast = parser.parseExpression();
     if (!ast) return { type: 'js', fn, reason: 'could not parse expression' };
 
@@ -106,22 +115,71 @@ export function compilePredicate<T>(fn: Predicate<T>): CompiledPredicate<T> {
 // ---------------------------------------------------------------------------
 
 /**
- * Extract the parameter name from an arrow function source.
+ * Extract the parameter names from an arrow function source.
  *
  * Handles:
- * - `x => ...`
- * - `(x) => ...`
- * - `(x: Type) => ...` (TypeScript — toString() may include types)
+ * - `x => ...`                       — single param, no parens
+ * - `(x) => ...`                     — single param, parens
+ * - `(x, $) => ...`                  — two params (row + bindings)
+ * - `(x: Type) => ...`               — TypeScript types may leak through
+ * - `(x: Type, $: Bindings) => ...`  — typed two-param form
  *
  * Returns null if the pattern doesn't match (e.g. regular function,
- * destructured params, multiple params).
+ * destructured params, three or more params).
  */
-function extractParamName(source: string): string | null {
-  // Match: `paramName =>` or `(paramName) =>` or `(paramName: type) =>`
-  const match = source.match(
-    /^\s*(?:\(?\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*(?::[^)]*?)?\)?\s*=>)/,
-  );
-  return match?.[1] ?? null;
+function extractParamNames(
+  source: string,
+): { row: string; bindings?: string } | null {
+  const arrowIdx = source.indexOf('=>');
+  if (arrowIdx === -1) return null;
+
+  let paramList = source.slice(0, arrowIdx).trim();
+
+  // Strip outer parens if present: `(x, y)` → `x, y`
+  if (paramList.startsWith('(') && paramList.endsWith(')')) {
+    paramList = paramList.slice(1, -1).trim();
+  }
+  if (paramList.length === 0) return null;
+
+  // Split by top-level commas, ignoring commas inside <Generics<X, Y>> or (Func<X, Y>)
+  const parts = splitParams(paramList);
+  if (parts.length === 0 || parts.length > 2) return null;
+
+  const row = stripTypeAnnotation(parts[0]);
+  if (!row) return null;
+
+  if (parts.length === 1) return { row };
+
+  const bindings = stripTypeAnnotation(parts[1]);
+  if (!bindings) return null;
+
+  return { row, bindings };
+}
+
+/** Split a parameter list on top-level commas, respecting `<>` and `()` nesting. */
+function splitParams(input: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of input) {
+    if (ch === '<' || ch === '(') depth++;
+    else if (ch === '>' || ch === ')') depth--;
+    if (ch === ',' && depth === 0) {
+      parts.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+}
+
+/** Extract the identifier from a single parameter, stripping any `: Type` annotation. */
+function stripTypeAnnotation(part: string): string | null {
+  const colonIdx = part.indexOf(':');
+  const name = (colonIdx === -1 ? part : part.slice(0, colonIdx)).trim();
+  return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name) ? name : null;
 }
 
 /**
@@ -362,6 +420,8 @@ class Parser {
   constructor(
     private tokens: Token[],
     private paramName: string,
+    private bindingsName: string | undefined,
+    private bindingsValue: PredicateBindings | undefined,
     private originalFn: Function,
   ) {}
 
@@ -485,6 +545,12 @@ class Parser {
       return this.parseFieldExpression();
     }
 
+    // Starts with the bindings parameter name: bindings access pattern.
+    // `$.ids.includes(o.field)` → IN expression with resolved values.
+    if (this.bindingsName && this.match('identifier', this.bindingsName)) {
+      return this.parseBindingsArrayIncludes();
+    }
+
     // Starts with a different identifier — could be a closure variable
     // or a keyword (true, false, null, undefined)
     if (this.match('identifier')) {
@@ -541,6 +607,9 @@ class Parser {
 
     // Check for nested access: o.a.b.c
     while (this.match('dot') && this.tokens[this.pos + 1]?.type === 'identifier') {
+      // Stop if the next .identifier is a method call (e.g. .includes(...)) —
+      // that's not a field path; let parseFieldExpression handle it.
+      if (this.tokens[this.pos + 2]?.type === 'lparen') break;
       this.advance(); // consume dot
       parts.push(this.advance().value);
     }
@@ -662,6 +731,82 @@ class Parser {
   }
 
   /**
+   * Parse `$.ids.includes(o.field)` → IN expression with resolved values.
+   * The bindings identifier has been peeked but not consumed.
+   *
+   * Falls back (returns null) if the resolved bindings value isn't an array,
+   * or if the path doesn't exist on the bindings object.
+   */
+  private parseBindingsArrayIncludes(): AstNode | null {
+    const bound = this.tryResolveBindingsValue();
+    if (bound === PARSE_FAILED) return null;
+    if (!Array.isArray(bound)) return null;
+
+    if (!this.eat('dot')) return null;
+    if (!this.match('identifier', 'includes')) return null;
+    this.advance(); // consume 'includes'
+    if (!this.eat('lparen')) return null;
+
+    if (!this.match('identifier', this.paramName)) return null;
+    this.advance(); // consume row param name
+    const field = this.parseFieldPath();
+    if (!field) return null;
+
+    if (!this.eat('rparen')) return null;
+
+    return { kind: 'in', field, values: bound as unknown[] };
+  }
+
+  /**
+   * If the current token is the bindings parameter name, walk a dotted path
+   * (`$.foo.bar`) and resolve the value from the bindings object. Returns
+   * the resolved value or `PARSE_FAILED`.
+   *
+   * Stops walking before a method call (e.g. doesn't consume `.includes` in
+   * `$.ids.includes(...)`) so the caller can dispatch on what follows.
+   *
+   * Restores `pos` on failure so callers can fall through cleanly.
+   */
+  private tryResolveBindingsValue(): unknown {
+    if (!this.bindingsName) return PARSE_FAILED;
+    if (!this.match('identifier', this.bindingsName)) return PARSE_FAILED;
+    if (this.bindingsValue == null) return PARSE_FAILED;
+
+    const startPos = this.pos;
+    this.advance(); // consume bindings param name
+
+    const path: string[] = [];
+    while (this.match('dot') && this.tokens[this.pos + 1]?.type === 'identifier') {
+      // Stop before a method call (e.g. .includes(...)) so the caller can handle it.
+      if (this.tokens[this.pos + 2]?.type === 'lparen') break;
+      this.advance(); // consume dot
+      path.push(this.advance().value);
+    }
+
+    if (path.length === 0) {
+      this.pos = startPos;
+      return PARSE_FAILED;
+    }
+
+    let value: unknown = this.bindingsValue;
+    for (const key of path) {
+      if (value == null || typeof value !== 'object') {
+        this.pos = startPos;
+        return PARSE_FAILED;
+      }
+      value = (value as Record<string, unknown>)[key];
+    }
+
+    // Unresolved key in bindings → fall back. Don't silently substitute undefined.
+    if (value === undefined) {
+      this.pos = startPos;
+      return PARSE_FAILED;
+    }
+
+    return value;
+  }
+
+  /**
    * Parse a literal value or closure variable reference.
    *
    * Returns the parsed value, or PARSE_FAILED if parsing fails.
@@ -689,6 +834,14 @@ class Parser {
       if (t.value === 'false') { this.advance(); return false; }
       if (t.value === 'null') { this.advance(); return null; }
       if (t.value === 'undefined') { this.advance(); return undefined; }
+
+      // Bindings access: `$.foo` resolves to a literal value.
+      if (this.bindingsName && t.value === this.bindingsName) {
+        const bound = this.tryResolveBindingsValue();
+        if (bound !== PARSE_FAILED) return bound;
+        // Fall through to closure-variable handling so we still consume
+        // the tokens cleanly and don't strand the parser mid-path.
+      }
 
       // Closure variable — try to resolve its value by calling the
       // original function with a Proxy. We build a proxy that records

@@ -26,7 +26,7 @@ import {
   buildDelete,
   deserializeRow,
 } from './sql.js';
-import type { Predicate, Accessor, PushInput, UpdateInput, SystemFields, TableConfig } from './types.js';
+import type { Predicate, PredicateBindings, Accessor, PushInput, UpdateInput, SystemFields, TableConfig } from './types.js';
 
 export class Table<T> {
   /** @internal */
@@ -51,26 +51,45 @@ export class Table<T> {
   }
 
   /** Find the first row matching a predicate. Returns null if none match. */
-  findOne(predicate: Predicate<T>): Query<T, T | null> {
-    return this.filter(predicate).first();
+  findOne(predicate: Predicate<T>): Query<T, T | null>;
+  findOne<B extends PredicateBindings>(
+    predicate: (row: T, bindings: B) => boolean,
+    bindings: B,
+  ): Query<T, T | null>;
+  findOne(predicate: Predicate<T>, bindings?: PredicateBindings): Query<T, T | null> {
+    return this.filter(predicate, bindings as PredicateBindings).first();
   }
 
   /** Count all rows, or rows matching a predicate. */
   count(): Query<T, number>;
   count(predicate: Predicate<T>): Query<T, number>;
-  count(predicate?: Predicate<T>): Query<T, number> {
-    if (predicate) return this.filter(predicate).count();
+  count<B extends PredicateBindings>(
+    predicate: (row: T, bindings: B) => boolean,
+    bindings: B,
+  ): Query<T, number>;
+  count(predicate?: Predicate<T>, bindings?: PredicateBindings): Query<T, number> {
+    if (predicate) return this.filter(predicate, bindings as PredicateBindings).count();
     return this.toArray().count();
   }
 
   /** True if any row matches the predicate. */
-  some(predicate: Predicate<T>): Query<T, boolean> {
-    return this.filter(predicate).some();
+  some(predicate: Predicate<T>): Query<T, boolean>;
+  some<B extends PredicateBindings>(
+    predicate: (row: T, bindings: B) => boolean,
+    bindings: B,
+  ): Query<T, boolean>;
+  some(predicate: Predicate<T>, bindings?: PredicateBindings): Query<T, boolean> {
+    return this.filter(predicate, bindings as PredicateBindings).some();
   }
 
   /** True if all rows match the predicate. */
-  async every(predicate: Predicate<T>): Promise<boolean> {
-    return this.filter(predicate).every();
+  every(predicate: Predicate<T>): Promise<boolean>;
+  every<B extends PredicateBindings>(
+    predicate: (row: T, bindings: B) => boolean,
+    bindings: B,
+  ): Promise<boolean>;
+  async every(predicate: Predicate<T>, bindings?: PredicateBindings): Promise<boolean> {
+    return this.filter(predicate, bindings as PredicateBindings).every();
   }
 
   /** True if the table has zero rows. */
@@ -104,8 +123,13 @@ export class Table<T> {
   }
 
   /** Filter rows by a predicate. Returns a chainable Query. */
-  filter(predicate: Predicate<T>): Query<T> {
-    return new Query<T>(this._config).filter(predicate);
+  filter(predicate: Predicate<T>): Query<T>;
+  filter<B extends PredicateBindings>(
+    predicate: (row: T, bindings: B) => boolean,
+    bindings: B,
+  ): Query<T>;
+  filter(predicate: Predicate<T>, bindings?: PredicateBindings): Query<T> {
+    return new Query<T>(this._config).filter(predicate, bindings as PredicateBindings);
   }
 
   /** Sort rows by a field. Returns a chainable Query. */
@@ -219,8 +243,13 @@ export class Table<T> {
   /**
    * Remove all rows matching a predicate. Returns the count removed.
    */
-  removeAll(predicate: Predicate<T>): Mutation<number> {
-    const compiled = compilePredicate(predicate);
+  removeAll(predicate: Predicate<T>): Mutation<number>;
+  removeAll<B extends PredicateBindings>(
+    predicate: (row: T, bindings: B) => boolean,
+    bindings: B,
+  ): Mutation<number>;
+  removeAll(predicate: Predicate<T>, bindings?: PredicateBindings): Mutation<number> {
+    const compiled = compilePredicate(predicate, bindings);
 
     if (compiled.type === 'sql') {
       const query = buildDelete(this._config.tableName, compiled.where);
@@ -243,7 +272,7 @@ export class Table<T> {
           ) as Record<string, unknown>,
       );
 
-      const matching = allRows.filter((row) => predicate(row as T));
+      const matching = allRows.filter((row) => predicate(row as T, bindings));
       if (matching.length === 0) return 0;
 
       const deleteQueries = matching

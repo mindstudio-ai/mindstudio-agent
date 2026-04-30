@@ -288,7 +288,7 @@ When you write a filter predicate, the SDK attempts to compile it to a SQL WHERE
 .filter(o => o.name.startsWith('A'))          // function call — not compilable
 .filter(o => /^PO-\d+/.test(o.poNumber))      // regex
 .filter(o => o.a + o.b > 100)                 // computed expression
-.filter(o => someSet.has(o.id))               // complex closure
+.filter(o => o.companyId === input.companyId) // closure variable — see "Bindings" below
 ```
 
 Both paths produce **identical results**. The fallback logs a warning so you can optimize if needed:
@@ -297,6 +297,57 @@ Both paths produce **identical results**. The fallback logs a warning so you can
 ```
 
 For most apps (hundreds to low thousands of rows), the fallback is fast enough.
+
+### Bindings — comparing to outer-scope values
+
+Predicates that reference a closure variable (`o.companyId === input.companyId`) cannot be compiled to SQL — JavaScript doesn't expose closure scopes from outside the function. By default, those predicates fall back to JS and scan the whole table.
+
+For filters that need to compile to SQL, pass the outer-scope values explicitly via a second predicate parameter and a bindings argument:
+
+```ts
+// Closure variable — falls back to JS, scans all rows
+const all = await Investments.filter(i => i.companyId === input.companyId);
+
+// Bindings — compiles to SQL, server-side filter
+const all = await Investments.filter(
+  (i, $) => i.companyId === $.companyId,
+  { companyId: input.companyId },
+);
+```
+
+The bindings parameter (`$` here, but you can call it whatever you want — `b`, `vars`, etc.) is the SDK's signal that you're providing values explicitly. The bindings object's keys are referenced as `$.<key>` inside the predicate.
+
+This works for every predicate-accepting method (`filter`, `findOne`, `count`, `some`, `every`, `removeAll`):
+
+```ts
+// AND combinations with both bindings and literals
+Investments.filter(
+  (i, $) => i.companyId === $.companyId && i.status === 'active',
+  { companyId: input.companyId },
+);
+
+// IN clauses with bound arrays
+ContactRelationships.filter(
+  (r, $) => $.contactIds.includes(r.contactId),
+  { contactIds: ['a', 'b', 'c'] },
+);
+
+// LIKE with bound strings
+SimpleRecords.filter(
+  (r, $) => r.slug.includes($.prefix),
+  { prefix: 'lat-' },
+);
+
+// removeAll
+SimpleRecords.removeAll(
+  (r, $) => r.slug.includes($.prefix),
+  { prefix: 'lat-' },
+);
+```
+
+If the bindings object is missing a key referenced by the predicate, or the value is `undefined`, the predicate falls back to JS — the SDK will not silently substitute a `NULL` or empty value into the SQL.
+
+**Recommended:** for any filter on a table that may grow large, prefer the bindings form whenever the predicate compares to an outer-scope value. The single-parameter closure form is fine for small tables, ad-hoc work, and predicates over fixed literals.
 
 ## Table API reference
 
