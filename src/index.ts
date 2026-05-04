@@ -49,6 +49,9 @@ export type {
   BatchStepResult,
   ExecuteStepBatchOptions,
   ExecuteStepBatchResult,
+  PackagedWorkflow,
+  PackagedWorkflowInput,
+  PackagedWorkflowSignature,
 } from './types.js';
 export type {
   TaskToolConfig,

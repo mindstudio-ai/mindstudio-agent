@@ -128,8 +128,8 @@ export interface StepExecutionMeta {
  * console.log(result.content, result.$threadId, result.$rateLimitRemaining);
  * ```
  */
-export type StepExecutionResult<TOutput = Record<string, unknown>> =
-  TOutput & StepExecutionMeta;
+export type StepExecutionResult<TOutput = Record<string, unknown>> = TOutput &
+  StepExecutionMeta;
 
 // ---------------------------------------------------------------------------
 // Agent (pre-built app) types
@@ -368,6 +368,76 @@ export interface Connection {
   /** Display name or account identifier for the connection. */
   name?: string;
 }
+
+export interface PackagedWorkflowInput {
+  /** Variable key for this input */
+  key: string;
+  /** Display name of the input */
+  name: string;
+  /** Description of what this input is for */
+  description: string;
+  /** Placeholder text shown in the input field */
+  placeholder: string;
+  /** Whether this input must be provided */
+  required: boolean;
+  /** Default value if the input is not provided */
+  defaultValue?: string;
+  /** Input field type */
+  type: 'text' | 'select' | 'transition';
+  /** Settings for text-type inputs */
+  textSettings?: {
+    /** Text input format */
+    type: 'default' | 'markdown';
+  };
+  /** Settings for select-type inputs */
+  selectSettings?: {
+    /** Available options for the select input */
+    options: {
+      /** Option value */
+      value: string;
+      /** Option display label */
+      label: string;
+    }[];
+  };
+}
+
+export interface PackagedWorkflowSignature {
+  /** Metadata about the packaged workflow */
+  metadata: {
+    /** Display name of the packaged workflow */
+    name: string;
+    /** Description of what the packaged workflow does */
+    description: string;
+    /** Icon URL for the packaged workflow */
+    iconUrl: string;
+    /** Quick help text for users */
+    quickHelp: string;
+    /** Transition type for the packaged workflow */
+    transitionType?: 'controlled' | 'dynamic';
+  };
+  /** Input parameters the packaged workflow accepts */
+  inputs: PackagedWorkflowInput[];
+  /** Output variables the packaged workflow returns */
+  outputs: {
+    /** Output variable key */
+    key: string;
+    /** Display name of the output */
+    name: string;
+    /** Description of the output */
+    description: string;
+    /** Data type of the output */
+    type: string;
+  }[];
+}
+
+export interface PackagedWorkflow {
+  appId: string;
+  workflowId: string;
+  appShortId: string;
+  workflowName: string;
+  signature: PackagedWorkflowSignature;
+}
+[];
 
 /** A single cost estimate entry for an action. */
 export interface StepCostEstimateEntry {
