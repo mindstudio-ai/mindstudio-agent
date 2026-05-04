@@ -993,8 +993,10 @@ export class MindStudioAgent {
   }
 
   /** List packaged workflows available to the organization. */
-  async listPackagedWorkflows(): Promise<{ workflows: PackagedWorkflow[] }> {
-    const { data } = await request<{ workflows: PackagedWorkflow[] }>(
+  async listPackagedWorkflows(): Promise<{
+    packagedWorkflows: PackagedWorkflow[];
+  }> {
+    const { data } = await request<{ packagedWorkflows: PackagedWorkflow[] }>(
       this._currentHttpConfig,
       'GET',
       '/helpers/packaged-workflows',
