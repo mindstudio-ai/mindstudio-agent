@@ -82,6 +82,7 @@ const HELPER_DESCRIPTIONS: Record<string, string> = {
   getConnector: 'Get details for an OAuth connector service.',
   getConnectorAction: 'Get full configuration for an OAuth connector action.',
   listConnections: 'List OAuth connections for the organization (authenticated third-party service links).',
+  listPackagedWorkflows: 'List packaged workflows available to the organization.',
   estimateStepCost: 'Estimate the cost of executing an action before running it.',
   changeName: 'Update the display name of the authenticated agent.',
   changeProfilePicture: 'Update the profile picture of the authenticated agent.',
@@ -192,6 +193,12 @@ const HELPER_TOOLS: McpTool[] = [
     name: 'listConnections',
     description:
       'List OAuth connections for the organization (authenticated third-party service links). Use the returned connection IDs when calling OAuth connector actions.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'listPackagedWorkflows',
+    description:
+      'List packaged workflows available to the organization, including their app/workflow IDs and input/output signatures.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -482,6 +489,8 @@ export async function startMcpServer(options?: {
             );
           } else if (toolName === 'listConnections') {
             result = await (getAgent() as any).listConnections();
+          } else if (toolName === 'listPackagedWorkflows') {
+            result = await (getAgent() as any).listPackagedWorkflows();
           } else if (toolName === 'estimateActionCost') {
             const meta = await getMetadata();
             const rawType = args.stepType as string;

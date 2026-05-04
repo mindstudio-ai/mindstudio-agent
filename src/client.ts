@@ -4,7 +4,13 @@ import { getRequestContext } from './context.js';
 import { RateLimiter, type AuthType } from './rate-limit.js';
 import { loadConfig, type MindStudioConfig } from './config.js';
 import { AuthContext } from './auth/index.js';
-import { createDb, Table, type Db, type DefineTableOptions, type TableConfig } from './db/index.js';
+import {
+  createDb,
+  Table,
+  type Db,
+  type DefineTableOptions,
+  type TableConfig,
+} from './db/index.js';
 import {
   buildTaskRequestBody,
   runTaskPoll,
@@ -35,6 +41,7 @@ import type {
   BatchStepResult,
   ExecuteStepBatchOptions,
   ExecuteStepBatchResult,
+  PackagedWorkflow,
 } from './types.js';
 
 const DEFAULT_BASE_URL = 'https://v1.mindstudio-api.com';
@@ -135,7 +142,11 @@ export class MindStudioAgent {
   private get _currentHttpConfig(): HttpClientConfig {
     const rctx = getRequestContext();
     if (rctx?.remoteHostname) {
-      return { ...this._httpConfig, baseUrl: rctx.remoteHostname, token: this._token };
+      return {
+        ...this._httpConfig,
+        baseUrl: rctx.remoteHostname,
+        token: this._token,
+      };
     }
     return this._httpConfig;
   }
@@ -153,7 +164,11 @@ export class MindStudioAgent {
   private _getContext(): AppContextResult | undefined {
     const rctx = getRequestContext();
     if (rctx?.auth && rctx?.databases) {
-      return { auth: rctx.auth, databases: rctx.databases, authConfig: rctx.authConfig };
+      return {
+        auth: rctx.auth,
+        databases: rctx.databases,
+        authConfig: rctx.authConfig,
+      };
     }
     return this._context;
   }
@@ -174,8 +189,7 @@ export class MindStudioAgent {
       options.reuseThreadId ??
       /^(true|1)$/i.test(process.env.MINDSTUDIO_REUSE_THREAD_ID ?? '');
 
-    this._appId =
-      options.appId ?? process.env.MINDSTUDIO_APP_ID ?? undefined;
+    this._appId = options.appId ?? process.env.MINDSTUDIO_APP_ID ?? undefined;
 
     this._authType = authType;
 
@@ -215,12 +229,17 @@ export class MindStudioAgent {
       return this._executeStepStreaming<TOutput>(
         stepType,
         step,
-        options as StepExecutionOptions & { onLog: (event: StepLogEvent) => void },
+        options as StepExecutionOptions & {
+          onLog: (event: StepLogEvent) => void;
+        },
       );
     }
 
     const threadId =
-      options?.threadId ?? (this._reuseThreadId && !getRequestContext() ? this._threadId : undefined);
+      options?.threadId ??
+      (this._reuseThreadId && !getRequestContext()
+        ? this._threadId
+        : undefined);
 
     // 1. POST to async endpoint — returns immediately with a poll token
     const { data: asyncData, headers } = await request<{
@@ -259,7 +278,8 @@ export class MindStudioAgent {
       });
 
       // Retry silently on transient server errors
-      if (res.status === 502 || res.status === 503 || res.status === 504) continue;
+      if (res.status === 502 || res.status === 503 || res.status === 504)
+        continue;
 
       if (res.status === 404) {
         throw new MindStudioError(
@@ -344,7 +364,10 @@ export class MindStudioAgent {
     options: StepExecutionOptions & { onLog: (event: StepLogEvent) => void },
   ): Promise<StepExecutionResult<TOutput>> {
     const threadId =
-      options.threadId ?? (this._reuseThreadId && !getRequestContext() ? this._threadId : undefined);
+      options.threadId ??
+      (this._reuseThreadId && !getRequestContext()
+        ? this._threadId
+        : undefined);
 
     const url = `${this._currentHttpConfig.baseUrl}/developer/v2/steps/${stepType}/execute`;
     const body = {
@@ -391,15 +414,25 @@ export class MindStudioAgent {
             (typeof body.details === 'string' ? body.details : undefined);
           if (errMsg) message = errMsg;
           else if (body.error || body.message || body.details) {
-            message = JSON.stringify(body.error ?? body.message ?? body.details);
+            message = JSON.stringify(
+              body.error ?? body.message ?? body.details,
+            );
           }
           if (body.code) code = body.code as string;
         } catch {
-          const stripped = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          const stripped = text
+            .replace(/<[^>]*>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
           if (stripped) message = stripped.slice(0, 200);
         }
       } catch {}
-      throw new MindStudioError(`[${stepType}] ${message}`, code, res.status, details);
+      throw new MindStudioError(
+        `[${stepType}] ${message}`,
+        code,
+        res.status,
+        details,
+      );
     }
 
     // Capture headers from the initial response (same as non-streaming path)
@@ -518,8 +551,7 @@ export class MindStudioAgent {
       }
 
       // Process headers — same as non-streaming path
-      const returnedThreadId =
-        headers.get('x-mindstudio-thread-id') ?? '';
+      const returnedThreadId = headers.get('x-mindstudio-thread-id') ?? '';
       if (this._reuseThreadId && returnedThreadId && !getRequestContext()) {
         this._threadId = returnedThreadId;
       }
@@ -564,14 +596,20 @@ export class MindStudioAgent {
     options?: ExecuteStepBatchOptions,
   ): Promise<ExecuteStepBatchResult> {
     const threadId =
-      options?.threadId ?? (this._reuseThreadId && !getRequestContext() ? this._threadId : undefined);
+      options?.threadId ??
+      (this._reuseThreadId && !getRequestContext()
+        ? this._threadId
+        : undefined);
 
     // 1. POST to async endpoint — returns immediately with a poll token
     const { data: asyncData } = await request<{
       batchToken: string;
       threadId?: string;
     }>(this._currentHttpConfig, 'POST', '/steps/execute-batch-async', {
-      steps: steps.map((s) => ({ ...s, stepType: resolveStepType(s.stepType) })),
+      steps: steps.map((s) => ({
+        ...s,
+        stepType: resolveStepType(s.stepType),
+      })),
       ...(options?.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
     });
@@ -589,7 +627,8 @@ export class MindStudioAgent {
       });
 
       // Retry silently on transient server errors
-      if (res.status === 502 || res.status === 503 || res.status === 504) continue;
+      if (res.status === 502 || res.status === 503 || res.status === 504)
+        continue;
 
       if (res.status === 404) {
         throw new MindStudioError(
@@ -629,7 +668,11 @@ export class MindStudioAgent {
       };
 
       if (poll.status === 'pending') {
-        if (options?.onProgress && poll.totalSteps != null && poll.completedSteps != null) {
+        if (
+          options?.onProgress &&
+          poll.totalSteps != null &&
+          poll.completedSteps != null
+        ) {
           options.onProgress(poll.completedSteps, poll.totalSteps);
         }
         continue;
@@ -799,7 +842,8 @@ export class MindStudioAgent {
       });
 
       // Retry silently on transient server errors
-      if (res.status === 502 || res.status === 503 || res.status === 504) continue;
+      if (res.status === 502 || res.status === 503 || res.status === 504)
+        continue;
 
       if (res.status === 404) {
         throw new MindStudioError(
@@ -944,6 +988,16 @@ export class MindStudioAgent {
       this._currentHttpConfig,
       'GET',
       '/helpers/connections',
+    );
+    return data;
+  }
+
+  /** List packaged workflows available to the organization. */
+  async listPackagedWorkflows(): Promise<{ workflows: PackagedWorkflow[] }> {
+    const { data } = await request<{ workflows: PackagedWorkflow[] }>(
+      this._currentHttpConfig,
+      'GET',
+      '/helpers/packaged-workflows',
     );
     return data;
   }
@@ -1252,7 +1306,9 @@ export class MindStudioAgent {
             (typeof body.details === 'string' ? body.details : undefined);
           if (errMsg) message = errMsg;
           else if (body.error || body.message || body.details) {
-            message = JSON.stringify(body.error ?? body.message ?? body.details);
+            message = JSON.stringify(
+              body.error ?? body.message ?? body.details,
+            );
           }
           if (body.code) code = body.code as string;
         } catch {
@@ -1263,11 +1319,7 @@ export class MindStudioAgent {
         // Couldn't read response body at all
       }
 
-      throw new MindStudioError(
-        `[db] ${message}`,
-        code,
-        res.status,
-      );
+      throw new MindStudioError(`[db] ${message}`, code, res.status);
     }
 
     const data = (await res.json()) as {
@@ -1391,12 +1443,14 @@ export class MindStudioAgent {
       batch: ((...queries: PromiseLike<unknown>[]) => {
         return (async () => {
           await agent.ensureContext();
-          const resolvedDb = agent._db ?? createDb(
-            agent._getContext()!.databases,
-            agent._executeDbBatch.bind(agent),
-            agent._getContext()!.authConfig,
-            agent._syncRoles.bind(agent),
-          );
+          const resolvedDb =
+            agent._db ??
+            createDb(
+              agent._getContext()!.databases,
+              agent._executeDbBatch.bind(agent),
+              agent._getContext()!.authConfig,
+              agent._syncRoles.bind(agent),
+            );
           return resolvedDb.batch(...queries);
         })();
       }) as Db['batch'],
@@ -1457,9 +1511,7 @@ export class MindStudioAgent {
    * }
    * ```
    */
-  async resolveUsers(
-    userIds: string[],
-  ): Promise<{ users: ResolvedUser[] }> {
+  async resolveUsers(userIds: string[]): Promise<{ users: ResolvedUser[] }> {
     const { data } = await request<{ users: ResolvedUser[] }>(
       this._currentHttpConfig,
       'POST',
@@ -1511,9 +1563,14 @@ export class MindStudioAgent {
 
   /** Update the profile picture of the authenticated user/agent. */
   async changeProfilePicture(url: string): Promise<void> {
-    await request(this._currentHttpConfig, 'POST', '/account/change-profile-picture', {
-      url,
-    });
+    await request(
+      this._currentHttpConfig,
+      'POST',
+      '/account/change-profile-picture',
+      {
+        url,
+      },
+    );
   }
 
   /**
@@ -1593,8 +1650,7 @@ function resolveToken(
   if (provided) return { token: provided, authType: 'apiKey' };
   if (process.env.MINDSTUDIO_API_KEY)
     return { token: process.env.MINDSTUDIO_API_KEY, authType: 'apiKey' };
-  if (config?.apiKey)
-    return { token: config.apiKey, authType: 'apiKey' };
+  if (config?.apiKey) return { token: config.apiKey, authType: 'apiKey' };
   throw new MindStudioError(
     'No API key provided. Run `mindstudio login`, pass `apiKey` to the ' +
       'constructor, or set the MINDSTUDIO_API_KEY environment variable.',
