@@ -283,22 +283,22 @@ Packaged workflows are reusable MindStudio workflows exposed to your organizatio
 ## Built-in actions
 
 Every action has a dedicated typed method. A few highlights:
-
-| Method                  | Description                          |
-| ----------------------- | ------------------------------------ |
-| `generateText()`        | Send a message to any AI model       |
-| `generateImage()`       | Generate an image from a prompt      |
-| `generateVideo()`       | Generate a video from a prompt       |
-| `generateAsset()`       | Generate an HTML/PDF/PNG/video asset |
-| `analyzeImage()`        | Analyze an image with a vision model |
-| `textToSpeech()`        | Convert text to speech               |
-| `transcribeAudio()`     | Transcribe audio to text             |
-| `scrapeUrl()`           | Scrape a web page                    |
-| `searchGoogle()`        | Search Google                        |
-| `httpRequest()`         | Make an HTTP request                 |
-| `sendEmail()`           | Send an email                        |
-| `postToSlackChannel()`  | Post to a Slack channel              |
-| `runPackagedWorkflow()` | Run another MindStudio workflow      |
+| Method | Description |
+| ----------------------- | ---------------------------------------- |
+| `generateText()` | Send a message to any AI model |
+| `generateImage()` | Generate an image from a prompt |
+| `generateVideo()` | Generate a video from a prompt |
+| `generate3dModel()` | Generate a 3D Model from image or prompt |
+| `generateAsset()` | Generate an HTML/PDF/PNG/video asset |
+| `analyzeImage()` | Analyze an image with a vision model |
+| `textToSpeech()` | Convert text to speech |
+| `transcribeAudio()` | Transcribe audio to text |
+| `scrapeUrl()` | Scrape a web page |
+| `searchGoogle()` | Search Google |
+| `httpRequest()` | Make an HTTP request |
+| `sendEmail()` | Send an email |
+| `postToSlackChannel()` | Post to a Slack channel |
+| `runPackagedWorkflow()` | Run another MindStudio workflow |
 
 ...and 130+ more for Google Docs/Sheets/Calendar, YouTube, LinkedIn, HubSpot, Airtable, Notion, Coda, Telegram, media processing, PII detection, and more.
 
