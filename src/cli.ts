@@ -18,6 +18,7 @@ Discover:
   list-actions [--json] [--summary]    List all available actions
   info <action>                        Show action details and parameters
   list-models [--type <t>] [--summary] List available AI models
+  list-packaged-workflows              List packaged workflows
 
 Batch:
   batch [json]                         Execute multiple actions in parallel
@@ -181,6 +182,7 @@ const BUILTIN_COMMANDS = new Set([
   'list-models-by-type',
   'list-models-summary',
   'list-models-summary-by-type',
+  'list-packaged-workflows',
   'list-connectors',
   'get-connector',
   'get-connector-action',
@@ -502,6 +504,15 @@ async function cmdListConnections(options: {
 }): Promise<void> {
   const agent = await createAgent(options);
   const result = await agent.listConnections();
+  jsonOut(result);
+}
+
+async function cmdListPackagedWorkflows(options: {
+  apiKey?: string;
+  baseUrl?: string;
+}): Promise<void> {
+  const agent = await createAgent(options);
+  const result = await agent.listPackagedWorkflows();
   jsonOut(result);
 }
 
@@ -1624,6 +1635,14 @@ async function main(): Promise<void> {
 
     if (command === 'list-connections') {
       await cmdListConnections({
+        apiKey: values['api-key'] as string | undefined,
+        baseUrl: values['base-url'] as string | undefined,
+      });
+      return;
+    }
+
+    if (command === 'list-packaged-workflows') {
+      await cmdListPackagedWorkflows({
         apiKey: values['api-key'] as string | undefined,
         baseUrl: values['base-url'] as string | undefined,
       });

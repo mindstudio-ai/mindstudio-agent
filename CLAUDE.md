@@ -63,7 +63,8 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
 - `mindstudio logout` — clears stored credentials
 - `mindstudio whoami` — shows current auth source (flag, env, config file, or managed mode)
 - `mindstudio exec <method> '<json>'` — execute a step method, JSON output to stdout
-- `mindstudio list [--json] [--summary]` — list available methods (`--summary` for compact `{method: description}` JSON, `--json` for full schemas)
+- `mindstudio list-actions [--json] [--summary]` — list available methods (`--summary` for compact `{method: description}` JSON, `--json` for full schemas)
+- `mindstudio list-packaged-workflows` — list packaged workflows available to the organization
 - `mindstudio agents [--json]` — list pre-built agents in the organization
 - `mindstudio run <appId> [json | --flags]` — run a pre-built agent (async poll, returns result)
 - `mindstudio batch [json]` — execute multiple steps in parallel (`POST /developer/v2/steps/execute-batch`). Input is a JSON array of `{ stepType, step }` objects (max 50). Supports `--app-id`, `--thread-id`, `--no-meta`. Input via arg or stdin pipe.
@@ -72,7 +73,7 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
 - MCP server creates one agent per session with `reuseThreadId: true`
 - CLI supports `--app-id` and `--thread-id` for thread persistence across calls
 - Both CLI and MCP consume `src/generated/metadata.ts` for method schemas and descriptions
-- MCP exposes `listSteps` (compact discovery), `listAgents`, `runAgent`, `executeBatch`, and all helper methods (`listModels`, `listModelsByType`, `listModelsSummary`, `listModelsSummaryByType`, `listConnectors`, `getConnector`, `getConnectorAction`, `listConnections`, `estimateStepCost`) as tools alongside all step methods
+- MCP exposes `listSteps` (compact discovery), `listAgents`, `runAgent`, `executeBatch`, and all helper methods (`listModels`, `listModelsByType`, `listModelsSummary`, `listModelsSummaryByType`, `listConnectors`, `getConnector`, `getConnectorAction`, `listConnections`, `listPackagedWorkflows`, `estimateStepCost`) as tools alongside all step methods
 - `tsup.config.ts` uses an array of two configs: library build (dts, sourcemap) + CLI build (shebang, no dts)
 
 ## Architecture notes
@@ -97,7 +98,9 @@ The package ships a CLI binary (`mindstudio`) and a built-in MCP server for AI a
   - `listConnectors()` / `getConnector(serviceId)` — `GET /developer/v2/helpers/connectors[/{serviceId}]`
   - `getConnectorAction(serviceId, actionId)` — `GET /developer/v2/helpers/connectors/{serviceId}/{actionId}` (full action config with input fields)
   - `listConnections()` — `GET /developer/v2/helpers/connections` (authenticated, returns OAuth connection IDs for use with connector actions)
+  - `listPackagedWorkflows()` — `GET /developer/v2/helpers/packaged-workflows` (returns app/workflow IDs and input/output signatures)
   - Connectors are sourced from the open-source [MindStudio Connector Registry (MSCR)](https://github.com/mindstudio-ai/mscr) with 850+ connector actions across third-party services. Connector actions are executed via the `runFromConnectorRegistry` step and require the user to connect to the third-party service in MindStudio first.
+  - Packaged workflows are reusable MindStudio workflows exposed to the organization. `listPackagedWorkflows()` is for discovery: inspect available workflow IDs, required inputs, and output variables before calling the `runPackagedWorkflow` step.
   - `estimateStepCost(stepType, step?, options?)` — `POST /developer/v2/helpers/step-cost-estimate` (returns `{ costType?, estimates? }` with per-event pricing info)
 - **Agent methods** (`listAgents`, `runAgent`) are hand-written on `MindStudioAgent` (not generated). `listAgents()` calls `GET /developer/v2/agents/load`. `runAgent()` posts to `POST /developer/v2/agents/run` with `async: true`, then polls `GET /developer/v2/agents/run/poll/:callbackToken` until complete/error. Poll requests bypass the rate limiter (no auth needed, token is the secret). Default poll interval is 1s, configurable via `pollIntervalMs`.
 - **Batch execution** (`executeStepBatch`) is hand-written on `MindStudioAgent`. POSTs to `POST /developer/v2/steps/execute-batch` with `{ steps: [{ stepType, step }], appId?, threadId? }`. Max 50 steps per batch. Steps run in parallel server-side. Results come back in input order. Individual failures don't affect other steps. S3 output URLs are resolved in parallel. Returns `{ results: BatchStepResult[], totalBillingCost?, appId?, threadId? }`. Types: `BatchStepInput`, `BatchStepResult`, `ExecuteStepBatchOptions`, `ExecuteStepBatchResult`.

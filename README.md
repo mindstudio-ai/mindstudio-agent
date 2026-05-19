@@ -80,7 +80,10 @@ mindstudio generate-image '{prompt: "A mountain landscape at sunset"}'
 mindstudio generate-image --prompt "A sunset" --output-key imageUrl
 
 # List all available methods
-mindstudio list
+mindstudio list-actions
+
+# List packaged workflows
+mindstudio list-packaged-workflows
 
 # Show details about a method
 mindstudio info generate-image
@@ -261,6 +264,9 @@ const { action } = await agent.getConnectorAction(
 // Check which services are connected in your org
 const { connections } = await agent.listConnections();
 
+// Browse packaged workflows available to your org
+const { workflows } = await agent.listPackagedWorkflows();
+
 // Execute a connector action
 const result = await agent.runFromConnectorRegistry({
   serviceId: 'slack',
@@ -272,25 +278,27 @@ const result = await agent.runFromConnectorRegistry({
 
 Connectors require the user to connect to the third-party service in MindStudio before use. Use `listConnections()` to check what's available.
 
+Packaged workflows are reusable MindStudio workflows exposed to your organization. Use `listPackagedWorkflows()` to discover which workflows are available, inspect their required inputs and output variables, then call them from another workflow with `runPackagedWorkflow()`. Some examples of packaged workflows are deepResearch, generateSpritesheet, generatePodcast etc.
+
 ## Built-in actions
 
 Every action has a dedicated typed method. A few highlights:
-
-| Method                  | Description                          |
-| ----------------------- | ------------------------------------ |
-| `generateText()`        | Send a message to any AI model       |
-| `generateImage()`       | Generate an image from a prompt      |
-| `generateVideo()`       | Generate a video from a prompt       |
-| `generateAsset()`       | Generate an HTML/PDF/PNG/video asset |
-| `analyzeImage()`        | Analyze an image with a vision model |
-| `textToSpeech()`        | Convert text to speech               |
-| `transcribeAudio()`     | Transcribe audio to text             |
-| `scrapeUrl()`           | Scrape a web page                    |
-| `searchGoogle()`        | Search Google                        |
-| `httpRequest()`         | Make an HTTP request                 |
-| `sendEmail()`           | Send an email                        |
-| `postToSlackChannel()`  | Post to a Slack channel              |
-| `runPackagedWorkflow()` | Run another MindStudio workflow      |
+| Method | Description |
+| ----------------------- | ---------------------------------------- |
+| `generateText()` | Send a message to any AI model |
+| `generateImage()` | Generate an image from a prompt |
+| `generateVideo()` | Generate a video from a prompt |
+| `generate3dModel()` | Generate a 3D Model from image or prompt |
+| `generateAsset()` | Generate an HTML/PDF/PNG/video asset |
+| `analyzeImage()` | Analyze an image with a vision model |
+| `textToSpeech()` | Convert text to speech |
+| `transcribeAudio()` | Transcribe audio to text |
+| `scrapeUrl()` | Scrape a web page |
+| `searchGoogle()` | Search Google |
+| `httpRequest()` | Make an HTTP request |
+| `sendEmail()` | Send an email |
+| `postToSlackChannel()` | Post to a Slack channel |
+| `runPackagedWorkflow()` | Run another MindStudio workflow |
 
 ...and 130+ more for Google Docs/Sheets/Calendar, YouTube, LinkedIn, HubSpot, Airtable, Notion, Coda, Telegram, media processing, PII detection, and more.
 
@@ -557,7 +565,8 @@ Commands:
   <method> [json | --flags]        Execute a step method
   exec <method> [json | --flags]   Execute a step method (same as above)
   batch [json]                     Execute multiple steps in parallel
-  list [--json]                    List available methods
+  list-actions [--json] [--summary] List available methods
+  list-packaged-workflows          List packaged workflows
   info <method>                    Show method details (params, types, output)
   agents [--json]                  List pre-built agents in your organization
   run <appId> [json | --flags]     Run a pre-built agent and wait for result
