@@ -1519,43 +1519,49 @@ export class MindStudioAgent {
   /**
    * Upload a file to the MindStudio CDN.
    *
-   * Gets a signed upload URL, PUTs the file content, and returns the
-   * permanent public URL.
+   * Gets a presigned upload request from the API, POSTs the file as
+   * multipart/form-data, and returns the permanent public URL.
    */
   async uploadFile(
     content: Buffer | Uint8Array,
-    options: { extension: string; type?: string },
+    options: { extension: string; type?: string; filename?: string },
   ): Promise<UploadFileResult> {
-    const { data } = await request<{ uploadUrl: string; url: string }>(
-      this._currentHttpConfig,
-      'POST',
-      '/account/upload',
-      {
-        extension: options.extension,
-        ...(options.type != null && { type: options.type }),
-      },
-    );
+    const filename = options.filename ?? `upload.${options.extension}`;
+    const { data } = await request<{
+      name: string;
+      path: string;
+      publicUrl?: string;
+      url: string;
+      fields: Record<string, string>;
+    }>(this._currentHttpConfig, 'POST', '/account/upload', { filename });
+
+    const form = new FormData();
+    for (const [k, v] of Object.entries(data.fields)) form.append(k, v);
     const buf = content.buffer.slice(
       content.byteOffset,
       content.byteOffset + content.byteLength,
     ) as ArrayBuffer;
-    const res = await fetch(data.uploadUrl, {
-      method: 'PUT',
-      body: buf,
-      headers: options.type ? { 'Content-Type': options.type } : {},
-    });
+    const fileBlob = new Blob([buf], options.type ? { type: options.type } : undefined);
+    form.append('file', fileBlob, filename);
+
+    const res = await fetch(data.url, { method: 'POST', body: form });
     if (!res.ok) {
-      const errorBody = await res.json().catch(() => ({}));
+      const errorText = await res.text().catch(() => '');
       throw new MindStudioError(
-        (errorBody as Record<string, string>).message ??
-          (errorBody as Record<string, string>).error ??
-          `Upload failed: ${res.status} ${res.statusText}`,
-        (errorBody as Record<string, string>).code ?? 'upload_error',
+        `Upload failed: ${res.status} ${res.statusText}${errorText ? ` — ${errorText.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)}` : ''}`,
+        'upload_error',
         res.status,
-        errorBody,
+        errorText || undefined,
       );
     }
-    return { url: data.url };
+    if (!data.publicUrl) {
+      throw new MindStudioError(
+        'Upload succeeded but server did not return a public URL.',
+        'missing_public_url',
+        500,
+      );
+    }
+    return { url: data.publicUrl };
   }
 }
 

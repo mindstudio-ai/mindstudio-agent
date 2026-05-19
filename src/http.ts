@@ -67,6 +67,8 @@ async function requestWithRetry<T>(
         const body = JSON.parse(text) as Record<string, unknown>;
         details = body;
         const errMsg =
+          (typeof body.errorMessage === 'string' ? body.errorMessage : undefined) ??
+          (typeof body.errorString === 'string' ? body.errorString : undefined) ??
           (typeof body.error === 'string' ? body.error : undefined) ??
           (typeof body.message === 'string' ? body.message : undefined) ??
           (typeof body.details === 'string' ? body.details : undefined);
@@ -74,7 +76,8 @@ async function requestWithRetry<T>(
         else if (body.error || body.message || body.details) {
           message = JSON.stringify(body.error ?? body.message ?? body.details);
         }
-        if (body.code) code = body.code as string;
+        if (body.code) code = String(body.code);
+        else if (typeof body.errorString === 'string') code = body.errorString;
       } catch {
         if (text) {
           // Strip HTML tags and collapse whitespace for readable error text

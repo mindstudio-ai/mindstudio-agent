@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { extname } from 'node:path';
+import { basename, extname } from 'node:path';
 
 const HELP = `Usage: mindstudio <command> [options]
 
@@ -678,6 +678,7 @@ async function cmdUpload(
 
   const { url } = await agent.uploadFile(content, {
     extension: ext,
+    filename: basename(filePath),
     ...(mimeType && { type: mimeType }),
   });
 
