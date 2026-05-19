@@ -12,7 +12,7 @@
 
 import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
-import { extname } from 'node:path';
+import { basename, extname } from 'node:path';
 import { MindStudioAgent } from './client.js';
 import { MindStudioError } from './errors.js';
 import type { StepMetadata } from './generated/metadata.js';
@@ -521,6 +521,7 @@ export async function startMcpServer(options?: {
             const mimeType = MIME_TYPES[ext];
             result = await (getAgent() as any).uploadFile(content, {
               extension: ext,
+              filename: basename(filePath),
               ...(mimeType && { type: mimeType }),
             });
           } else if (toolName === 'executeBatch') {
