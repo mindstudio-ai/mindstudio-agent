@@ -77,7 +77,7 @@ export const instructions = `<instructions>
   ## Task agent models
   When recommending models for \`runTask()\`, ONLY use models with strong tool-use support. The model must be one of:
 
-  Anthropic: \`claude-4-5-haiku\`, \`claude-4-5-sonnet\`, \`claude-4-6-sonnet\`, \`claude-4-5-opus\`, \`claude-4-6-opus\`
+  Anthropic: \`claude-4-5-haiku\`, \`claude-4-5-sonnet\`, \`claude-4-6-sonnet\`, \`claude-4-5-opus\`, \`claude-4-6-opus\`, \`claude-fable-5\`,
   Google: \`gemini-3-flash\`, \`gemini-3-pro\`, \`gemini-3.1-pro\`
   OpenAI: \`gpt-4o-mini\`, \`gpt-4o\`, \`gpt-5-mini\`, \`gpt-5\`, \`gpt-5.1\`, \`gpt-5.2\`
   Grok: \`grok-build-0.1\`
