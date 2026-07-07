@@ -33,7 +33,7 @@ Account:
   whoami                               Show current user and organization
   change-name <name>                   Update your display name
   change-profile-picture <url>         Update your profile picture
-  upload <filepath>                    Upload a file to the MindStudio CDN
+  upload <filepath>                    Upload a file to the CDN, print its URL (alias: upload-file)
   update                               Update to the latest version
 
 OAuth integrations:
@@ -175,6 +175,7 @@ const BUILTIN_COMMANDS = new Set([
   'agents',
   'run-agent',
   'upload',
+  'upload-file',
   'login',
   'logout',
   'whoami',
@@ -1559,20 +1560,22 @@ async function main(): Promise<void> {
       return;
     }
 
-    if (command === 'upload') {
+    if (command === 'upload' || command === 'upload-file') {
       const filePath = positionals[1];
       if (!filePath)
         usageBlock([
-          'upload — Upload a file to the MindStudio CDN',
+          'upload — Upload a file to the MindStudio CDN (alias: upload-file)',
           '',
           'Usage:',
           '  mindstudio upload <filepath>',
           '',
           'Returns the permanent public URL for the uploaded file.',
+          'Use this to host a local file (e.g. a generated icon) and get a',
+          'URL — no need to write or trigger an app method.',
           '',
           'Examples:',
           '  mindstudio upload photo.png',
-          '  mindstudio upload /path/to/document.pdf',
+          '  mindstudio upload-file /path/to/document.pdf',
         ]);
       await cmdUpload(filePath, {
         apiKey: values['api-key'] as string | undefined,
