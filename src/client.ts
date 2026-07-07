@@ -36,6 +36,8 @@ import type {
   StepCostEstimateEntry,
   UploadFileResult,
   ResolvedUser,
+  ReportIssueInput,
+  ReportedIssue,
   AppContextResult,
   BatchStepInput,
   BatchStepResult,
@@ -1521,6 +1523,99 @@ export class MindStudioAgent {
       { userIds },
     );
     return data;
+  }
+
+  // -------------------------------------------------------------------------
+  // Issue reporting
+  // -------------------------------------------------------------------------
+
+  /**
+   * File a bug report or feature idea into this app's issue tracker.
+   *
+   * For building an in-app "Report a bug" feature: wire the frontend UI to
+   * an app backend method that calls this. The issue lands in the app's
+   * issue tracker, visible to the app's team and available to the Remy agent.
+   *
+   * **Backend / managed-context only.** It authenticates with the app's hook
+   * token (the same credential used for `db` queries), and the app id is
+   * derived from that token server-side. Calling it outside a managed
+   * context (e.g. with a plain API key) will fail with `401`.
+   *
+   * Rate limited per app (20 / 60s). On the limit this throws a
+   * `MindStudioError` with `code === 'rate_limited'` and `status === 429` —
+   * catch it to show a graceful "try again shortly" message. Every call
+   * creates a new issue (no dedupe), so guard against double-submit in the UI.
+   *
+   * @returns The filed issue. Show `issue.number` to confirm "Reported as #42".
+   *
+   * @example
+   * ```ts
+   * // app backend method, e.g. exported as `reportBug`
+   * export async function reportBug({ title, details, userEmail }) {
+   *   try {
+   *     const { number } = await mindstudio.reportIssue({
+   *       title,
+   *       body: details,
+   *       kind: 'bug',
+   *       reporter: userEmail, // free-form label; omit for anonymous
+   *     });
+   *     return { ok: true, issueNumber: number };
+   *   } catch (e) {
+   *     if (e instanceof MindStudioError && e.code === 'rate_limited') {
+   *       return { ok: false, retry: true };
+   *     }
+   *     throw e;
+   *   }
+   * }
+   * ```
+   */
+  async reportIssue(input: ReportIssueInput): Promise<ReportedIssue> {
+    const title = input.title?.trim();
+    if (!title) {
+      throw new MindStudioError('title is required', 'missing_title', 400);
+    }
+
+    // Raw hook-token call (mirrors _executeDbBatch) — deliberately NOT routed
+    // through request(), which auto-retries 429; a rate_limited response must
+    // surface immediately as a typed error, not be silently retried.
+    const url = `${this._currentHttpConfig.baseUrl}/_internal/v2/report-issue`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: this._token,
+      },
+      body: JSON.stringify({
+        title,
+        ...(input.body !== undefined && { body: input.body }),
+        ...(input.kind !== undefined && { kind: input.kind }),
+        ...(input.reporter !== undefined && { reporter: input.reporter }),
+      }),
+    });
+
+    if (!res.ok) {
+      // Platform error envelope: { code, errorString, errorMessage }.
+      // Map errorString -> MindStudioError.code so app code can switch on it
+      // (e.g. err.code === 'rate_limited').
+      let code = 'report_issue_error';
+      let message = `Report issue failed: ${res.status} ${res.statusText}`;
+      let details: unknown;
+      try {
+        const body = (await res.json()) as Record<string, unknown>;
+        details = body;
+        if (typeof body.errorString === 'string') code = body.errorString;
+        message =
+          (typeof body.errorMessage === 'string' && body.errorMessage) ||
+          (typeof body.errorString === 'string' && body.errorString) ||
+          message;
+      } catch {
+        // Non-JSON body — keep the defaults.
+      }
+      throw new MindStudioError(message, code, res.status, details);
+    }
+
+    const data = (await res.json()) as { issue: ReportedIssue };
+    return data.issue;
   }
 
   // -------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import { MindStudioAgent as _MindStudioAgent } from './client.js';
 import type { StepMethods } from './generated/steps.js';
-import type { AgentOptions } from './types.js';
+import type { AgentOptions, ReportIssueInput } from './types.js';
 import type { AuthContext as _AuthContext } from './auth/index.js';
 import type { Db as _Db } from './db/index.js';
 
@@ -25,6 +25,8 @@ export type {
   StepLogEvent,
   User,
   ResolvedUser,
+  ReportIssueInput,
+  ReportedIssue,
   AgentInfo,
   ListAgentsResult,
   UserInfoResult,
@@ -205,3 +207,19 @@ export const stream = (data: string | Record<string, unknown>) =>
  * ```
  */
 export const resolveUser = (userId: string) => mindstudio.resolveUser(userId);
+
+/**
+ * File a bug report or feature idea into this app's issue tracker.
+ * Bound to the default singleton. Backend / managed-context only.
+ *
+ * @example
+ * ```ts
+ * import { reportIssue } from '@mindstudio-ai/agent';
+ *
+ * const { number } = await reportIssue({ title: 'Checkout fails', kind: 'bug' });
+ * ```
+ *
+ * @see {@link MindStudioAgent.reportIssue}
+ */
+export const reportIssue = (input: ReportIssueInput) =>
+  mindstudio.reportIssue(input);
