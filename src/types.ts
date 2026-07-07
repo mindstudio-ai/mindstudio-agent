@@ -222,6 +222,47 @@ export interface ResolvedUser {
 }
 
 // ---------------------------------------------------------------------------
+// Issue reporting (in-app "report a bug" / feature idea)
+// ---------------------------------------------------------------------------
+
+/** Input for {@link MindStudioAgent.reportIssue}. */
+export interface ReportIssueInput {
+  /** Short summary. Required, non-empty, ≤ 300 chars (trimmed server-side). */
+  title: string;
+  /** Longer description. Optional, ≤ 10,000 chars. Defaults to `""`. */
+  body?: string;
+  /** Report kind. Defaults to `"bug"`. */
+  kind?: 'bug' | 'idea';
+  /**
+   * Free-form label for who reported it — a name, email, or ticket id.
+   * ≤ 200 chars. Display-only; NOT an identity check and NOT tied to a user.
+   * Omit for an anonymous report.
+   */
+  reporter?: string;
+}
+
+/** A filed issue, returned by {@link MindStudioAgent.reportIssue}. */
+export interface ReportedIssue {
+  id: string;
+  /** Friendly per-app number — show the user "Reported as #42". */
+  number: number;
+  title: string;
+  body: string;
+  kind: 'bug' | 'idea';
+  status: 'open';
+  /** `"sdk"` for in-app reports filed through this method. */
+  authorKind: 'sdk';
+  authorUserId: string | null;
+  /** Echoes the `reporter` that was sent, or null. */
+  reporter: string | null;
+  /** ISO-8601. */
+  createdAt: string;
+  /** ISO-8601. */
+  updatedAt: string;
+  closedAt: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // Helper types (models, connectors, connections, cost estimates)
 // ---------------------------------------------------------------------------
 
