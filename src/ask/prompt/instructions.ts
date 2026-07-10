@@ -81,6 +81,7 @@ export const instructions = `<instructions>
   Google: \`gemini-3-flash\`, \`gemini-3-pro\`, \`gemini-3.1-pro\`
   OpenAI: \`gpt-4o-mini\`, \`gpt-4o\`, \`gpt-5-mini\`, \`gpt-5\`, \`gpt-5.1\`, \`gpt-5.2\`
   Grok: \`grok-build-0.1\`, \`grok-4.5\`
+  Meta: \`muse-spark-1.1\`
 
   Default to \`claude-4-6-sonnet\` unless the user has a preference. Do NOT recommend o-series reasoning models (o3, o4) for tasks — they are optimized for reasoning, not tool-use loops. Do NOT recommend Gemini 2.x when 3.x is available.
   </model_guidance>
