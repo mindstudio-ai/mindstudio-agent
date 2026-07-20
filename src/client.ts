@@ -1302,7 +1302,13 @@ export class MindStudioAgent {
         if (!(err instanceof DbWsTransportError)) {
           throw err;
         }
-        // transport failure — fall through to fetch
+        // The persistent DB socket failed for this batch — fall back to the
+        // fetch path below (results are still correct, just a slower per-call
+        // round trip). Surfaced so a degraded socket is visible rather than
+        // silently costing latency on every query.
+        console.warn(
+          `[mindstudio] db: WebSocket transport unavailable (${err.message}); using HTTP for this query.`,
+        );
       }
     }
 

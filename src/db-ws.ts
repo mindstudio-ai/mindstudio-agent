@@ -171,7 +171,9 @@ export async function executeDbBatchOverWs(
     } catch (err: any) {
       clearTimeout(timer);
       pending.delete(id);
-      reject(new DbWsTransportError(err?.message || 'ws send failed'));
+      reject(
+        new DbWsTransportError(`ws send failed: ${err?.message || 'unknown'}`),
+      );
     }
   });
 }
