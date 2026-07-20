@@ -1,6 +1,7 @@
 import { request, type HttpClientConfig } from './http.js';
 import { MindStudioError } from './errors.js';
 import { getRequestContext } from './context.js';
+import { executeDbBatchOverWs, DbWsTransportError } from './db-ws.js';
 import { RateLimiter, type AuthType } from './rate-limit.js';
 import { loadConfig, type MindStudioConfig } from './config.js';
 import { AuthContext } from './auth/index.js';
@@ -1283,6 +1284,28 @@ export class MindStudioAgent {
     databaseId: string,
     queries: { sql: string; params?: unknown[] }[],
   ): Promise<{ rows: unknown[]; changes: number }[]> {
+    // Prefer the persistent DB WebSocket when the sandbox injected DB_WS_URL.
+    // On a WS-transport failure (can't connect, dropped, timeout) fall back to
+    // the fetch below; a real query error surfaces (not retried, to avoid
+    // double-applying a write).
+    const dbWsUrl =
+      typeof process !== 'undefined' ? process.env?.DB_WS_URL : undefined;
+    if (dbWsUrl) {
+      try {
+        return await executeDbBatchOverWs(
+          dbWsUrl,
+          this._token,
+          databaseId,
+          queries,
+        );
+      } catch (err) {
+        if (!(err instanceof DbWsTransportError)) {
+          throw err;
+        }
+        // transport failure — fall through to fetch
+      }
+    }
+
     const url = `${this._currentHttpConfig.baseUrl}/_internal/v2/db/query`;
 
     const res = await fetch(url, {
