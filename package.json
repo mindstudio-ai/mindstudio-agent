@@ -1,6 +1,6 @@
 {
   "name": "@mindstudio-ai/agent",
-  "version": "0.1.77",
+  "version": "0.1.78",
   "description": "TypeScript SDK for MindStudio direct step execution",
   "type": "module",
   "main": "./dist/index.js",
