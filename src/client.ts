@@ -125,6 +125,10 @@ export class MindStudioAgent {
   /** @internal Auth type — 'internal' for CALLBACK_TOKEN (managed mode), 'apiKey' otherwise. */
   private _authType: AuthType;
 
+  /** @internal Usage source sent on step executions (from MINDSTUDIO_REQUEST_SOURCE).
+   *  Only set for api-key (CLI) auth so in-app/managed runtime is unaffected. */
+  private _requestSource: string | undefined;
+
   /**
    * @internal Resolve the current auth token. Checks ALS request context
    * first, then CALLBACK_TOKEN env var, then static config token.
@@ -196,6 +200,14 @@ export class MindStudioAgent {
 
     this._authType = authType;
 
+    // Build-time attribution: the Remy builder sandbox sets
+    // MINDSTUDIO_REQUEST_SOURCE=v2-agent-build. Only honor it for api-key (CLI)
+    // auth so in-app/managed runtime (internal auth) keeps its own source.
+    this._requestSource =
+      authType === 'apiKey'
+        ? process.env.MINDSTUDIO_REQUEST_SOURCE || undefined
+        : undefined;
+
     this._httpConfig = {
       baseUrl,
       token,
@@ -254,6 +266,7 @@ export class MindStudioAgent {
       ...(options?.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
       ...(this._currentStreamId != null && { streamId: this._currentStreamId }),
+      ...(this._requestSource != null && { requestSource: this._requestSource }),
     });
 
     // Capture rate limit from initial POST headers
@@ -378,6 +391,7 @@ export class MindStudioAgent {
       ...(options.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
       ...(this._currentStreamId != null && { streamId: this._currentStreamId }),
+      ...(this._requestSource != null && { requestSource: this._requestSource }),
     };
 
     await this._httpConfig.rateLimiter.acquire();
@@ -615,6 +629,7 @@ export class MindStudioAgent {
       })),
       ...(options?.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
+      ...(this._requestSource != null && { requestSource: this._requestSource }),
     });
 
     const pollUrl = `${this._currentHttpConfig.baseUrl}/developer/v2/steps/execute-batch-async/poll/${asyncData.batchToken}`;
