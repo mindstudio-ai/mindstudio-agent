@@ -1662,6 +1662,53 @@ export class MindStudioAgent {
     return data.issue;
   }
 
+  /**
+   * Invalidate the prerendered snapshot(s) for the current app so crawlers get
+   * a fresh render on their next visit. Call after content behind a prerendered
+   * page changes (e.g. a short URL's target). Omit `paths` (or pass an empty
+   * array) to purge every snapshot for the app.
+   *
+   * Raw hook-token call (mirrors `reportIssue`) — the appId comes from the
+   * token. Backend / managed-context only.
+   *
+   * ```ts
+   * await mindstudio.invalidatePrerender(['/u/abc']);
+   * ```
+   */
+  async invalidatePrerender(
+    paths?: string[],
+  ): Promise<{ purged: number | 'all' }> {
+    const url = `${this._currentHttpConfig.baseUrl}/_internal/v2/prerender/invalidate`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: this._token,
+      },
+      body: JSON.stringify(paths && paths.length ? { paths } : {}),
+    });
+
+    if (!res.ok) {
+      let code = 'prerender_invalidate_error';
+      let message = `Prerender invalidation failed: ${res.status} ${res.statusText}`;
+      let details: unknown;
+      try {
+        const body = (await res.json()) as Record<string, unknown>;
+        details = body;
+        if (typeof body.errorString === 'string') code = body.errorString;
+        message =
+          (typeof body.errorMessage === 'string' && body.errorMessage) ||
+          (typeof body.errorString === 'string' && body.errorString) ||
+          message;
+      } catch {
+        // Non-JSON body — keep the defaults.
+      }
+      throw new MindStudioError(message, code, res.status, details);
+    }
+
+    return (await res.json()) as { purged: number | 'all' };
+  }
+
   // -------------------------------------------------------------------------
   // App context
   // -------------------------------------------------------------------------

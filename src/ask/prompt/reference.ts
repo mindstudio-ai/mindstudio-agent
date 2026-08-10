@@ -79,7 +79,7 @@ export function buildReferenceDocs(data: ReferenceData): string {
   await mindstudio.generateImage({
     prompt: 'a sunset',
     imageModelOverride: {
-      model: 'flux-pro-2',
+      model: 'seedream-4.5',
       config: {
         width: 1024,
         height: 768,
