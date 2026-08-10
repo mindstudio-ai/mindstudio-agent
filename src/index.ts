@@ -223,3 +223,21 @@ export const resolveUser = (userId: string) => mindstudio.resolveUser(userId);
  */
 export const reportIssue = (input: ReportIssueInput) =>
   mindstudio.reportIssue(input);
+
+/**
+ * Invalidate this app's prerendered snapshot(s) so crawlers get a fresh render
+ * on their next visit. Bound to the default singleton. Backend / managed-context
+ * only. Omit `paths` (or pass an empty array) to purge every snapshot.
+ *
+ * @example
+ * ```ts
+ * import { prerender } from '@mindstudio-ai/agent';
+ *
+ * await prerender.invalidate(['/u/abc']);
+ * ```
+ *
+ * @see {@link MindStudioAgent.invalidatePrerender}
+ */
+export const prerender = {
+  invalidate: (paths?: string[]) => mindstudio.invalidatePrerender(paths),
+};
