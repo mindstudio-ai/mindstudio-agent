@@ -760,11 +760,18 @@ export class MindStudioAgent {
    * to produce structured output. The model receives the prompt and tools,
    * calls actions as needed, and returns JSON matching the output example.
    *
+   * Tools can be SDK actions, your own app's methods, or both. App methods run
+   * as the user who invoked the method that started the task, with their roles.
+   *
    * ```ts
    * const result = await agent.runTask<{ name: string; url: string }>({
-   *   prompt: 'Find canonical info for this restaurant.',
+   *   prompt: 'Find canonical info for this restaurant, then save it.',
    *   input: { restaurantName: 'Tartine Bakery SF' },
-   *   tools: ['searchGoogle', 'fetchUrl'],
+   *   tools: [
+   *     'searchGoogle',
+   *     'fetchUrl',
+   *     { appMethod: 'saveRestaurant', description: 'Persist the researched restaurant.' },
+   *   ],
    *   structuredOutputExample: JSON.stringify({ name: 'Tartine Bakery', url: 'https://tartinebakery.com' }),
    *   model: 'claude-4-6-sonnet',
    * });

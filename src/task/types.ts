@@ -9,11 +9,27 @@
 /**
  * Tool configuration for {@link RunTaskOptions.tools}.
  * - String: SDK method name (e.g. `'searchGoogle'`).
- * - Object: method name with default input overrides that merge with the model's tool call arguments.
+ * - `{ method }`: SDK method name with default input overrides.
+ * - `{ appMethod }`: one of your own app's methods, called as the invoking
+ *   user with their roles.
+ *
+ * Defaults win over whatever the model passes for the same field, including
+ * nested fields — the model decides what to do, you pin how it's done.
  */
 export type TaskToolConfig =
   | string
-  | { method: string; defaults?: Record<string, unknown> };
+  | { method: string; defaults?: Record<string, unknown> }
+  | {
+      appMethod: string;
+      /**
+       * How this method should be framed for *this* task. Falls back to the
+       * method's own description. Worth writing: the same method often serves
+       * different purposes across tasks, and the description is what tells the
+       * model when to reach for it.
+       */
+      description?: string;
+      defaults?: Record<string, unknown>;
+    };
 
 /** Options for {@link MindStudioAgent.runTask}. */
 export interface RunTaskOptions {
@@ -21,7 +37,7 @@ export interface RunTaskOptions {
   prompt: string;
   /** Structured input for this task instance. Passed as the user message. */
   input: Record<string, unknown>;
-  /** SDK method names to make available as tools, with optional default overrides. */
+  /** SDK actions and/or app methods to make available as tools. */
   tools: TaskToolConfig[];
   /** Expected output shape. Pass a JSON string or an object (will be stringified automatically). */
   structuredOutputExample: string | Record<string, unknown>;
@@ -91,7 +107,14 @@ export interface RunTaskResult<T = unknown> {
 export interface TaskRequestBody {
   prompt: string;
   input: Record<string, unknown>;
-  tools: Array<{ stepType: string; defaults?: Record<string, unknown> }>;
+  tools: Array<
+    | { stepType: string; defaults?: Record<string, unknown> }
+    | {
+        appMethod: string;
+        description?: string;
+        defaults?: Record<string, unknown>;
+      }
+  >;
   structuredOutputExample: string;
   model: string;
   maxTurns?: number;

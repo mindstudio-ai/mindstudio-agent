@@ -44,10 +44,19 @@ function resolveStepType(name: string): string {
 }
 
 /** Map developer tool configs to API request format with alias resolution. */
-function mapTools(
-  tools: TaskToolConfig[],
-): Array<{ stepType: string; defaults?: Record<string, unknown> }> {
+function mapTools(tools: TaskToolConfig[]): TaskRequestBody['tools'] {
   return tools.map((t) => {
+    // App methods pass through untouched. `resolveStepType` looks names up in
+    // `stepMetadata`, so running an app method id through it would silently
+    // rewrite any method that happens to share a name with an SDK alias.
+    if (typeof t === 'object' && 'appMethod' in t) {
+      return {
+        appMethod: t.appMethod,
+        ...(t.description ? { description: t.description } : {}),
+        ...(t.defaults ? { defaults: t.defaults } : {}),
+      };
+    }
+
     const method = typeof t === 'string' ? t : t.method;
     const stepType = resolveStepType(method);
     const defaults = typeof t === 'object' ? t.defaults : undefined;
