@@ -12,6 +12,7 @@ import {
   type DefineTableOptions,
   type TableConfig,
 } from './db/index.js';
+import { createFiles, type Files } from './files/index.js';
 import {
   buildTaskRequestBody,
   runTaskPoll,
@@ -121,6 +122,9 @@ export class MindStudioAgent {
 
   /** @internal Cached Db namespace instance, created during context hydration. */
   private _db: Db | undefined;
+
+  /** @internal Cached Files namespace instance (lazy; no context hydration needed). */
+  private _files: Files | undefined;
 
   /** @internal Auth type — 'internal' for CALLBACK_TOKEN (managed mode), 'apiKey' otherwise. */
   private _authType: AuthType;
@@ -1292,6 +1296,62 @@ export class MindStudioAgent {
         authConfig: ai.authConfig,
       });
     }
+  }
+
+  /**
+   * The `files` namespace — typed, private-by-default file storage (the twin of
+   * `db`). No context hydration needed: the hook token identifies the app
+   * server-side and stores are code-defined (access travels per call).
+   *
+   * @example
+   * ```ts
+   * const Uploads = agent.files.defineStore('uploads');
+   * const f = await Uploads.put(buffer, { contentType: 'image/png' });
+   * return { url: f.url };
+   * ```
+   */
+  get files(): Files {
+    return (this._files ??= createFiles(this._filesRequest.bind(this)));
+  }
+
+  /**
+   * @internal Transport for the `files` namespace — POST /_internal/v2/files/<op>
+   * with the raw hook token (mirrors `_executeDbBatch`).
+   */
+  private async _filesRequest(op: string, body: unknown): Promise<any> {
+    const url = `${this._currentHttpConfig.baseUrl}/_internal/v2/files/${op}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: this._token,
+      },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 204) {
+      return undefined;
+    }
+    const text = await res.text();
+    let json: any;
+    if (text) {
+      try {
+        json = JSON.parse(text);
+      } catch {
+        // non-JSON body — leave json undefined
+      }
+    }
+    if (!res.ok) {
+      const rawMsg =
+        json?.errorMessage ??
+        (typeof json?.error === 'string' ? json.error : json?.error?.message);
+      const message =
+        typeof rawMsg === 'string'
+          ? rawMsg
+          : `File operation failed: ${res.status} ${res.statusText}`;
+      const code = json?.errorString ?? json?.code ?? 'file_error';
+      throw new MindStudioError(message, code, res.status);
+    }
+    return json;
   }
 
   /**

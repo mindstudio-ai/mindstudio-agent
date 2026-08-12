@@ -3,6 +3,7 @@ import type { StepMethods } from './generated/steps.js';
 import type { AgentOptions, ReportIssueInput } from './types.js';
 import type { AuthContext as _AuthContext } from './auth/index.js';
 import type { Db as _Db } from './db/index.js';
+import type { Files as _Files } from './files/index.js';
 
 /** MindStudioAgent with all generated step methods. */
 export type MindStudioAgent = _MindStudioAgent & StepMethods;
@@ -17,6 +18,16 @@ export { AuthContext, Roles } from './auth/index.js';
 export { runWithContext, getRequestContext } from './context.js';
 export type { RequestContext } from './context.js';
 export type { Db, DefineTableOptions, Table, Query, Predicate, Accessor, PushInput, UpdateInput, SystemFields } from './db/index.js';
+export type {
+  Files,
+  DefineStoreOptions,
+  Store,
+  StoredFile,
+  UploadToken,
+  FileAccess,
+  PutOptions,
+  ListOptions,
+} from './files/index.js';
 export type {
   AgentOptions,
   StepExecutionOptions,
@@ -170,6 +181,33 @@ export const db: _Db = new Proxy(
   {
     get(_, prop) {
       const target = mindstudio.db;
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  },
+);
+
+/**
+ * Top-level `files` namespace bound to the default singleton.
+ *
+ * Private-by-default file storage — the twin of `db`. Use
+ * `files.defineStore(name)` at module scope, then `.put/.get/.list/.delete`.
+ * `file.url` is a stable on-domain URL for the app frontend; `file.shareUrl()`
+ * mints a signed link that works without a session.
+ *
+ * @example
+ * ```ts
+ * import { files } from '@mindstudio-ai/agent';
+ *
+ * const Uploads = files.defineStore('uploads');
+ * const f = await Uploads.put(buffer, { contentType: 'application/pdf' });
+ * ```
+ */
+export const files: _Files = new Proxy(
+  {} as _Files,
+  {
+    get(_, prop) {
+      const target = mindstudio.files;
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
