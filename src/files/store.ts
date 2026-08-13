@@ -4,7 +4,8 @@ import { MindStudioError } from '../errors.js';
 
 /**
  * Access level of a file store. `private` (the default) → reads are signed /
- * session-authorized; `public` → CDN-served (public serving ships later).
+ * session-authorized; `public` → world-readable, CDN-served on the app's own
+ * domain (and resizable via image query params).
  */
 export type FileAccess = 'public' | 'private';
 
@@ -195,6 +196,24 @@ export class Store {
   }
 
   /**
+   * Mint an ABSOLUTE, signed share URL for a key — works with **no** active
+   * session (email it, or embed it on another site). Expires (default 24h).
+   * Private stores only.
+   *
+   * The same link is available as `file.shareUrl()` on a {@link StoredFile};
+   * this convenience skips the `head()` when you already hold just the key.
+   */
+  async shareUrl(key: string, options?: { expiresIn?: number }): Promise<string> {
+    const res = await this._call('sign', {
+      store: this._store,
+      access: this._access,
+      key,
+      ...(options?.expiresIn ? { expiresIn: options.expiresIn } : {}),
+    });
+    return res.url as string;
+  }
+
+  /**
    * Mint an {@link UploadToken} for a **client-direct** upload — the browser
    * POSTs the file straight to storage, so the bytes never pass through the
    * platform. Return the token from a backend method and hand it to the
@@ -204,6 +223,10 @@ export class Store {
    * `maxSize`, else the store's, else the platform default) and — when
    * `contentType` is set — an exact content-type match. When the store declares
    * `contentTypes`, `contentType` must be one of them.
+   *
+   * Note: a presigned POST can pin exactly ONE content-type per token, so the
+   * *allowlist* is declared on `defineStore({ contentTypes })` and each token
+   * pins one type from it. This is by design, not a per-token limitation.
    *
    * @example
    * ```ts

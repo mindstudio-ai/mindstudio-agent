@@ -1696,6 +1696,74 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('Output: `{ url: string }` — The permanent public CDN URL.');
   lines.push('');
 
+  lines.push('#### `files` — per-app file storage (private by default)');
+  lines.push(
+    "Typed file storage for the app — the twin of the `db` namespace. Define a store at module scope, then read/write objects. Files are served on the app's own domain. Private stores (the default) are signed / session-authorized; public stores are world-readable, CDN-served, and images are resizable via query params (e.g. `?w=400&h=300&fit=cover`). Prefer this over the deprecated `uploadFile()` for app storage.",
+  );
+  lines.push('');
+  lines.push('```typescript');
+  lines.push("import { files } from '@mindstudio-ai/agent';");
+  lines.push('');
+  lines.push('// Define stores at module scope (access is pinned here).');
+  lines.push(
+    "export const Uploads = files.defineStore('uploads');                  // private (default)",
+  );
+  lines.push(
+    "export const Assets  = files.defineStore('assets', { access: 'public' });",
+  );
+  lines.push('');
+  lines.push('// Store bytes and get a ready-to-use URL.');
+  lines.push(
+    "const file = await Uploads.put(buffer, { contentType: 'application/pdf', filename: 'report.pdf' });",
+  );
+  lines.push(
+    'file.url;              // stable on-domain URL for a logged-in user (drop into <img>/<a download>)',
+  );
+  lines.push(
+    'await file.shareUrl(); // absolute signed URL that works with NO session (email/embed); default 24h',
+  );
+  lines.push('```');
+  lines.push('');
+  lines.push('Store methods:');
+  lines.push(
+    '- `put(content, { key?, contentType?, filename?, contentAddressed? })` → `StoredFile`. `content` is `Buffer | Uint8Array | string`. Omit `key` for a random UUID; `contentAddressed: true` derives an immutable `<sha256>.<ext>` key.',
+  );
+  lines.push(
+    '- `get(key)` → `Buffer` · `head(key)` → `StoredFile` · `exists(key)` → `boolean`',
+  );
+  lines.push(
+    '- `list({ prefix?, cursor?, limit? })` → `{ files: StoredFile[]; cursor? }`',
+  );
+  lines.push('- `delete(key)` → `void`');
+  lines.push(
+    '- `shareUrl(key, { expiresIn? })` → signed absolute URL (private stores; no session needed)',
+  );
+  lines.push('');
+  lines.push(
+    '`StoredFile`: `{ store, key, access, size?, contentType?, updatedAt?, url, shareUrl() }`.',
+  );
+  lines.push('');
+  lines.push(
+    "`defineStore(name, options?)` options: `access: 'public' | 'private'` (default private), `maxSize` (bytes; cap for client-direct uploads), `contentTypes` (allowlist for client-direct uploads).",
+  );
+  lines.push('');
+  lines.push(
+    'User uploads (client-direct — bytes go straight to storage, never through the app backend): a backend method mints a token, the frontend submits it with `@mindstudio-ai/interface`.',
+  );
+  lines.push('```typescript');
+  lines.push('// backend method');
+  lines.push(
+    'const token = await Uploads.createUploadToken({ contentType, maxSize: 25 * 1024 * 1024 });',
+  );
+  lines.push('return token;');
+  lines.push('// frontend (@mindstudio-ai/interface)');
+  lines.push("import { platform } from '@mindstudio-ai/interface';");
+  lines.push(
+    'const { url } = await platform.upload(token, file, { onProgress });',
+  );
+  lines.push('```');
+  lines.push('');
+
   return lines.join('\n');
 }
 
