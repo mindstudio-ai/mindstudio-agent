@@ -1698,7 +1698,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
 
   lines.push('#### `files` — per-app file storage (private by default)');
   lines.push(
-    "Typed file storage for the app — the twin of the `db` namespace. Define a store at module scope, then read/write objects. Files are served on the app's own domain. Private stores (the default) are signed / session-authorized; public stores are world-readable, CDN-served, and images are resizable via query params (e.g. `?w=400&h=300&fit=cover`). Prefer this over the deprecated `uploadFile()` for app storage.",
+    "Typed per-app file storage: user uploads, generated documents, images, marketing assets. Think of a store as a CDN-backed bucket the app talks to — NOT app-defined state like a `db` table. The API is *shaped* like the `db` namespace (define a store at module scope, then read/write), but its contents aren't modeled by code, and one store is shared across dev and prod (a file uploaded in the dev editor is already live in prod at the same URL). Creates are safe by default because keys default to unique (UUID, or a content-addressed hash); the operations to treat with care are `delete(key)` and overwriting a fixed key. Files are served on the app's own domain: private stores (the default) are signed / session-authorized; public stores are world-readable, CDN-served, and images resize via query params (e.g. `?w=400&h=300&fit=cover`). Prefer this over the deprecated `uploadFile()` for app storage.",
   );
   lines.push('');
   lines.push('```typescript');
