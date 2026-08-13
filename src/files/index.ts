@@ -35,8 +35,9 @@ export type {
 export interface DefineStoreOptions {
   /**
    * Access level. **Defaults to `'private'`** (signed / session-authorized
-   * reads). `'public'` marks the store CDN-served (public serving ships in a
-   * later phase). Pinned at define-time — no `put()` can change it.
+   * reads). `'public'` marks the store world-readable and CDN-served on the
+   * app's own domain (resizable via image query params). Pinned at define-time
+   * — no `put()` can change it.
    */
   access?: FileAccess;
   /**
