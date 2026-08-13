@@ -1,7 +1,9 @@
 /**
  * The `files` namespace — typed, private-by-default file storage for MindStudio
- * apps. The twin of `db`: define a store at module scope, import the handle into
- * route handlers.
+ * apps. Think of a store as a CDN-backed bucket the app talks to, not app-defined
+ * state like a `db` table: the API is *shaped* like `db` (define a store at module
+ * scope, import the handle into route handlers), but its contents are arbitrary
+ * durable blobs, and one store is shared across dev and prod.
  *
  * ```ts
  * // files/uploads.ts
