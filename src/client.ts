@@ -14,6 +14,10 @@ import {
 } from './db/index.js';
 import { createFiles, type Files } from './files/index.js';
 import {
+  createDataSources,
+  type DataSources,
+} from './datasources/index.js';
+import {
   buildTaskRequestBody,
   runTaskPoll,
   runTaskStream,
@@ -125,6 +129,7 @@ export class MindStudioAgent {
 
   /** @internal Cached Files namespace instance (lazy; no context hydration needed). */
   private _files: Files | undefined;
+  private _dataSources: DataSources | undefined;
 
   /** @internal Auth type — 'internal' for CALLBACK_TOKEN (managed mode), 'apiKey' otherwise. */
   private _authType: AuthType;
@@ -1315,11 +1320,54 @@ export class MindStudioAgent {
   }
 
   /**
+   * Searchable document corpora.
+   *
+   * @example
+   * ```ts
+   * const Policies = agent.dataSources.defineDataSource('policies');
+   * const { results } = await Policies.search('what are the payment terms?');
+   * ```
+   */
+  get dataSources(): DataSources {
+    return (this._dataSources ??= createDataSources(
+      this._dataSourcesRequest.bind(this),
+    ));
+  }
+
+  /**
    * @internal Transport for the `files` namespace — POST /_internal/v2/files/<op>
    * with the raw hook token (mirrors `_executeDbBatch`).
    */
   private async _filesRequest(op: string, body: unknown): Promise<any> {
-    const url = `${this._currentHttpConfig.baseUrl}/_internal/v2/files/${op}`;
+    return this._brokeredRequest('files', op, body, {
+      fallbackMessage: 'File operation failed',
+      fallbackCode: 'file_error',
+    });
+  }
+
+  /**
+   * @internal Transport for the `dataSources` namespace —
+   * POST /_internal/v2/datasources/<op> with the raw hook token.
+   */
+  private async _dataSourcesRequest(op: string, body: unknown): Promise<any> {
+    return this._brokeredRequest('datasources', op, body, {
+      fallbackMessage: 'Data source operation failed',
+      fallbackCode: 'data_source_error',
+    });
+  }
+
+  /**
+   * @internal Shared shape for the brokered `/_internal/v2/<ns>/<op>` data
+   * planes. Factored out rather than copied per namespace so error handling
+   * can't drift between them.
+   */
+  private async _brokeredRequest(
+    namespace: string,
+    op: string,
+    body: unknown,
+    errors: { fallbackMessage: string; fallbackCode: string },
+  ): Promise<any> {
+    const url = `${this._currentHttpConfig.baseUrl}/_internal/v2/${namespace}/${op}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -1347,8 +1395,8 @@ export class MindStudioAgent {
       const message =
         typeof rawMsg === 'string'
           ? rawMsg
-          : `File operation failed: ${res.status} ${res.statusText}`;
-      const code = json?.errorString ?? json?.code ?? 'file_error';
+          : `${errors.fallbackMessage}: ${res.status} ${res.statusText}`;
+      const code = json?.errorString ?? json?.code ?? errors.fallbackCode;
       throw new MindStudioError(message, code, res.status);
     }
     return json;

@@ -1764,6 +1764,59 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('```');
   lines.push('');
 
+  // dataSources — hand-written for the same reason as `files`: codegen only
+  // auto-documents *steps* from the OpenAPI spec, so a client-side namespace is
+  // invisible to `mindstudio ask` / sdkConsultant unless it is written here.
+  // When `files` was missing, the consultant truthfully reported it "doesn't
+  // exist" and steered builders onto a DB table instead.
+  lines.push('#### `dataSources` — searchable document corpora (RAG)');
+  lines.push('');
+  lines.push(
+    'Declare a data source at module scope and import the handle. The platform owns parsing, chunking, embedding, storage and tenant isolation; every hit returns a citation.',
+  );
+  lines.push('```typescript');
+  lines.push("import { dataSources } from '@mindstudio-ai/agent';");
+  lines.push("export const Policies = dataSources.defineDataSource('policies');");
+  lines.push('');
+  lines.push('// search');
+  lines.push(
+    "const { results } = await Policies.search('what are the payment terms?', { topK: 5 });",
+  );
+  lines.push(
+    "// options: topK (default 5, max 50), scoreThreshold, rerank, hybrid — the last two default on",
+  );
+  lines.push(
+    'const context = results.map((r) => r.text).join(String.fromCharCode(10, 10));',
+  );
+  lines.push('');
+  lines.push('// add a document (background — poll documents() for status)');
+  lines.push(
+    "await Policies.add(buffer, { filename: 'policy.pdf', contentType: 'application/pdf' });",
+  );
+  lines.push('const docs = await Policies.documents();');
+  lines.push('```');
+  lines.push('');
+  lines.push(
+    '`SearchHit`: `{ score, text, citation: { documentId, filename, pageNumber, headingPath, boundingBox?, url } }`. `citation.url` is a stable on-domain link to the source document — drop it in an `<a href>`.',
+  );
+  lines.push('');
+  lines.push(
+    'Supported: pdf, docx, pptx, xlsx, odt, rtf, epub, images, txt, md, json, csv, html.',
+  );
+  lines.push('');
+  lines.push(
+    'Adding the same bytes twice is free — documents are content-addressed, so a re-add is a no-op when this source has already processed those exact bytes under its current configuration. Only reconfiguring the source makes a re-add do work again, and that is an explicit owner-triggered migration, never a side effect of a deploy.',
+  );
+  lines.push('');
+  lines.push(
+    '`rerank` and `hybrid` are free to change and take effect on the next search. How documents are chunked and embedded is configured on the corpus itself with `mindstudio-prod datasources config` — not in code — and changing it on a populated source is rejected rather than silently rebuilding.',
+  );
+  lines.push('');
+  lines.push(
+    '**A data source is live and shared.** Unlike database tables there is no dev copy and no per-release isolation: adding or removing a document changes what the deployed app retrieves, immediately. Scenarios never reset a data source, and re-ingesting a large corpus costs real money.',
+  );
+  lines.push('');
+
   return lines.join('\n');
 }
 

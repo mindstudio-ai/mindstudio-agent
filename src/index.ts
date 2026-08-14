@@ -4,6 +4,7 @@ import type { AgentOptions, ReportIssueInput } from './types.js';
 import type { AuthContext as _AuthContext } from './auth/index.js';
 import type { Db as _Db } from './db/index.js';
 import type { Files as _Files } from './files/index.js';
+import type { DataSources as _DataSources } from './datasources/index.js';
 
 /** MindStudioAgent with all generated step methods. */
 export type MindStudioAgent = _MindStudioAgent & StepMethods;
@@ -208,6 +209,31 @@ export const files: _Files = new Proxy(
   {
     get(_, prop) {
       const target = mindstudio.files;
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  },
+);
+
+/**
+ * Top-level `dataSources` namespace bound to the default singleton.
+ *
+ * Searchable document corpora. Declare one at module scope and import the
+ * handle; the platform owns parsing, chunking, embedding and isolation.
+ *
+ * @example
+ * ```ts
+ * import { dataSources } from '@mindstudio-ai/agent';
+ *
+ * const Policies = dataSources.defineDataSource('policies');
+ * const { results } = await Policies.search('what are the payment terms?');
+ * ```
+ */
+export const dataSources: _DataSources = new Proxy(
+  {} as _DataSources,
+  {
+    get(_, prop) {
+      const target = mindstudio.dataSources;
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
