@@ -67,6 +67,8 @@ interface OperationObject {
   operationId: string;
   summary: string;
   description?: string;
+  /** Set by the API for superseded steps; the replacement is in `description`. */
+  deprecated?: boolean;
   'x-usage-notes'?: string;
   parameters?: Array<{
     name: string;
@@ -258,8 +260,14 @@ function buildMethodDoc(
 ): string {
   const lines: string[] = ['/**'];
 
+  // `@deprecated` first so editors strike the symbol through at the call site —
+  // the description already leads with what to use instead.
+  if (op.deprecated) {
+    lines.push(` * @deprecated ${op.description ?? ''}`.trimEnd());
+  }
+
   // Description as the main line
-  if (op.description) {
+  if (op.description && !op.deprecated) {
     lines.push(` * ${op.description}`);
   }
 
@@ -1058,7 +1066,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push(
-    '1. **Identify yourself** — Call `changeName` to set your display name (use your name or whatever your user calls you). If you have a profile picture or icon, call `uploadFile` to upload it, then `changeProfilePicture` with the returned URL. This helps users identify your requests in their logs.',
+    '1. **Identify yourself** — Call `changeName` to set your display name (use your name or whatever your user calls you). If you have a profile picture, pass its public image URL to `changeProfilePicture`. This helps users identify your requests in their logs.',
   );
   lines.push(
     '2. **Ask** — Use `mindstudio ask "your question"` (CLI) or the `ask` MCP tool for SDK guidance. It knows every action, model, and connector and returns working TypeScript code with real model IDs and config options. Examples: `mindstudio ask "generate an image with FLUX"`, `mindstudio ask "what models support vision?"`, `mindstudio ask "how do I send a Slack message?"`.',
@@ -1675,7 +1683,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('#### `uploadFile(content, options)`');
   lines.push(
-    'Upload a file to the MindStudio CDN. Gets a signed upload URL, PUTs the file content, and returns the permanent public URL.',
+    "**Deprecated for app file storage** — use the `files` store below (`files.defineStore(...).put(...)`): private by default, app-scoped, and served on the app's own domain. `uploadFile` uploads to the shared account media CDN and remains only for account-level assets (e.g. an agent avatar for `changeProfilePicture`). Gets a signed upload URL, PUTs the file content, and returns the permanent public URL.",
   );
   lines.push('');
   lines.push('```typescript');
@@ -1794,10 +1802,24 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     "await Policies.add(buffer, { filename: 'policy.pdf', contentType: 'application/pdf' });",
   );
   lines.push('const docs = await Policies.documents();');
+  lines.push('');
+  lines.push('// introspection — what is in the corpus, and how one document was split');
+  lines.push(
+    'const { chunkCount, pipeline } = await Policies.stats();  // counts + the config actually in effect',
+  );
+  lines.push('const chunks = await Policies.chunks(docs[0].id);       // why a document does or doesn\'t match');
   lines.push('```');
   lines.push('');
   lines.push(
-    '`SearchHit`: `{ score, text, citation: { documentId, filename, pageNumber, headingPath, boundingBox?, url } }`. `citation.url` is a stable on-domain link to the source document — drop it in an `<a href>`.',
+    '`SearchHit`: `{ score, text, citation: { documentId, filename, pageNumber, chunkIndex, headingPath, boundingBox?, url } }`. `citation.url` is a stable on-domain link to the source document — drop it in an `<a href>`. `(documentId, chunkIndex)` is a chunk\'s stable identity — key an eval set on that, not on `text`.',
+  );
+  lines.push('');
+  lines.push(
+    'Also on each hit: `retrievalRank`/`retrievalScore` (position before reranking — compare with the final position to see what reranking did). Two opt-in search options for debugging: `explain: true` adds `explain.{dense,lexical,matchedVia}` so you can see which half of hybrid found a hit, and `expand: 1` adds `neighbors.{before,after}` for surrounding context. Neither changes the results or their order.',
+  );
+  lines.push('');
+  lines.push(
+    'Search is deterministic for a fixed corpus and configuration — same query, same order — so regression checks are meaningful. `search()` also returns `latencyMs`.',
   );
   lines.push('');
   lines.push(
