@@ -271,7 +271,7 @@ export interface MindStudioModel {
   id?: string;
   /** Display name of the model. */
   name?: string;
-  /** One of: `llm_chat`, `image_generation`, `video_generation`, `video_analysis`, `text_to_speech`, `vision`, `transcription`. */
+  /** See `ModelType` for the full set. */
   type?: ModelType;
   maxTemperature?: number;
   maxResponseSize?: number;
@@ -284,21 +284,34 @@ export interface MindStudioModelSummary {
   id?: string;
   /** Display name of the model. */
   name?: string;
-  /** One of: `llm_chat`, `image_generation`, `video_generation`, `video_analysis`, `text_to_speech`, `vision`, `transcription`. */
+  /** See `ModelType` for the full set. */
   type?: ModelType;
   /** Comma-separated tags for the model. */
   tags?: string;
 }
 
-/** Supported model type categories for filtering. */
+/**
+ * Supported model type categories for filtering.
+ *
+ * `embedding`, `reranking` and `document_extraction` have no SDK step — the
+ * data-source pipeline chooses those platform-side and reports the result on
+ * `pipeline.embeddingModelId`. They are listed so the catalog can be queried
+ * and described, not so they can be passed to a generate call.
+ */
 export type ModelType =
   | 'llm_chat'
   | 'image_generation'
+  | '3d_generation'
   | 'video_generation'
   | 'video_analysis'
   | 'text_to_speech'
+  | 'music_generation'
+  | 'lipsync'
   | 'vision'
-  | 'transcription';
+  | 'transcription'
+  | 'embedding'
+  | 'reranking'
+  | 'document_extraction';
 
 // ---------------------------------------------------------------------------
 // App context types (auth & database metadata)

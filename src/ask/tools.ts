@@ -38,7 +38,7 @@ export const ASK_TOOLS: ToolDefinition[] = [
         type: {
           type: 'string',
           description:
-            'Filter by model type: "llm_chat", "image_generation", "video_generation", "video_analysis", "text_to_speech", "vision", "transcription"',
+            'Filter by model type: "llm_chat", "image_generation", "3d_generation", "video_generation", "video_analysis", "text_to_speech", "music_generation", "lipsync", "vision", "transcription", "embedding", "reranking", "document_extraction". The last three back the data-source retrieval pipeline and have no step of their own — name them, do not pass them to a generate call.',
         },
         details: {
           type: 'boolean',
