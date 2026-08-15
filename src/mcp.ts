@@ -86,7 +86,8 @@ const HELPER_DESCRIPTIONS: Record<string, string> = {
   estimateStepCost: 'Estimate the cost of executing an action before running it.',
   changeName: 'Update the display name of the authenticated agent.',
   changeProfilePicture: 'Update the profile picture of the authenticated agent.',
-  uploadFile: 'Upload a file to the MindStudio CDN.',
+  uploadFile:
+    'Upload a file to the account media CDN (deprecated for app storage — prefer the files store).',
   listAgents: 'List all pre-built agents in the organization.',
   runAgent: 'Run a pre-built agent and wait for the result.',
   executeBatch: 'Execute multiple actions in parallel in a single request.',
@@ -262,7 +263,7 @@ const HELPER_TOOLS: McpTool[] = [
   {
     name: 'uploadFile',
     description:
-      'Upload a local file to the MindStudio CDN. Returns the permanent public URL.',
+      'Upload a local file to the account media CDN. Returns the permanent public URL. Deprecated for app file storage — prefer the files store; kept for account-level assets like an agent avatar.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -420,7 +421,7 @@ export async function startMcpServer(options?: {
             'Getting started:\n' +
             '1. Call `ask` with any question about the SDK — it knows every action, model, and connector and returns working code with real model IDs and config options. Examples: ask("generate an image with FLUX"), ask("what models support vision?"), ask("how do I send a Slack message?").\n' +
             '2. Call `changeName` to set your display name — use your name or whatever your user calls you. This is how you\'ll appear in MindStudio request logs.\n' +
-            '3. If you have a profile picture or icon, call `uploadFile` to upload it, then `changeProfilePicture` with the returned URL.\n' +
+            '3. If you have a profile picture, pass its public image URL to `changeProfilePicture`.\n' +
             '4. For manual browsing, call `listActions` to discover all available actions.\n\n' +
             'Then use the tools to generate text, images, video, audio, search the web, work with data sources, run agents, and more.\n\n' +
             'Important:\n' +

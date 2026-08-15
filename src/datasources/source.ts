@@ -9,6 +9,16 @@ export interface Citation {
   filename: string | null;
   /** 1-based. Null for formats with no pagination (plain text, html). */
   pageNumber: number | null;
+  /**
+   * Position within the document, 0-based.
+   *
+   * `(documentId, chunkIndex)` is the stable identity of a chunk — use it as
+   * the key for an eval set or a regression check rather than matching on
+   * `text`. Stable for as long as the corpus keeps its current configuration:
+   * re-chunking a source (a different chunk size, say) moves the boundaries and
+   * therefore renumbers, which is inherent rather than a wobble.
+   */
+  chunkIndex: number | null;
   /** Enclosing headings, outermost first. */
   headingPath: string[];
   /**
@@ -29,12 +39,48 @@ export interface Citation {
   url: string;
 }
 
+/** Where one retrieval branch put a hit, and what that branch scored it. */
+export interface BranchPosition {
+  /** 0-based position within that branch's own results. */
+  rank: number;
+  score: number;
+}
+
+/**
+ * Which half of hybrid retrieval found a hit. Only present when `explain` was
+ * requested — see {@link SearchOptions.explain}.
+ */
+export interface SearchExplain {
+  /** Semantic (embedding) retrieval. Null if this branch didn't find the hit. */
+  dense: BranchPosition | null;
+  /** Keyword/IDF retrieval. Null when `hybrid` is off, or if it didn't find it. */
+  lexical: BranchPosition | null;
+  matchedVia: 'dense' | 'lexical' | 'both';
+}
+
 export interface SearchHit {
   /** Provider relevance score. Comparable within a response, not across them. */
   score: number;
   /** The matched chunk, prefixed with its heading path for context. */
   text: string;
   citation: Citation;
+  /**
+   * Where retrieval put this hit BEFORE reranking, and what it scored.
+   *
+   * With reranking on, `score` is the reranker's relevance score and this is
+   * the retriever's — different quantities, so they're kept apart rather than
+   * blended. Comparing `retrievalRank` with the hit's final position is how you
+   * see what reranking actually did ("retrieved 7th, reranked to 1st").
+   *
+   * Named for the stage rather than the method: it's a fused hybrid score when
+   * `hybrid` is on and a cosine similarity when it's off.
+   */
+  retrievalRank?: number;
+  retrievalScore?: number;
+  /** Only when `explain` was requested. */
+  explain?: SearchExplain;
+  /** Only when `expand` was requested. Outermost first, so `[...before, text, ...after]` reads in order. */
+  neighbors?: { before: string[]; after: string[] };
 }
 
 /**
@@ -69,6 +115,23 @@ export interface SearchOptions {
    * that an embedding model never learned. Rarely worth disabling.
    */
   hybrid?: boolean;
+  /**
+   * Report which branch found each hit, and where each ranked it.
+   *
+   * A debugging aid, off by default because it costs two extra round trips: a
+   * fused result carries one blended score, so the branches have to be asked
+   * separately. Results and their order are identical either way — this only
+   * adds {@link SearchHit.explain}.
+   */
+  explain?: boolean;
+  /**
+   * Also return this many chunks either side of each hit, in
+   * {@link SearchHit.neighbors} — for showing a passage in context. 0-2.
+   *
+   * `text` is untouched, so citations and highlighting still point at the
+   * chunk that actually matched.
+   */
+  expand?: number;
 }
 
 export interface AddOptions {
@@ -89,6 +152,64 @@ export interface DataSourceDocument {
   pageCount: number | null;
   createdAt: string;
   ingestedAt: string | null;
+}
+
+/** One chunk exactly as it was indexed. See {@link DataSource.chunks}. */
+export interface DataSourceChunk {
+  index: number;
+  text: string;
+  pageNumber: number;
+  headingPath: string[];
+  /**
+   * Offsets into the page's extracted markdown. Null for PDFs, which carry a
+   * `boundingBox` instead — there is no character stream to point into.
+   */
+  charStart: number | null;
+  charEnd: number | null;
+  boundingBox?: {
+    topLeftX: number;
+    topLeftY: number;
+    bottomRightX: number;
+    bottomRightY: number;
+  };
+  /** base64 of a Float32Array. Only when `vectors: true` was passed. */
+  vector?: string;
+}
+
+/** How a corpus was built and what is in it. See {@link DataSource.stats}. */
+export interface DataSourceStats {
+  /** False for a source nothing has created yet — everything else reads zero. */
+  exists: boolean;
+  documentCount: number;
+  counts: {
+    total: number;
+    done: number;
+    processing: number;
+    error: number;
+  };
+  chunkCount: number;
+  /** Original document bytes, not index size. */
+  storageBytes: number;
+  lastIngestedAt: string | null;
+  /**
+   * The configuration these documents were actually built with — not the
+   * platform default, and not necessarily the newest. Changing it is an
+   * explicit, owner-triggered migration.
+   */
+  pipeline: {
+    version: number;
+    embeddingModelId: string;
+    dimensions: number;
+    chunking: {
+      strategy: string;
+      version: number;
+      maxChars: number;
+      minChars: number;
+      dropBlockTypes: string[];
+    };
+    contextual: { enabled: boolean; modelId: string | null };
+    images: { describe: boolean; modelId: string | null };
+  } | null;
 }
 
 /**
@@ -113,12 +234,18 @@ export class DataSource {
    * Returns chunks ranked by relevance, each with a citation. Searching a
    * source that doesn't exist yet returns no results rather than throwing —
    * code may name a corpus the build hasn't populated.
+   *
+   * **Deterministic** for a fixed corpus and configuration: the same query
+   * returns the same hits in the same order, so it's safe to build an eval set
+   * or a regression check on top of it. There is no seed to set. Two things do
+   * legitimately move the results: adding or removing documents, and changing
+   * the corpus configuration — both of which you control.
    */
   async search(
     query: string,
     options?: SearchOptions,
-  ): Promise<{ results: SearchHit[] }> {
-    const { results } = await this._call('search', {
+  ): Promise<{ results: SearchHit[]; latencyMs: number }> {
+    const { results, latencyMs } = await this._call('search', {
       slug: this._slug,
       query,
       ...(options?.topK !== undefined ? { topK: options.topK } : {}),
@@ -127,8 +254,44 @@ export class DataSource {
         : {}),
       ...(options?.rerank !== undefined ? { rerank: options.rerank } : {}),
       ...(options?.hybrid !== undefined ? { hybrid: options.hybrid } : {}),
+      ...(options?.explain !== undefined ? { explain: options.explain } : {}),
+      ...(options?.expand !== undefined ? { expand: options.expand } : {}),
     });
-    return { results: results ?? [] };
+    return { results: results ?? [], latencyMs: latencyMs ?? 0 };
+  }
+
+  /**
+   * What is in the corpus, and how it was built.
+   *
+   * Document and chunk counts, storage, and the embedding model and chunking
+   * settings actually in effect — which is not the same as the platform
+   * default, since a corpus keeps the configuration it was built with until
+   * someone migrates it.
+   */
+  async stats(): Promise<DataSourceStats> {
+    return this._call('stats', { slug: this._slug });
+  }
+
+  /**
+   * Every chunk of one document, exactly as it was indexed.
+   *
+   * The direct answer to "why isn't this document coming back?" — search only
+   * shows you the chunks that surface, which is no help when none do. Reading
+   * how a document was actually split usually is.
+   *
+   * Pass `{ vectors: true }` to include each chunk's embedding. Large: roughly
+   * 8KB per chunk, so a 500-chunk document is several megabytes.
+   */
+  async chunks(
+    documentId: string,
+    options?: { vectors?: boolean },
+  ): Promise<DataSourceChunk[]> {
+    const { chunks } = await this._call('chunks', {
+      slug: this._slug,
+      documentId,
+      ...(options?.vectors ? { vectors: true } : {}),
+    });
+    return chunks ?? [];
   }
 
   /**

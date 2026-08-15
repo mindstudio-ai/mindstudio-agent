@@ -1881,6 +1881,12 @@ export class MindStudioAgent {
    *
    * Gets a presigned upload request from the API, POSTs the file as
    * multipart/form-data, and returns the permanent public URL.
+   *
+   * @deprecated For app file storage use the `files` store
+   * (`files.defineStore(...).put(...)`) — private by default, app-scoped, and
+   * served on the app's own domain. `uploadFile` uploads to the shared account
+   * media CDN; it remains only for account-level assets (e.g. an agent avatar
+   * passed to `changeProfilePicture`).
    */
   async uploadFile(
     content: Buffer | Uint8Array,
