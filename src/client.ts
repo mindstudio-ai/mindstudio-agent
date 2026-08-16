@@ -13,6 +13,7 @@ import {
   type TableConfig,
 } from './db/index.js';
 import { createFiles, type Files } from './files/index.js';
+import type { Store } from './files/store.js';
 import {
   createDataSources,
   type DataSources,
@@ -276,6 +277,7 @@ export class MindStudioAgent {
       ...(threadId != null && { threadId }),
       ...(this._currentStreamId != null && { streamId: this._currentStreamId }),
       ...(this._requestSource != null && { requestSource: this._requestSource }),
+      ...assetStoreBody(options?.store),
     });
 
     // Capture rate limit from initial POST headers
@@ -401,6 +403,7 @@ export class MindStudioAgent {
       ...(threadId != null && { threadId }),
       ...(this._currentStreamId != null && { streamId: this._currentStreamId }),
       ...(this._requestSource != null && { requestSource: this._requestSource }),
+      ...assetStoreBody(options.store),
     };
 
     await this._httpConfig.rateLimiter.acquire();
@@ -639,6 +642,7 @@ export class MindStudioAgent {
       ...(options?.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
       ...(this._requestSource != null && { requestSource: this._requestSource }),
+      ...assetStoreBody(options?.store),
     });
 
     const pollUrl = `${this._currentHttpConfig.baseUrl}/developer/v2/steps/execute-batch-async/poll/${asyncData.batchToken}`;
@@ -1939,6 +1943,19 @@ function sleep(ms: number): Promise<void> {
 import { applyStepMethods } from './generated/steps.js';
 import { stepMetadata } from './generated/metadata.js';
 applyStepMethods(MindStudioAgent);
+
+/**
+ * Serialize a `StepExecutionOptions.store` handle into the request body. Both
+ * the name and the access level travel: access is pinned at `defineStore()`, so
+ * sending it keeps a generated asset's visibility identical to everything else
+ * in that store. Returns an empty object when no store was given, so the caller
+ * can spread it unconditionally.
+ */
+function assetStoreBody(store?: Store): { assetStore?: object } {
+  return store
+    ? { assetStore: { store: store.name, access: store.access } }
+    : {};
+}
 
 /** Resolve a public method name (which may be an alias) to the real API step type. */
 function resolveStepType(name: string): string {

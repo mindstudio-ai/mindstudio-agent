@@ -113,6 +113,11 @@ export class Store {
     private readonly _policy: StorePolicy = {},
   ) {}
 
+  /** The store's name. */
+  get name(): string {
+    return this._store;
+  }
+
   /** The store's access level. */
   get access(): FileAccess {
     return this._access;

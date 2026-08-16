@@ -1771,6 +1771,16 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('```');
   lines.push('');
+  lines.push(
+    'Generated assets: any action that produces a file (`generateImage`, `generateVideo`, `generateSpeech`, `generatePdf`, `upscaleImage`, …) can put its output straight into one of these stores — pass the store handle as `store` in the OPTIONS object (second argument). Optional: omit it and the asset goes to the shared MindStudio CDN as before. Reach for it when the asset belongs to the app — private to a user, or listed alongside its other files.',
+  );
+  lines.push('');
+  lines.push('```typescript');
+  lines.push(
+    "const { imageUrl } = await mindstudio.generateImage({ prompt: 'a red sneaker' }, { store: Assets });",
+  );
+  lines.push('```');
+  lines.push('');
 
   // dataSources — hand-written for the same reason as `files`: codegen only
   // auto-documents *steps* from the OpenAPI spec, so a client-side namespace is
