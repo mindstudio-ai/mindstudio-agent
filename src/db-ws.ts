@@ -31,9 +31,39 @@ const WS_OPEN = 1; // WebSocket.OPEN
 // vs. bytes for multibyte content).
 const WS_MAX_FRAME_CHARS = 900_000;
 
-/** Thrown on a WS-transport failure so the caller can fall back to fetch. */
+/**
+ * Thrown on a WS-transport failure so the caller can fall back to fetch.
+ *
+ * `sent` records whether the frame was handed to the socket before the
+ * failure. It decides whether a fetch retry is safe: an UNSENT frame provably
+ * never executed and always retries transparently; a SENT frame may have
+ * executed server-side with only the response lost — re-running a batch that
+ * contains writes would double-apply them, so the caller only retries sent
+ * frames when every statement is a read.
+ */
 export class DbWsTransportError extends Error {
   override readonly name = 'DbWsTransportError';
+  constructor(
+    message: string,
+    public readonly sent: boolean = false,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Whether a statement is definitely read-only, for the retry decision above.
+ * Deliberately conservative: only unambiguous read prefixes count — anything
+ * else (including `WITH …`, which can head an INSERT) is treated as a write,
+ * because the cost of misclassifying a write as a read is a double-apply.
+ */
+export function isReadOnlySql(sql: string): boolean {
+  const head = sql.trimStart().slice(0, 8).toUpperCase();
+  return (
+    head.startsWith('SELECT') ||
+    head.startsWith('PRAGMA') ||
+    head.startsWith('EXPLAIN')
+  );
 }
 
 interface SqlResult {
@@ -75,9 +105,13 @@ function getOrOpen(url: string): Promise<any> {
         socket = null;
       }
       opening = null;
+      // Every entry in `pending` was registered AFTER its frame was handed to
+      // an OPEN socket (see executeDbBatchOverWs), so a socket failure rejects
+      // them as SENT — the server may have executed them with only the
+      // response lost. The caller decides retryability from that flag.
       for (const [, p] of pending) {
         clearTimeout(p.timer);
-        p.reject(err);
+        p.reject(new DbWsTransportError(err.message, true));
       }
       pending.clear();
       reject(err); // no-op if already resolved
@@ -163,7 +197,9 @@ export async function executeDbBatchOverWs(
   return await new Promise<SqlResult[]>((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);
-      reject(new DbWsTransportError('ws execute timed out'));
+      // The frame went out and no reply came back within the window — the
+      // server may still have executed it. SENT, like a socket drop.
+      reject(new DbWsTransportError('ws execute timed out', true));
     }, WS_REQUEST_TIMEOUT_MS);
     pending.set(id, { resolve, reject, timer });
     try {
@@ -171,8 +207,12 @@ export async function executeDbBatchOverWs(
     } catch (err: any) {
       clearTimeout(timer);
       pending.delete(id);
+      // send() threw synchronously — the frame never left this process.
       reject(
-        new DbWsTransportError(`ws send failed: ${err?.message || 'unknown'}`),
+        new DbWsTransportError(
+          `ws send failed: ${err?.message || 'unknown'}`,
+          false,
+        ),
       );
     }
   });

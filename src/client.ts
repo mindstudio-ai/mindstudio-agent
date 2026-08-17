@@ -1,7 +1,11 @@
 import { request, type HttpClientConfig } from './http.js';
 import { MindStudioError } from './errors.js';
 import { getRequestContext } from './context.js';
-import { executeDbBatchOverWs, DbWsTransportError } from './db-ws.js';
+import {
+  executeDbBatchOverWs,
+  DbWsTransportError,
+  isReadOnlySql,
+} from './db-ws.js';
 import { RateLimiter, type AuthType } from './rate-limit.js';
 import { loadConfig, type MindStudioConfig } from './config.js';
 import { AuthContext } from './auth/index.js';
@@ -14,10 +18,7 @@ import {
 } from './db/index.js';
 import { createFiles, type Files } from './files/index.js';
 import type { Store } from './files/store.js';
-import {
-  createDataSources,
-  type DataSources,
-} from './datasources/index.js';
+import { createDataSources, type DataSources } from './datasources/index.js';
 import {
   buildTaskRequestBody,
   runTaskPoll,
@@ -276,7 +277,9 @@ export class MindStudioAgent {
       ...(options?.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
       ...(this._currentStreamId != null && { streamId: this._currentStreamId }),
-      ...(this._requestSource != null && { requestSource: this._requestSource }),
+      ...(this._requestSource != null && {
+        requestSource: this._requestSource,
+      }),
       ...assetStoreBody(options?.store),
     });
 
@@ -402,7 +405,9 @@ export class MindStudioAgent {
       ...(options.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
       ...(this._currentStreamId != null && { streamId: this._currentStreamId }),
-      ...(this._requestSource != null && { requestSource: this._requestSource }),
+      ...(this._requestSource != null && {
+        requestSource: this._requestSource,
+      }),
       ...assetStoreBody(options.store),
     };
 
@@ -641,7 +646,9 @@ export class MindStudioAgent {
       })),
       ...(options?.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
-      ...(this._requestSource != null && { requestSource: this._requestSource }),
+      ...(this._requestSource != null && {
+        requestSource: this._requestSource,
+      }),
       ...assetStoreBody(options?.store),
     });
 
@@ -1419,9 +1426,14 @@ export class MindStudioAgent {
     queries: { sql: string; params?: unknown[] }[],
   ): Promise<{ rows: unknown[]; changes: number }[]> {
     // Prefer the persistent DB WebSocket when the sandbox injected DB_WS_URL.
-    // On a WS-transport failure (can't connect, dropped, timeout) fall back to
-    // the fetch below; a real query error surfaces (not retried, to avoid
-    // double-applying a write).
+    // On a WS-transport failure fall back to the fetch below — but only when
+    // the retry is provably safe. A frame that was never sent (open failure,
+    // send throw, payload too big) never executed and always retries. A frame
+    // that WAS sent (socket dropped / reply timed out) may have executed
+    // server-side with only the response lost: re-running it is fine for
+    // reads, but for a batch containing writes it would double-apply — so
+    // that case surfaces as `db_transport_interrupted` instead of silently
+    // re-running. A real query error surfaces as before (the query ran).
     const dbWsUrl =
       typeof process !== 'undefined' ? process.env?.DB_WS_URL : undefined;
     if (dbWsUrl) {
@@ -1435,6 +1447,16 @@ export class MindStudioAgent {
       } catch (err) {
         if (!(err instanceof DbWsTransportError)) {
           throw err;
+        }
+        if (err.sent && queries.some((q) => !isReadOnlySql(q.sql))) {
+          throw new MindStudioError(
+            '[db] Connection was interrupted after this query was sent; ' +
+              'because it contains a write, it was not automatically retried ' +
+              '(the write may or may not have been applied). Verify the ' +
+              'current state before re-running it.',
+            'db_transport_interrupted',
+            503,
+          );
         }
         // The persistent DB socket failed for this batch — fall back to the
         // fetch path below (results are still correct, just a slower per-call
@@ -1911,14 +1933,25 @@ export class MindStudioAgent {
       content.byteOffset,
       content.byteOffset + content.byteLength,
     ) as ArrayBuffer;
-    const fileBlob = new Blob([buf], options.type ? { type: options.type } : undefined);
+    const fileBlob = new Blob(
+      [buf],
+      options.type ? { type: options.type } : undefined,
+    );
     form.append('file', fileBlob, filename);
 
     const res = await fetch(data.url, { method: 'POST', body: form });
     if (!res.ok) {
       const errorText = await res.text().catch(() => '');
       throw new MindStudioError(
-        `Upload failed: ${res.status} ${res.statusText}${errorText ? ` — ${errorText.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)}` : ''}`,
+        `Upload failed: ${res.status} ${res.statusText}${
+          errorText
+            ? ` — ${errorText
+                .replace(/<[^>]*>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 200)}`
+            : ''
+        }`,
         'upload_error',
         res.status,
         errorText || undefined,
