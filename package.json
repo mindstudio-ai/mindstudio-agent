@@ -26,6 +26,7 @@
     "codegen": "tsx scripts/codegen.ts",
     "typecheck": "tsc --noEmit",
     "postinstall": "node dist/postinstall.js || true",
+    "bump-consumers": "node scripts/bump-consumers.mjs",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },

@@ -39,6 +39,50 @@ export interface Citation {
   url: string;
 }
 
+/** A metadata value as stored on a document: scalars only. */
+export type MetadataValue = string | number | boolean;
+
+/**
+ * Tags attached to a document when it's added — department, year, doc type,
+ * a per-user scope — and matched by {@link SearchFilter.metadata} at query
+ * time. Up to 16 keys per document; keys are alphanumeric with `_`/`-`.
+ */
+export type DocumentMetadata = Record<string, MetadataValue>;
+
+/**
+ * Which retrieval branches run for a search.
+ *
+ * - `hybrid` — semantic and keyword retrieval fused. The default.
+ * - `semantic` — the embedding alone (what `hybrid: false` selects).
+ * - `lexical` — keyword matching alone, with NO query embedding. The cheapest
+ *   and fastest mode; right when the query is an identifier (an error code, a
+ *   SKU, a name) rather than a meaning.
+ */
+export type SearchMode = 'hybrid' | 'semantic' | 'lexical';
+
+/**
+ * Narrow a search before ranking. Every condition ANDs with the others, and a
+ * filter can only ever narrow — it runs inside your corpus, not across it.
+ */
+export interface SearchFilter {
+  /**
+   * Match document metadata set at add time. A scalar must equal; an array
+   * matches any of its values. Keys AND together:
+   * `{ department: 'legal', year: [2025, 2026] }`.
+   */
+  metadata?: Record<string, MetadataValue | MetadataValue[]>;
+  /** Exact filename, or any of several. */
+  filename?: string | string[];
+  /** Restrict to specific documents (ids from {@link DataSource.documents}). */
+  documentIds?: string[];
+  /** Page range, inclusive — for paged formats like PDF. */
+  pages?: { min?: number; max?: number };
+  /** Chunk text must contain ALL of these words, in any order. */
+  contains?: string;
+  /** Chunk text must contain this exact word sequence, adjacent and in order. */
+  phrase?: string;
+}
+
 /** Where one retrieval branch put a hit, and what that branch scored it. */
 export interface BranchPosition {
   /** 0-based position within that branch's own results. */
@@ -81,6 +125,12 @@ export interface SearchHit {
   explain?: SearchExplain;
   /** Only when `expand` was requested. Outermost first, so `[...before, text, ...after]` reads in order. */
   neighbors?: { before: string[]; after: string[] };
+  /**
+   * Only when `highlight` was requested: where query terms land in `text`, as
+   * `text.slice(start, end)` ranges. Keyword-based — a hit that matched
+   * semantically may report an empty array, which is itself informative.
+   */
+  matches?: { start: number; end: number }[];
 }
 
 /**
@@ -101,6 +151,29 @@ export interface SearchOptions {
   /** Drop hits below this score. Provider-specific scale — measure before using. */
   scoreThreshold?: number;
   /**
+   * Narrow the search to matching chunks before ranking — by document
+   * metadata, filename, document ids, page range, or required words/phrases.
+   * See {@link SearchFilter}.
+   */
+  filter?: SearchFilter;
+  /**
+   * Which retrieval branches run. Defaults to the source's configuration
+   * (hybrid). `'lexical'` skips the query embedding entirely — fastest, and
+   * right for identifier-shaped queries. See {@link SearchMode}.
+   */
+  mode?: SearchMode;
+  /**
+   * At most this many hits per document, backfilled from other documents —
+   * stops one document from monopolizing the results. Useful whenever the
+   * answer should draw on several sources.
+   */
+  maxPerDocument?: number;
+  /**
+   * Return `matches` on each hit: offsets of query terms within its text, for
+   * rendering highlights.
+   */
+  highlight?: boolean;
+  /**
    * Rerank results with a cross-encoder before returning them. On by default.
    *
    * Turn it off on a latency-sensitive path — it adds a round trip for a
@@ -113,6 +186,8 @@ export interface SearchOptions {
    *
    * Keyword matching is what finds part numbers, error codes and proper nouns
    * that an embedding model never learned. Rarely worth disabling.
+   * `hybrid: false` is the same as `mode: 'semantic'`; prefer `mode`, which
+   * also offers `'lexical'`.
    */
   hybrid?: boolean;
   /**
@@ -141,6 +216,13 @@ export interface AddOptions {
    */
   filename: string;
   contentType?: string;
+  /**
+   * Tags to attach — filterable at search time via
+   * {@link SearchFilter.metadata}. Scalars only, up to 16 keys. Re-adding the
+   * same bytes with different metadata updates the tags in place with no
+   * re-processing; supplying metadata replaces the whole object.
+   */
+  metadata?: DocumentMetadata;
 }
 
 export interface DataSourceDocument {
@@ -150,6 +232,8 @@ export interface DataSourceDocument {
   errorMessage: string | null;
   chunkCount: number | null;
   pageCount: number | null;
+  /** Tags set at add time. See {@link AddOptions.metadata}. */
+  metadata: DocumentMetadata | null;
   createdAt: string;
   ingestedAt: string | null;
 }
@@ -252,6 +336,14 @@ export class DataSource {
       ...(options?.scoreThreshold !== undefined
         ? { scoreThreshold: options.scoreThreshold }
         : {}),
+      ...(options?.filter !== undefined ? { filter: options.filter } : {}),
+      ...(options?.mode !== undefined ? { mode: options.mode } : {}),
+      ...(options?.maxPerDocument !== undefined
+        ? { maxPerDocument: options.maxPerDocument }
+        : {}),
+      ...(options?.highlight !== undefined
+        ? { highlight: options.highlight }
+        : {}),
       ...(options?.rerank !== undefined ? { rerank: options.rerank } : {}),
       ...(options?.hybrid !== undefined ? { hybrid: options.hybrid } : {}),
       ...(options?.explain !== undefined ? { explain: options.explain } : {}),
@@ -317,6 +409,7 @@ export class DataSource {
       slug: this._slug,
       filename: options.filename,
       ...(options.contentType ? { contentType: options.contentType } : {}),
+      ...(options.metadata !== undefined ? { metadata: options.metadata } : {}),
       body: bytes.toString('base64'),
     });
   }

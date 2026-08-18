@@ -5,6 +5,7 @@ import type { AuthContext as _AuthContext } from './auth/index.js';
 import type { Db as _Db } from './db/index.js';
 import type { Files as _Files } from './files/index.js';
 import type { DataSources as _DataSources } from './datasources/index.js';
+import type { Voice as _Voice } from './voice/index.js';
 
 /** MindStudioAgent with all generated step methods. */
 export type MindStudioAgent = _MindStudioAgent & StepMethods;
@@ -75,6 +76,7 @@ export type {
   TaskUsage,
   TaskToolCall,
 } from './task/index.js';
+export type { Voice, VoiceCallResult } from './voice/index.js';
 
 // Re-export all generated types
 export * from './generated/types.js';
@@ -239,6 +241,27 @@ export const dataSources: _DataSources = new Proxy(
     },
   },
 );
+
+/**
+ * Top-level `voice` namespace bound to the default singleton.
+ *
+ * Telephony: outbound calls answered by this app's voice agent. See the
+ * `voice` module docs for identity, limits, and compliance notes.
+ *
+ * @example
+ * ```ts
+ * import { voice } from '@mindstudio-ai/agent';
+ *
+ * await voice.call({ to: '+13105551234', assumeIdentity: true });
+ * ```
+ */
+export const voice: _Voice = new Proxy({} as _Voice, {
+  get(_, prop) {
+    const target = mindstudio.voice;
+    const value = Reflect.get(target, prop, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  },
+});
 
 /**
  * Top-level `stream` function bound to the default singleton.

@@ -1801,15 +1801,31 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     "const { results } = await Policies.search('what are the payment terms?', { topK: 5 });",
   );
   lines.push(
-    "// options: topK (default 5, max 50), scoreThreshold, rerank, hybrid — the last two default on",
+    '// options: topK (default 5, max 50), scoreThreshold, filter, mode, maxPerDocument, highlight, rerank, hybrid',
   );
   lines.push(
     'const context = results.map((r) => r.text).join(String.fromCharCode(10, 10));',
   );
   lines.push('');
+  lines.push('// narrow before ranking: metadata tags, filename, pages, required words');
+  lines.push("await Policies.search('termination clause', {");
+  lines.push(
+    "  filter: { metadata: { department: 'legal', year: [2025, 2026] }, phrase: 'notice period' },",
+  );
+  lines.push('  maxPerDocument: 2,  // stop one document monopolizing the results');
+  lines.push('});');
+  lines.push('');
+  lines.push(
+    "// mode: 'hybrid' (default) | 'semantic' | 'lexical'. Lexical skips the query",
+  );
+  lines.push(
+    "// embedding — fastest, right for identifier-shaped queries (error codes, SKUs).",
+  );
+  lines.push("await Policies.search('ERR-7741X', { mode: 'lexical' });");
+  lines.push('');
   lines.push('// add a document (background — poll documents() for status)');
   lines.push(
-    "await Policies.add(buffer, { filename: 'policy.pdf', contentType: 'application/pdf' });",
+    "await Policies.add(buffer, { filename: 'policy.pdf', contentType: 'application/pdf', metadata: { department: 'legal' } });",
   );
   lines.push('const docs = await Policies.documents();');
   lines.push('');
@@ -1825,7 +1841,11 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push(
-    'Also on each hit: `retrievalRank`/`retrievalScore` (position before reranking — compare with the final position to see what reranking did). Two opt-in search options for debugging: `explain: true` adds `explain.{dense,lexical,matchedVia}` so you can see which half of hybrid found a hit, and `expand: 1` adds `neighbors.{before,after}` for surrounding context. Neither changes the results or their order.',
+    'Also on each hit: `retrievalRank`/`retrievalScore` (position before reranking — compare with the final position to see what reranking did). Three opt-in search options for debugging and display: `explain: true` adds `explain.{dense,lexical,matchedVia}` so you can see which half of hybrid found a hit; `expand: 1` adds `neighbors.{before,after}` for surrounding context; `highlight: true` adds `matches` — `{start, end}` offsets of query terms in `text`, for rendering highlights. None of them changes the results or their order.',
+  );
+  lines.push('');
+  lines.push(
+    "`filter` fields (all AND together, and only narrow): `metadata` (per-key equals, or any-of via an array), `filename`, `documentIds`, `pages: {min?, max?}`, `contains` (all words, any order), `phrase` (exact adjacent sequence). Document metadata is set at add time: scalars only, ≤16 keys, keys `[a-zA-Z0-9_-]`. Re-adding the same bytes with different metadata updates the tags in place — no re-processing.",
   );
   lines.push('');
   lines.push(
@@ -1833,7 +1853,11 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push(
-    'Supported: pdf, docx, pptx, xlsx, odt, rtf, epub, images, txt, md, json, csv, html.',
+    'Other methods: `stats()`, `documents()`, `chunks(documentId, {vectors?})`, `remove(documentId)`, `ensure(name?)` (rarely needed — `add` and `search` create-on-reference), and `DataSource.contentHash(bytes)` to check for an existing document before adding.',
+  );
+  lines.push('');
+  lines.push(
+    'Supported: pdf, docx, pptx, xlsx, odt, rtf, epub, images, txt, md, json, csv, tsv, log, html.',
   );
   lines.push('');
   lines.push(
@@ -1841,7 +1865,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push(
-    '`rerank` and `hybrid` are free to change and take effect on the next search. How documents are chunked and embedded is configured on the corpus itself with `mindstudio-prod datasources config` — not in code — and changing it on a populated source is rejected rather than silently rebuilding.',
+    'Everything in `SearchOptions` — `mode`, `filter`, `rerank`, `hybrid`, `maxPerDocument`, `highlight` — is free to change and takes effect on the next search. How documents are chunked and embedded is configured on the corpus itself with `mindstudio-prod datasources config` — not in code — and changing it on a populated source is rejected rather than silently rebuilding.',
   );
   lines.push('');
   lines.push(
