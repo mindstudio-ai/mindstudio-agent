@@ -40,8 +40,12 @@ export type {
   DataSourceChunk,
   DataSourceDocument,
   DataSourceStats,
+  DocumentMetadata,
+  MetadataValue,
   SearchExplain,
+  SearchFilter,
   SearchHit,
+  SearchMode,
   SearchOptions,
 } from './source.js';
 
