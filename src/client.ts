@@ -19,6 +19,7 @@ import {
 import { createFiles, type Files } from './files/index.js';
 import type { Store } from './files/store.js';
 import { createDataSources, type DataSources } from './datasources/index.js';
+import { createVoice, type Voice } from './voice/index.js';
 import {
   buildTaskRequestBody,
   runTaskPoll,
@@ -132,6 +133,7 @@ export class MindStudioAgent {
   /** @internal Cached Files namespace instance (lazy; no context hydration needed). */
   private _files: Files | undefined;
   private _dataSources: DataSources | undefined;
+  private _voice: Voice | undefined;
 
   /** @internal Auth type — 'internal' for CALLBACK_TOKEN (managed mode), 'apiKey' otherwise. */
   private _authType: AuthType;
@@ -1346,6 +1348,18 @@ export class MindStudioAgent {
   }
 
   /**
+   * Telephony: outbound calls answered by this app's voice agent.
+   *
+   * @example
+   * ```ts
+   * await agent.voice.call({ to: '+13105551234', assumeIdentity: true });
+   * ```
+   */
+  get voice(): Voice {
+    return (this._voice ??= createVoice(this._voiceRequest.bind(this)));
+  }
+
+  /**
    * @internal Transport for the `files` namespace — POST /_internal/v2/files/<op>
    * with the raw hook token (mirrors `_executeDbBatch`).
    */
@@ -1364,6 +1378,17 @@ export class MindStudioAgent {
     return this._brokeredRequest('datasources', op, body, {
       fallbackMessage: 'Data source operation failed',
       fallbackCode: 'data_source_error',
+    });
+  }
+
+  /**
+   * @internal Transport for the `voice` namespace —
+   * POST /_internal/v2/voice/<op> with the raw hook token.
+   */
+  private async _voiceRequest(op: string, body: unknown): Promise<any> {
+    return this._brokeredRequest('voice', op, body, {
+      fallbackMessage: 'Voice operation failed',
+      fallbackCode: 'voice_error',
     });
   }
 
