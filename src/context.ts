@@ -13,6 +13,24 @@
 import type { AppAuthContext, AppDatabase, AuthTableConfig } from './types.js';
 
 /**
+ * Originating-session identity for method invocations triggered by a
+ * conversational surface (a voice call's tool use, an agent-chat tool use).
+ * Platform-resolved and guaranteed — never model- or client-supplied — so a
+ * method can deterministically correlate back to the exact client session
+ * that triggered it, including anonymous sessions (via `visitorId`).
+ * Channel-discriminated so future surfaces extend without breaking.
+ */
+export interface SessionContext {
+  channel: 'voice' | 'agent';
+  /** Voice-session id — matches the browser voice client's `session.sessionId`. */
+  voiceSessionId?: string;
+  /** Agent-chat thread id. */
+  threadId?: string;
+  /** Stable visitor key — present for anonymous AND signed-in sessions. */
+  visitorId?: string;
+}
+
+/**
  * Per-request context provided by the sandbox execution service.
  * Contains everything the SDK needs to resolve auth, databases, and
  * API endpoints for a specific request.
@@ -30,6 +48,8 @@ export interface RequestContext {
   authConfig?: AuthTableConfig;
   /** Stream ID for SSE streaming in this request. */
   streamId?: string;
+  /** Originating-session identity (voice/agent tool calls); absent otherwise. */
+  session?: SessionContext;
 }
 
 // AsyncLocalStorage: available in Node.js, no-op in browsers.
