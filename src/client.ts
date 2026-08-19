@@ -804,6 +804,67 @@ export class MindStudioAgent {
   async runTask<T = unknown>(
     options: RunTaskOptions,
   ): Promise<RunTaskResult<T>> {
+    // Register the whole task with the platform's background-work hook (when
+    // present): a fire-and-forget task keeps its sandbox alive for the loop's
+    // duration and gets an interruption annotation if the pod is torn down.
+    // Awaited callers are unaffected — the registration settles with the
+    // task. The hook gets a silenced branch so the caller's promise keeps its
+    // real rejection.
+    const taskPromise = this._runTaskInner<T>(options);
+    const hook = (globalThis as Record<string, unknown>).__msWaitUntil;
+    if (typeof hook === 'function') {
+      try {
+        hook(taskPromise.catch(() => {}));
+      } catch {}
+    }
+    return taskPromise;
+  }
+
+  /**
+   * Register background work with the platform so the sandbox stays alive
+   * until it settles (bounded at ~30 minutes) instead of being reaped as
+   * idle, and so an interruption is recorded in the request log if the
+   * sandbox is torn down anyway.
+   *
+   * Use it for the fire-and-forget pattern — kick off slow work, return
+   * early, write results back when it finishes:
+   *
+   * ```ts
+   * mindstudio.waitUntil(
+   *   enrichRecord(id)
+   *     .then((data) => Records.update(id, { ...data, status: 'ready' }))
+   *     .catch(() => Records.update(id, { status: 'failed' })),
+   * );
+   * return { status: 'processing' };
+   * ```
+   *
+   * Failures of the registered promise are caught and logged to the request
+   * log — they can never crash the sandbox. Outside a managed sandbox this
+   * degrades to just that error-catching. If you need the result, keep your
+   * own reference to the promise and `await` it — `waitUntil` returns void.
+   */
+  waitUntil(promise: Promise<unknown>): void {
+    // Attaching this catch also marks the caller's promise as handled, so an
+    // unhandled rejection can never escape background work registered here.
+    const caught = Promise.resolve(promise).catch((err) => {
+      console.error(
+        '[waitUntil] Background work failed:',
+        err instanceof Error ? (err.stack ?? err.message) : String(err),
+      );
+    });
+    const hook = (globalThis as Record<string, unknown>).__msWaitUntil;
+    if (typeof hook === 'function') {
+      try {
+        hook(caught);
+      } catch {
+        // Never let a broken host hook affect the caller.
+      }
+    }
+  }
+
+  private async _runTaskInner<T = unknown>(
+    options: RunTaskOptions,
+  ): Promise<RunTaskResult<T>> {
     // The loop runs here, in the caller's process, with the API as a per-turn
     // transport — that's what lets tasks survive platform deploys (see
     // src/task/local.ts). Tool dispatch closes over `this` so step tools get
