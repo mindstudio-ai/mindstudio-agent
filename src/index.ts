@@ -18,7 +18,11 @@ export const MindStudioAgent = _MindStudioAgent as unknown as {
 export { MindStudioError } from './errors.js';
 export { AuthContext, Roles } from './auth/index.js';
 export { runWithContext, getRequestContext } from './context.js';
-export type { RequestContext } from './context.js';
+export type { RequestContext, SessionContext } from './context.js';
+import {
+  getRequestContext,
+  type SessionContext as _SessionContext,
+} from './context.js';
 export type { Db, DefineTableOptions, Table, Query, Predicate, Accessor, PushInput, UpdateInput, SystemFields } from './db/index.js';
 export type {
   Files,
@@ -262,6 +266,42 @@ export const voice: _Voice = new Proxy({} as _Voice, {
     return typeof value === 'function' ? value.bind(target) : value;
   },
 });
+
+/**
+ * Originating-session identity for this invocation — set when the method was
+ * triggered by a conversational surface (a voice call's tool use, an
+ * agent-chat tool use), absent on plain API/web/cron invocations.
+ *
+ * Values are platform-resolved and guaranteed (never model- or
+ * client-supplied), so they're safe to key on: `session.voiceSessionId`
+ * matches the browser voice client's `session.sessionId`, and
+ * `session.visitorId` correlates anonymous sessions. Properties read from the
+ * per-request context, so they're always this request's values — check
+ * `session.channel` to detect whether one is present.
+ *
+ * @example
+ * ```ts
+ * import { db, session } from '@mindstudio-ai/agent';
+ *
+ * export async function searchKnowledgeBase({ query }: { query: string }) {
+ *   const results = await runSearch(query);
+ *   if (session.voiceSessionId) {
+ *     // Deterministic correlation back to the browser in this exact call.
+ *     await ToolResults.insert({ sessionId: session.voiceSessionId, results });
+ *   }
+ *   return results;
+ * }
+ * ```
+ */
+export const session: Readonly<Partial<_SessionContext>> = new Proxy(
+  {} as Partial<_SessionContext>,
+  {
+    get(_, prop) {
+      const ctx = getRequestContext();
+      return ctx?.session?.[prop as keyof _SessionContext];
+    },
+  },
+);
 
 /**
  * Top-level `stream` function bound to the default singleton.
