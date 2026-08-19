@@ -23,7 +23,17 @@ import {
   getRequestContext,
   type SessionContext as _SessionContext,
 } from './context.js';
-export type { Db, DefineTableOptions, Table, Query, Predicate, Accessor, PushInput, UpdateInput, SystemFields } from './db/index.js';
+export type {
+  Db,
+  DefineTableOptions,
+  Table,
+  Query,
+  Predicate,
+  Accessor,
+  PushInput,
+  UpdateInput,
+  SystemFields,
+} from './db/index.js';
 export type {
   Files,
   DefineStoreOptions,
@@ -92,10 +102,7 @@ export {
   type MonacoSnippetField,
   type MonacoSnippetFieldType,
 } from './generated/snippets.js';
-export {
-  stepMetadata,
-  type StepMetadata,
-} from './generated/metadata.js';
+export { stepMetadata, type StepMetadata } from './generated/metadata.js';
 
 // ---------------------------------------------------------------------------
 // Lazy default singleton
@@ -111,16 +118,13 @@ export {
  * ```
  */
 let _default: MindStudioAgent;
-export const mindstudio: MindStudioAgent = new Proxy(
-  {} as MindStudioAgent,
-  {
-    get(_, prop, receiver) {
-      _default ??= new MindStudioAgent();
-      const value = Reflect.get(_default, prop, _default);
-      return typeof value === 'function' ? value.bind(_default) : value;
-    },
+export const mindstudio: MindStudioAgent = new Proxy({} as MindStudioAgent, {
+  get(_, prop, receiver) {
+    _default ??= new MindStudioAgent();
+    const value = Reflect.get(_default, prop, _default);
+    return typeof value === 'function' ? value.bind(_default) : value;
   },
-);
+});
 
 export default mindstudio;
 
@@ -157,16 +161,13 @@ export default mindstudio;
  * const admins = auth.getUsersByRole(Roles.admin);
  * ```
  */
-export const auth: _AuthContext = new Proxy(
-  {} as _AuthContext,
-  {
-    get(_, prop) {
-      const target = mindstudio.auth;
-      const value = Reflect.get(target, prop, target);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
+export const auth: _AuthContext = new Proxy({} as _AuthContext, {
+  get(_, prop) {
+    const target = mindstudio.auth;
+    const value = Reflect.get(target, prop, target);
+    return typeof value === 'function' ? value.bind(target) : value;
   },
-);
+});
 
 /**
  * Top-level `db` namespace bound to the default singleton.
@@ -183,16 +184,13 @@ export const auth: _AuthContext = new Proxy(
  * const active = await Orders.filter(o => o.status === 'active').take(10);
  * ```
  */
-export const db: _Db = new Proxy(
-  {} as _Db,
-  {
-    get(_, prop) {
-      const target = mindstudio.db;
-      const value = Reflect.get(target, prop, target);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
+export const db: _Db = new Proxy({} as _Db, {
+  get(_, prop) {
+    const target = mindstudio.db;
+    const value = Reflect.get(target, prop, target);
+    return typeof value === 'function' ? value.bind(target) : value;
   },
-);
+});
 
 /**
  * Top-level `files` namespace bound to the default singleton.
@@ -210,16 +208,13 @@ export const db: _Db = new Proxy(
  * const f = await Uploads.put(buffer, { contentType: 'application/pdf' });
  * ```
  */
-export const files: _Files = new Proxy(
-  {} as _Files,
-  {
-    get(_, prop) {
-      const target = mindstudio.files;
-      const value = Reflect.get(target, prop, target);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
+export const files: _Files = new Proxy({} as _Files, {
+  get(_, prop) {
+    const target = mindstudio.files;
+    const value = Reflect.get(target, prop, target);
+    return typeof value === 'function' ? value.bind(target) : value;
   },
-);
+});
 
 /**
  * Top-level `dataSources` namespace bound to the default singleton.
@@ -235,16 +230,13 @@ export const files: _Files = new Proxy(
  * const { results } = await Policies.search('what are the payment terms?');
  * ```
  */
-export const dataSources: _DataSources = new Proxy(
-  {} as _DataSources,
-  {
-    get(_, prop) {
-      const target = mindstudio.dataSources;
-      const value = Reflect.get(target, prop, target);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
+export const dataSources: _DataSources = new Proxy({} as _DataSources, {
+  get(_, prop) {
+    const target = mindstudio.dataSources;
+    const value = Reflect.get(target, prop, target);
+    return typeof value === 'function' ? value.bind(target) : value;
   },
-);
+});
 
 /**
  * Top-level `voice` namespace bound to the default singleton.
