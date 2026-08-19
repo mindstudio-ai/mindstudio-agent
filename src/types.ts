@@ -121,6 +121,13 @@ export interface StepExecutionOptions {
    * ```
    */
   store?: Store;
+
+  /**
+   * @internal Usage-metrics attribution label for this call (e.g. `v2-task`
+   * for task-agent tool calls). Analytics-only. Overrides the instance-level
+   * source when set.
+   */
+  requestSource?: string;
 }
 
 /** Execution metadata returned alongside every step result. */

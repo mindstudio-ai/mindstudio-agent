@@ -27,6 +27,7 @@ import {
   type RunTaskOptions,
   type RunTaskResult,
 } from './task/index.js';
+import { runTaskLocal, TURN_UNAVAILABLE_CODE } from './task/local.js';
 import type {
   AgentOptions,
   StepExecutionOptions,
@@ -279,8 +280,8 @@ export class MindStudioAgent {
       ...(options?.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
       ...(this._currentStreamId != null && { streamId: this._currentStreamId }),
-      ...(this._requestSource != null && {
-        requestSource: this._requestSource,
+      ...((options?.requestSource ?? this._requestSource) != null && {
+        requestSource: options?.requestSource ?? this._requestSource,
       }),
       ...assetStoreBody(options?.store),
     });
@@ -407,8 +408,8 @@ export class MindStudioAgent {
       ...(options.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
       ...(this._currentStreamId != null && { streamId: this._currentStreamId }),
-      ...(this._requestSource != null && {
-        requestSource: this._requestSource,
+      ...((options.requestSource ?? this._requestSource) != null && {
+        requestSource: options.requestSource ?? this._requestSource,
       }),
       ...assetStoreBody(options.store),
     };
@@ -803,11 +804,108 @@ export class MindStudioAgent {
   async runTask<T = unknown>(
     options: RunTaskOptions,
   ): Promise<RunTaskResult<T>> {
-    const body = buildTaskRequestBody(options);
-    if (options.onEvent) {
-      return runTaskStream<T>(this._currentHttpConfig, body, options.onEvent);
+    // The loop runs here, in the caller's process, with the API as a per-turn
+    // transport — that's what lets tasks survive platform deploys (see
+    // src/task/local.ts). Tool dispatch closes over `this` so step tools get
+    // the full executeStep treatment (S3 output resolution, thread handling).
+    const httpConfig = this._currentHttpConfig;
+    try {
+      return await runTaskLocal<T>(
+        {
+          httpConfig,
+          executeStepTool: async (stepType, input) => {
+            try {
+              const result = await this.executeStep(stepType, input, {
+                requestSource: 'v2-task',
+              });
+              // Un-flatten: the model wants the step's output object, not the
+              // SDK's $-prefixed execution metadata.
+              const output: Record<string, unknown> = {};
+              let billingCost = 0;
+              for (const [key, value] of Object.entries(
+                result as unknown as Record<string, unknown>,
+              )) {
+                if (key === '$billingCost' && typeof value === 'number') {
+                  billingCost = value;
+                }
+                if (!key.startsWith('$')) {
+                  output[key] = value;
+                }
+              }
+              return { output, billingCost, isError: false };
+            } catch (err) {
+              return {
+                output: {
+                  error:
+                    err instanceof Error
+                      ? err.message
+                      : 'Step execution failed',
+                },
+                billingCost: 0,
+                isError: true,
+              };
+            }
+          },
+          executeMethodTool: async (methodId, input) => {
+            try {
+              // maxRetries: 0 — method executions have side effects, so a
+              // transport-level retry could run the method twice. Failures go
+              // back to the model, which decides whether to try again.
+              const { data } = await request<{
+                output?: unknown;
+                error?: string;
+              }>(
+                { ...httpConfig, maxRetries: 0 },
+                'POST',
+                '/task/invoke-method',
+                {
+                  methodId,
+                  input,
+                },
+              );
+              if (data.error) {
+                return {
+                  output: { error: data.error },
+                  billingCost: 0,
+                  isError: true,
+                };
+              }
+              return {
+                output: data.output ?? null,
+                billingCost: 0,
+                isError: false,
+              };
+            } catch (err) {
+              return {
+                output: {
+                  error:
+                    err instanceof Error
+                      ? err.message
+                      : 'Method execution failed',
+                },
+                billingCost: 0,
+                isError: true,
+              };
+            }
+          },
+        },
+        options,
+      );
+    } catch (err) {
+      // Server predates the turn endpoint (or self-hosted, not yet upgraded) —
+      // fall back to the legacy server-side whole-task loop.
+      if (
+        err instanceof MindStudioError &&
+        err.code === TURN_UNAVAILABLE_CODE
+      ) {
+        const body = buildTaskRequestBody(options);
+        if (options.onEvent) {
+          return runTaskStream<T>(httpConfig, body, options.onEvent);
+        }
+        return runTaskPoll<T>(httpConfig, body);
+      }
+      throw err;
     }
-    return runTaskPoll<T>(this._currentHttpConfig, body);
   }
 
   /**
