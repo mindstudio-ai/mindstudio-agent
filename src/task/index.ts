@@ -44,7 +44,7 @@ function resolveStepType(name: string): string {
 }
 
 /** Map developer tool configs to API request format with alias resolution. */
-function mapTools(tools: TaskToolConfig[]): TaskRequestBody['tools'] {
+export function mapTools(tools: TaskToolConfig[]): TaskRequestBody['tools'] {
   return tools.map((t) => {
     // App methods pass through untouched. `resolveStepType` looks names up in
     // `stepMetadata`, so running an app method id through it would silently
@@ -85,17 +85,17 @@ export function buildTaskRequestBody(options: RunTaskOptions): TaskRequestBody {
 // Poll mode
 // ---------------------------------------------------------------------------
 
-function sleep(ms: number): Promise<void> {
+export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Check if running in managed/sandbox mode (dev tunnel or ALS). */
-function isDevMode(): boolean {
+export function isDevMode(): boolean {
   return !!(process.env.CALLBACK_TOKEN || getRequestContext()?.callbackToken);
 }
 
 /** Log task result summary to console in dev mode. */
-function logTaskResult(result: RunTaskResult<unknown>): void {
+export function logTaskResult(result: RunTaskResult<unknown>): void {
   if (!isDevMode()) return;
 
   const toolSummary = result.toolCalls
@@ -136,7 +136,8 @@ export async function runTaskPoll<T = unknown>(
     });
 
     // Retry silently on transient server errors
-    if (res.status === 502 || res.status === 503 || res.status === 504) continue;
+    if (res.status === 502 || res.status === 503 || res.status === 504)
+      continue;
 
     if (res.status === 404) {
       throw new MindStudioError(
@@ -173,7 +174,9 @@ export async function runTaskPoll<T = unknown>(
 
     if (poll.status === 'pending') {
       if (isDevMode() && poll.currentTurn != null) {
-        console.log(`[task] running... turn ${poll.currentTurn}/${poll.maxTurns ?? '?'}`);
+        console.log(
+          `[task] running... turn ${poll.currentTurn}/${poll.maxTurns ?? '?'}`,
+        );
       }
       continue;
     }
@@ -191,7 +194,11 @@ export async function runTaskPoll<T = unknown>(
       outputRaw: poll.outputRaw ?? '',
       parsedSuccessfully: poll.parsedSuccessfully ?? true,
       turns: poll.turns ?? 0,
-      usage: poll.usage ?? { inputTokens: 0, outputTokens: 0, totalBillingCost: 0 },
+      usage: poll.usage ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalBillingCost: 0,
+      },
       toolCalls: poll.toolCalls ?? [],
     };
 
@@ -238,7 +245,10 @@ export async function runTaskStream<T = unknown>(
         if (errMsg) message = errMsg;
         if (errBody.code) code = errBody.code as string;
       } catch {
-        const stripped = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        const stripped = text
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
         if (stripped) message = stripped.slice(0, 200);
       }
     } catch {}

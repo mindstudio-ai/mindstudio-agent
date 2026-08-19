@@ -314,6 +314,25 @@ export const stream = (data: string | Record<string, unknown>) =>
   mindstudio.stream(data);
 
 /**
+ * Top-level `waitUntil` bound to the default singleton.
+ *
+ * Register background work so the platform keeps the sandbox alive until it
+ * settles (bounded at ~30 minutes) and records an interruption in the request
+ * log if the sandbox is torn down anyway. Failures are caught and logged —
+ * they can never crash the sandbox. Use it around fire-and-forget chains:
+ *
+ * @example
+ * ```ts
+ * import { waitUntil } from '@mindstudio-ai/agent';
+ *
+ * waitUntil(enrichRecord(id).then((d) => Records.update(id, d)));
+ * return { status: 'processing' };
+ * ```
+ */
+export const waitUntil = (promise: Promise<unknown>) =>
+  mindstudio.waitUntil(promise);
+
+/**
  * Resolve a user ID to display info (name, email, profile picture).
  * Bound to the default singleton.
  *

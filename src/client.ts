@@ -27,6 +27,7 @@ import {
   type RunTaskOptions,
   type RunTaskResult,
 } from './task/index.js';
+import { runTaskLocal, TURN_UNAVAILABLE_CODE } from './task/local.js';
 import type {
   AgentOptions,
   StepExecutionOptions,
@@ -279,8 +280,8 @@ export class MindStudioAgent {
       ...(options?.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
       ...(this._currentStreamId != null && { streamId: this._currentStreamId }),
-      ...(this._requestSource != null && {
-        requestSource: this._requestSource,
+      ...((options?.requestSource ?? this._requestSource) != null && {
+        requestSource: options?.requestSource ?? this._requestSource,
       }),
       ...assetStoreBody(options?.store),
     });
@@ -407,8 +408,8 @@ export class MindStudioAgent {
       ...(options.appId != null && { appId: options.appId }),
       ...(threadId != null && { threadId }),
       ...(this._currentStreamId != null && { streamId: this._currentStreamId }),
-      ...(this._requestSource != null && {
-        requestSource: this._requestSource,
+      ...((options.requestSource ?? this._requestSource) != null && {
+        requestSource: options.requestSource ?? this._requestSource,
       }),
       ...assetStoreBody(options.store),
     };
@@ -803,11 +804,169 @@ export class MindStudioAgent {
   async runTask<T = unknown>(
     options: RunTaskOptions,
   ): Promise<RunTaskResult<T>> {
-    const body = buildTaskRequestBody(options);
-    if (options.onEvent) {
-      return runTaskStream<T>(this._currentHttpConfig, body, options.onEvent);
+    // Register the whole task with the platform's background-work hook (when
+    // present): a fire-and-forget task keeps its sandbox alive for the loop's
+    // duration and gets an interruption annotation if the pod is torn down.
+    // Awaited callers are unaffected — the registration settles with the
+    // task. The hook gets a silenced branch so the caller's promise keeps its
+    // real rejection.
+    const taskPromise = this._runTaskInner<T>(options);
+    const hook = (globalThis as Record<string, unknown>).__msWaitUntil;
+    if (typeof hook === 'function') {
+      try {
+        hook(taskPromise.catch(() => {}));
+      } catch {}
     }
-    return runTaskPoll<T>(this._currentHttpConfig, body);
+    return taskPromise;
+  }
+
+  /**
+   * Register background work with the platform so the sandbox stays alive
+   * until it settles (bounded at ~30 minutes) instead of being reaped as
+   * idle, and so an interruption is recorded in the request log if the
+   * sandbox is torn down anyway.
+   *
+   * Use it for the fire-and-forget pattern — kick off slow work, return
+   * early, write results back when it finishes:
+   *
+   * ```ts
+   * mindstudio.waitUntil(
+   *   enrichRecord(id)
+   *     .then((data) => Records.update(id, { ...data, status: 'ready' }))
+   *     .catch(() => Records.update(id, { status: 'failed' })),
+   * );
+   * return { status: 'processing' };
+   * ```
+   *
+   * Failures of the registered promise are caught and logged to the request
+   * log — they can never crash the sandbox. Outside a managed sandbox this
+   * degrades to just that error-catching. If you need the result, keep your
+   * own reference to the promise and `await` it — `waitUntil` returns void.
+   */
+  waitUntil(promise: Promise<unknown>): void {
+    // Attaching this catch also marks the caller's promise as handled, so an
+    // unhandled rejection can never escape background work registered here.
+    const caught = Promise.resolve(promise).catch((err) => {
+      console.error(
+        '[waitUntil] Background work failed:',
+        err instanceof Error ? (err.stack ?? err.message) : String(err),
+      );
+    });
+    const hook = (globalThis as Record<string, unknown>).__msWaitUntil;
+    if (typeof hook === 'function') {
+      try {
+        hook(caught);
+      } catch {
+        // Never let a broken host hook affect the caller.
+      }
+    }
+  }
+
+  private async _runTaskInner<T = unknown>(
+    options: RunTaskOptions,
+  ): Promise<RunTaskResult<T>> {
+    // The loop runs here, in the caller's process, with the API as a per-turn
+    // transport — that's what lets tasks survive platform deploys (see
+    // src/task/local.ts). Tool dispatch closes over `this` so step tools get
+    // the full executeStep treatment (S3 output resolution, thread handling).
+    const httpConfig = this._currentHttpConfig;
+    try {
+      return await runTaskLocal<T>(
+        {
+          httpConfig,
+          executeStepTool: async (stepType, input) => {
+            try {
+              const result = await this.executeStep(stepType, input, {
+                requestSource: 'v2-task',
+              });
+              // Un-flatten: the model wants the step's output object, not the
+              // SDK's $-prefixed execution metadata.
+              const output: Record<string, unknown> = {};
+              let billingCost = 0;
+              for (const [key, value] of Object.entries(
+                result as unknown as Record<string, unknown>,
+              )) {
+                if (key === '$billingCost' && typeof value === 'number') {
+                  billingCost = value;
+                }
+                if (!key.startsWith('$')) {
+                  output[key] = value;
+                }
+              }
+              return { output, billingCost, isError: false };
+            } catch (err) {
+              return {
+                output: {
+                  error:
+                    err instanceof Error
+                      ? err.message
+                      : 'Step execution failed',
+                },
+                billingCost: 0,
+                isError: true,
+              };
+            }
+          },
+          executeMethodTool: async (methodId, input) => {
+            try {
+              // maxRetries: 0 — method executions have side effects, so a
+              // transport-level retry could run the method twice. Failures go
+              // back to the model, which decides whether to try again.
+              const { data } = await request<{
+                output?: unknown;
+                error?: string;
+              }>(
+                { ...httpConfig, maxRetries: 0 },
+                'POST',
+                '/task/invoke-method',
+                {
+                  methodId,
+                  input,
+                },
+              );
+              if (data.error) {
+                return {
+                  output: { error: data.error },
+                  billingCost: 0,
+                  isError: true,
+                };
+              }
+              return {
+                output: data.output ?? null,
+                billingCost: 0,
+                isError: false,
+              };
+            } catch (err) {
+              return {
+                output: {
+                  error:
+                    err instanceof Error
+                      ? err.message
+                      : 'Method execution failed',
+                },
+                billingCost: 0,
+                isError: true,
+              };
+            }
+          },
+        },
+        options,
+      );
+    } catch (err) {
+      // Server predates the turn endpoint (or self-hosted, not yet upgraded) —
+      // fall back to the legacy server-side whole-task loop.
+      if (
+        err instanceof MindStudioError &&
+        err.code === TURN_UNAVAILABLE_CODE
+      ) {
+        const body = buildTaskRequestBody(options);
+        if (options.onEvent) {
+          return runTaskStream<T>(httpConfig, body, options.onEvent);
+        }
+        return runTaskPoll<T>(httpConfig, body);
+      }
+      throw err;
+    }
   }
 
   /**
