@@ -126,11 +126,31 @@ export interface SearchHit {
   /** Only when `expand` was requested. Outermost first, so `[...before, text, ...after]` reads in order. */
   neighbors?: { before: string[]; after: string[] };
   /**
-   * Only when `highlight` was requested: where query terms land in `text`, as
-   * `text.slice(start, end)` ranges. Keyword-based — a hit that matched
-   * semantically may report an empty array, which is itself informative.
+   * Only when `highlight` was requested: where the query's most distinctive
+   * terms land in `text`, as `text.slice(start, end)` ranges, each carrying the
+   * `token` it matched so you can colour or group by term.
+   *
+   * NOT every query term — see {@link SearchOptions.highlight}. Keyword-based,
+   * so a hit that matched semantically may report an empty array, which is
+   * itself informative.
    */
-  matches?: { start: number; end: number }[];
+  matches?: { start: number; end: number; token: string }[];
+}
+
+/**
+ * What a search actually ran — as opposed to what was asked for.
+ *
+ * Worth checking when a result surprises you: an omitted `mode` falls back to
+ * the corpus's own configuration, and `reranked` is false when reranking was
+ * skipped or failed open. Absent only when the data source doesn't exist yet,
+ * in which case nothing ran at all.
+ */
+export interface SearchRan {
+  search: SearchMode;
+  hybrid: boolean;
+  reranked: boolean;
+  /** Which build served the query. Changes when a re-vectorization is promoted. */
+  pipelineVersion: number;
 }
 
 /**
@@ -169,8 +189,16 @@ export interface SearchOptions {
    */
   maxPerDocument?: number;
   /**
-   * Return `matches` on each hit: offsets of query terms within its text, for
-   * rendering highlights.
+   * Return {@link SearchHit.matches} on each hit: where query terms land in its
+   * text, for rendering highlights.
+   *
+   * Only the query's **distinctive** terms are marked. English function words —
+   * `the`, `for`, `is`, `of` — are never marked, and when a passage holds more
+   * matches than it can usefully show, the rarest terms win the space. So
+   * `what is the policy for parental leave` marks `policy`, `parental` and
+   * `leave`, and nothing else. Without that a natural-language query lights up
+   * most of the passage and you would need your own stopword list to render
+   * anything. Words you filtered on (`contains`, `phrase`) are always marked.
    */
   highlight?: boolean;
   /**
@@ -324,12 +352,16 @@ export class DataSource {
    * or a regression check on top of it. There is no seed to set. Two things do
    * legitimately move the results: adding or removing documents, and changing
    * the corpus configuration — both of which you control.
+   *
+   * Alongside `results` and `latencyMs` comes {@link SearchRan} — what the
+   * search actually did, which is the first thing to check when results don't
+   * look like the options you passed.
    */
   async search(
     query: string,
     options?: SearchOptions,
-  ): Promise<{ results: SearchHit[]; latencyMs: number }> {
-    const { results, latencyMs } = await this._call('search', {
+  ): Promise<{ results: SearchHit[]; mode?: SearchRan; latencyMs: number }> {
+    const { results, mode, latencyMs } = await this._call('search', {
       slug: this._slug,
       query,
       ...(options?.topK !== undefined ? { topK: options.topK } : {}),
@@ -349,7 +381,7 @@ export class DataSource {
       ...(options?.explain !== undefined ? { explain: options.explain } : {}),
       ...(options?.expand !== undefined ? { expand: options.expand } : {}),
     });
-    return { results: results ?? [], latencyMs: latencyMs ?? 0 };
+    return { results: results ?? [], mode, latencyMs: latencyMs ?? 0 };
   }
 
   /**

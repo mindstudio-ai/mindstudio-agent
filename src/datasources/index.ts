@@ -47,6 +47,7 @@ export type {
   SearchHit,
   SearchMode,
   SearchOptions,
+  SearchRan,
 } from './source.js';
 
 /** The `dataSources` namespace object. */
