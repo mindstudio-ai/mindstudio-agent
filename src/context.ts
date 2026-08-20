@@ -21,7 +21,14 @@ import type { AppAuthContext, AppDatabase, AuthTableConfig } from './types.js';
  * Channel-discriminated so future surfaces extend without breaking.
  */
 export interface SessionContext {
-  channel: 'voice' | 'agent';
+  /**
+   * Which surface invoked this method: `voice`/`agent` for conversational
+   * tool calls (which carry their session/thread ids below), `web` for a
+   * browser interface-session method call, `api` for an app-key or
+   * platform-key call. `web`/`api` carry only `visitorId`. Absent entirely
+   * on older platform versions.
+   */
+  channel: 'voice' | 'agent' | 'web' | 'api';
   /** Voice-session id — matches the browser voice client's `session.sessionId`. */
   voiceSessionId?: string;
   /** Agent-chat thread id. */
