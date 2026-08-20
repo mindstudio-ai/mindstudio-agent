@@ -28,6 +28,21 @@ export interface SessionContext {
   threadId?: string;
   /** Stable visitor key — present for anonymous AND signed-in sessions. */
   visitorId?: string;
+  /**
+   * Voice transport: a browser session (`web`) or a phone call, by direction.
+   * Use it to branch behavior that assumes a screen — on a phone call there
+   * is none, so describe everything in speech. Absent for agent-chat sessions
+   * and on older platform versions — treat absent as `web`.
+   */
+  medium?: 'web' | 'phone-in' | 'phone-out';
+  /**
+   * Phone sessions only: the call's numbers (`fromNumber` = who initiated,
+   * `to` = who was dialed, in both directions). Context and routing only —
+   * caller ID is trivially spoofable, so never treat it as identity: don't
+   * gate roles on it or speak account specifics to an unverified caller.
+   * In-call verification is the auth rail.
+   */
+  sip?: { to: string; fromNumber: string };
 }
 
 /**
