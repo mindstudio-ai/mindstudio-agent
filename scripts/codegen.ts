@@ -1311,7 +1311,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     'result.$rateLimitRemaining;  // number | undefined — API calls remaining in rate limit window',
   );
   lines.push(
-    'result.$billingCost;         // number | undefined — cost in credits for this call',
+    'result.$billingCost;         // number | undefined — cost in nanodollars (1e-9 USD; divide by 1e9 for dollars, e.g. 40000000 = $0.04)',
   );
   lines.push(
     'result.$billingEvents;       // object[] | undefined — itemized billing events',
@@ -1403,9 +1403,11 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     'result.results[0].error;     // string | undefined (error message on failure)',
   );
   lines.push(
-    'result.results[0].billingCost; // number | undefined (cost on success)',
+    'result.results[0].billingCost; // number | undefined (cost in nanodollars on success)',
   );
-  lines.push('result.totalBillingCost;  // number | undefined');
+  lines.push(
+    'result.totalBillingCost;  // number | undefined — nanodollars (divide by 1e9 for USD)',
+  );
   lines.push('result.appId;            // string');
   lines.push('result.threadId;         // string');
   lines.push('```');
@@ -1649,12 +1651,14 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('  estimates?: {');
   lines.push('    eventType: string;       // Billing event type');
   lines.push('    label: string;           // Human-readable cost label');
-  lines.push('    unitPrice: number;       // Price per unit in billing units');
+  lines.push(
+    '    unitPrice: number;       // Price per unit in nanodollars (1e-9 USD)',
+  );
   lines.push(
     '    unitType: string;        // What constitutes a unit (e.g. "token", "request")',
   );
   lines.push(
-    '    estimatedCost?: number;  // Estimated total cost, or null if not estimable',
+    '    estimatedCost?: number;  // Estimated total cost in nanodollars, or null if not estimable',
   );
   lines.push('    quantity: number;        // Number of billable units');
   lines.push('  }[]');

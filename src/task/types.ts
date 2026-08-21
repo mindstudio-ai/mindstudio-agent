@@ -84,6 +84,7 @@ export interface TaskToolCall {
 export interface TaskUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Total cost in nanodollars (1/1,000,000,000th of a US dollar). */
   totalBillingCost: number;
 }
 

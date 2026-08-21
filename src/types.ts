@@ -144,7 +144,10 @@ export interface StepExecutionMeta {
    */
   $rateLimitRemaining?: number;
 
-  /** Cost in credits for this step execution. */
+  /**
+   * Cost of this step execution in nanodollars (1/1,000,000,000th of a US
+   * dollar). Divide by 1e9 to get USD — e.g. `40000000` = $0.04.
+   */
   $billingCost?: number;
 
   /** Itemized billing events for this step execution. */
@@ -536,11 +539,11 @@ export interface StepCostEstimateEntry {
   eventType?: string;
   /** Human-readable label for the cost. */
   label?: string;
-  /** Price per unit in billing units (1/1,000,000,000th of a credit). */
+  /** Price per unit in nanodollars (1/1,000,000,000th of a US dollar). */
   unitPrice?: number;
   /** What constitutes a unit (e.g. "token", "request"). */
   unitType?: string;
-  /** Estimated total cost in billing units, or null if not estimable. */
+  /** Estimated total cost in nanodollars (divide by 1e9 for USD), or null if not estimable. */
   estimatedCost?: number;
   /** Number of billable units. */
   quantity?: number;
@@ -594,7 +597,7 @@ export interface BatchStepResult {
   stepType: string;
   /** Step output data. Present on success. */
   output?: Record<string, unknown>;
-  /** Cost of this step in billing units. Present on success. */
+  /** Cost of this step in nanodollars (divide by 1e9 for USD). Present on success. */
   billingCost?: number;
   /** Error message. Present when this step failed. */
   error?: string;
@@ -620,7 +623,7 @@ export interface ExecuteStepBatchOptions {
 export interface ExecuteStepBatchResult {
   /** Results in the same order as the input steps. */
   results: BatchStepResult[];
-  /** Sum of billingCost across all successful steps. */
+  /** Sum of billingCost across all successful steps, in nanodollars. */
   totalBillingCost?: number;
   /** The app ID used for execution. */
   appId?: string;
@@ -638,6 +641,6 @@ export interface RunAgentResult {
   result: string;
   /** Thread messages, if returned. */
   thread?: unknown;
-  /** Cost in credits, if `includeBillingCost` was set. */
+  /** Cost in nanodollars (divide by 1e9 for USD), if `includeBillingCost` was set. */
   billingCost?: number;
 }
