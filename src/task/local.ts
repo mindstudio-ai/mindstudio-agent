@@ -23,6 +23,13 @@
 import { request, type HttpClientConfig } from '../http.js';
 import { MindStudioError } from '../errors.js';
 import { mapTools, isDevMode, logTaskResult, sleep } from './index.js';
+import {
+  assertSupportedSchema,
+  validateAgainstSchema,
+  formatValidationErrors,
+  stripCodeFences,
+  type SchemaValidationError,
+} from './schema.js';
 import type {
   RunTaskOptions,
   RunTaskResult,
@@ -34,6 +41,10 @@ import type {
 
 const DEFAULT_MAX_TURNS = 20;
 const MAX_TURNS_LIMIT = 100;
+
+/** In schema mode, how many schema-repair round-trips a task may spend.
+ *  Separate from maxTurns so repairs can't starve tool use (or vice versa). */
+const MAX_SCHEMA_REPAIR_ATTEMPTS = 3;
 
 /** Keep a large tool result from blowing the model's context window. */
 const MAX_TOOL_OUTPUT_CHARS = 50_000;
@@ -400,14 +411,24 @@ export async function runTaskLocal<T = unknown>(
   const { httpConfig } = deps;
   const onEvent = options.onEvent;
 
-  const structuredOutputExample =
-    typeof options.structuredOutputExample === 'string'
-      ? options.structuredOutputExample
-      : JSON.stringify(options.structuredOutputExample);
+  const outputSchema = options.outputSchema;
+  if (outputSchema) assertSupportedSchema(outputSchema);
 
-  // Same composition as the server-side loop — the cache breakpoint marker is
-  // handled by the platform's system-message splitter.
-  const system = `${options.prompt}\n\nWhen you have completed the task, respond with your final output as JSON matching this example:\n${structuredOutputExample}\n<!-- cache_breakpoint -->`;
+  let system: string;
+  if (outputSchema) {
+    // "NOT the schema" matters: echoing the schema back is a known failure
+    // mode when a schema appears verbatim in the prompt.
+    system = `${options.prompt}\n\nWhen you have completed the task, respond with your final output as a single JSON object that conforms to this JSON Schema. Respond with the JSON object itself — NOT the schema, no prose, no code fences:\n${JSON.stringify(outputSchema)}\n<!-- cache_breakpoint -->`;
+  } else {
+    const structuredOutputExample =
+      typeof options.structuredOutputExample === 'string'
+        ? options.structuredOutputExample
+        : JSON.stringify(options.structuredOutputExample);
+
+    // Same composition as the server-side loop — the cache breakpoint marker
+    // is handled by the platform's system-message splitter.
+    system = `${options.prompt}\n\nWhen you have completed the task, respond with your final output as JSON matching this example:\n${structuredOutputExample}\n<!-- cache_breakpoint -->`;
+  }
 
   const wireTools = mapTools(options.tools);
   const toolKinds = new Map<string, 'step' | 'method'>();
@@ -432,6 +453,7 @@ export async function runTaskLocal<T = unknown>(
   ];
 
   let loopCount = 0;
+  let schemaRepairCount = 0;
   const toolCallLog: TaskToolCall[] = [];
   const totalUsage = {
     inputTokens: 0,
@@ -472,6 +494,35 @@ export async function runTaskLocal<T = unknown>(
     return result;
   };
 
+  /**
+   * Schema mode never resolves with garbage: build the throwable for output
+   * that couldn't be made to conform. Usage and tool calls ride in `details`
+   * so billing data survives the throw. An `error` event is emitted first so
+   * streaming consumers get terminal-event parity with the `done` path.
+   */
+  const schemaMismatch = (
+    outputRaw: string,
+    errors: SchemaValidationError[],
+  ): MindStudioError => {
+    onEvent?.({
+      type: 'error',
+      error: 'Output did not conform to outputSchema.',
+      errors,
+    });
+    return new MindStudioError(
+      '[task] Output did not conform to outputSchema after all repair attempts.',
+      'task_output_schema_mismatch',
+      422,
+      {
+        outputRaw,
+        errors,
+        turns: loopCount,
+        usage: totalUsage,
+        toolCalls: toolCallLog,
+      },
+    );
+  };
+
   /** Maps a failed turn to the caller-facing contract. */
   const turnFailure = (err: unknown): RunTaskResult<T> => {
     if (err instanceof TurnError && err.phase === 'model') {
@@ -480,6 +531,16 @@ export async function runTaskLocal<T = unknown>(
       // an unparsed result rather than throw.
       if (isDevMode()) {
         console.error(`[task] Model call failed: ${err.message}`);
+      }
+      if (outputSchema) {
+        // Schema mode promises typed output or a throw — resolving with
+        // `output: null` would hand the caller null typed as FromSchema<S>.
+        throw new MindStudioError(
+          `[task] ${err.message}`,
+          'task_execution_error',
+          500,
+          { turns: loopCount, usage: totalUsage, toolCalls: toolCallLog },
+        );
       }
       return finish(buildResult(null, '', false, loopCount));
     }
@@ -591,21 +652,48 @@ export async function runTaskLocal<T = unknown>(
     // end_turn or max_tokens — try to parse as JSON
     messages.push({ role: 'assistant', content: turn.text });
 
+    let output: unknown;
+    let parseOk = true;
     try {
-      const output = JSON.parse(turn.text);
-      return finish(buildResult(output, turn.text, true, loopCount));
+      output = JSON.parse(outputSchema ? stripCodeFences(turn.text) : turn.text);
     } catch {
-      // Not valid JSON — if turns remain, ask the model to fix it
-      if (loopCount < maxTurns) {
+      parseOk = false;
+    }
+
+    if (parseOk) {
+      if (!outputSchema) {
+        return finish(buildResult(output, turn.text, true, loopCount));
+      }
+      const errors = validateAgainstSchema(output, outputSchema);
+      if (errors.length === 0) {
+        return finish(buildResult(output, turn.text, true, loopCount));
+      }
+      if (loopCount < maxTurns && schemaRepairCount < MAX_SCHEMA_REPAIR_ATTEMPTS) {
+        schemaRepairCount++;
         messages.push({
           role: 'user',
-          content:
-            'Your response was not valid JSON. Please respond with ONLY the JSON output, no other text.',
+          content: `Your JSON output did not conform to the required schema. Fix these problems and respond again with ONLY the corrected JSON:\n${formatValidationErrors(errors)}`,
         });
         continue;
       }
+      throw schemaMismatch(turn.text, errors);
     }
 
+    // Not valid JSON — if turns remain, ask the model to fix it
+    if (loopCount < maxTurns) {
+      messages.push({
+        role: 'user',
+        content:
+          'Your response was not valid JSON. Please respond with ONLY the JSON output, no other text.',
+      });
+      continue;
+    }
+
+    if (outputSchema) {
+      throw schemaMismatch(turn.text, [
+        { path: '$', message: 'output was not valid JSON' },
+      ]);
+    }
     return finish(buildResult(turn.text, turn.text, false, loopCount));
   }
 
@@ -640,10 +728,23 @@ export async function runTaskLocal<T = unknown>(
   let parsedSuccessfully = true;
   let output: unknown;
   try {
-    output = JSON.parse(finalText);
+    output = JSON.parse(outputSchema ? stripCodeFences(finalText) : finalText);
   } catch {
     output = finalText;
     parsedSuccessfully = false;
+  }
+
+  if (outputSchema) {
+    // The forced final turn is the last chance — validate it too.
+    if (!parsedSuccessfully) {
+      throw schemaMismatch(finalText, [
+        { path: '$', message: 'output was not valid JSON' },
+      ]);
+    }
+    const errors = validateAgainstSchema(output, outputSchema);
+    if (errors.length > 0) {
+      throw schemaMismatch(finalText, errors);
+    }
   }
 
   return finish(

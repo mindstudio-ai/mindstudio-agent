@@ -28,6 +28,7 @@ export type {
   DefineTableOptions,
   Table,
   Query,
+  Batchable,
   Predicate,
   Accessor,
   PushInput,
@@ -85,10 +86,17 @@ export type {
 export type {
   TaskToolConfig,
   RunTaskOptions,
+  RunTaskOptionsWithExample,
+  RunTaskOptionsWithSchema,
   RunTaskResult,
   TaskEvent,
   TaskUsage,
   TaskToolCall,
+  JsonSchema,
+  JsonObjectSchema,
+  JsonSchemaTypeName,
+  FromSchema,
+  SchemaValidationError,
 } from './task/index.js';
 export type { Voice, VoiceCallResult } from './voice/index.js';
 

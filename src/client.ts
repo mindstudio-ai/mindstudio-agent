@@ -12,6 +12,7 @@ import { AuthContext } from './auth/index.js';
 import {
   createDb,
   Table,
+  type Batchable,
   type Db,
   type DefineTableOptions,
   type TableConfig,
@@ -25,9 +26,16 @@ import {
   runTaskPoll,
   runTaskStream,
   type RunTaskOptions,
+  type RunTaskOptionsWithExample,
+  type RunTaskOptionsWithSchema,
   type RunTaskResult,
 } from './task/index.js';
 import { runTaskLocal, TURN_UNAVAILABLE_CODE } from './task/local.js';
+import {
+  validateAgainstSchema,
+  type JsonObjectSchema,
+  type FromSchema,
+} from './task/schema.js';
 import type {
   AgentOptions,
   StepExecutionOptions,
@@ -781,13 +789,19 @@ export class MindStudioAgent {
   /**
    * Run a task agent — a multi-step tool-use loop that composes SDK actions
    * to produce structured output. The model receives the prompt and tools,
-   * calls actions as needed, and returns JSON matching the output example.
+   * calls actions as needed, and returns structured JSON.
    *
    * Tools can be SDK actions, your own app's methods, or both. App methods run
    * as the user who invoked the method that started the task, with their roles.
    *
+   * Prefer `outputSchema` (plain JSON Schema, tool-definition dialect):
+   * output is validated every turn with automatic repair, `result.output` is
+   * typed by inference from the schema — no generic argument, no manual
+   * validation — and the call either returns conforming output or throws
+   * (`task_output_schema_mismatch`).
+   *
    * ```ts
-   * const result = await agent.runTask<{ name: string; url: string }>({
+   * const result = await agent.runTask({
    *   prompt: 'Find canonical info for this restaurant, then save it.',
    *   input: { restaurantName: 'Tartine Bakery SF' },
    *   tools: [
@@ -795,22 +809,38 @@ export class MindStudioAgent {
    *     'fetchUrl',
    *     { appMethod: 'saveRestaurant', description: 'Persist the researched restaurant.' },
    *   ],
-   *   structuredOutputExample: JSON.stringify({ name: 'Tartine Bakery', url: 'https://tartinebakery.com' }),
+   *   outputSchema: {
+   *     type: 'object',
+   *     properties: {
+   *       name: { type: 'string' },
+   *       url: { type: ['string', 'null'] },
+   *       kind: { enum: ['bakery', 'cafe', 'restaurant'] },
+   *     },
+   *     required: ['name', 'kind'],
+   *   },
    *   model: 'claude-4-6-sonnet',
    * });
-   * console.log(result.output.name); // 'Tartine Bakery'
+   * result.output.kind; // typed as 'bakery' | 'cafe' | 'restaurant'
    * ```
+   *
+   * The legacy alternative, `structuredOutputExample`, shapes output by
+   * example only: `output` is typed by the caller's generic argument and
+   * must be validated manually (check `parsedSuccessfully` first).
    */
+  async runTask<const S extends JsonObjectSchema>(
+    options: RunTaskOptionsWithSchema<S>,
+  ): Promise<RunTaskResult<FromSchema<S>>>;
   async runTask<T = unknown>(
-    options: RunTaskOptions,
-  ): Promise<RunTaskResult<T>> {
+    options: RunTaskOptionsWithExample,
+  ): Promise<RunTaskResult<T>>;
+  async runTask(options: RunTaskOptions): Promise<RunTaskResult<unknown>> {
     // Register the whole task with the platform's background-work hook (when
     // present): a fire-and-forget task keeps its sandbox alive for the loop's
     // duration and gets an interruption annotation if the pod is torn down.
     // Awaited callers are unaffected — the registration settles with the
     // task. The hook gets a silenced branch so the caller's promise keeps its
     // real rejection.
-    const taskPromise = this._runTaskInner<T>(options);
+    const taskPromise = this._runTaskInner(options);
     const hook = (globalThis as Record<string, unknown>).__msWaitUntil;
     if (typeof hook === 'function') {
       try {
@@ -960,10 +990,32 @@ export class MindStudioAgent {
         err.code === TURN_UNAVAILABLE_CODE
       ) {
         const body = buildTaskRequestBody(options);
-        if (options.onEvent) {
-          return runTaskStream<T>(httpConfig, body, options.onEvent);
+        const result = options.onEvent
+          ? await runTaskStream<T>(httpConfig, body, options.onEvent)
+          : await runTaskPoll<T>(httpConfig, body);
+        if (options.outputSchema) {
+          // The legacy server prompts with a synthesized example and can't
+          // run repair turns — the schema contract is enforced here instead:
+          // one shot, validated client-side, throw on mismatch.
+          const errors = result.parsedSuccessfully
+            ? validateAgainstSchema(result.output, options.outputSchema)
+            : [{ path: '$', message: 'output was not valid JSON' }];
+          if (errors.length > 0) {
+            throw new MindStudioError(
+              '[task] Output did not conform to outputSchema (legacy task route, no repair turns).',
+              'task_output_schema_mismatch',
+              422,
+              {
+                outputRaw: result.outputRaw,
+                errors,
+                turns: result.turns,
+                usage: result.usage,
+                toolCalls: result.toolCalls,
+              },
+            );
+          }
         }
-        return runTaskPoll<T>(httpConfig, body);
+        return result;
       }
       throw err;
     }
@@ -1813,7 +1865,7 @@ export class MindStudioAgent {
         id.startsWith('@@user@@') ? id.slice('@@user@@'.length) : id,
 
       // Batch needs context — hydrate first, then delegate to real db
-      batch: ((...queries: PromiseLike<unknown>[]) => {
+      batch: ((...queries: Batchable<unknown>[]) => {
         return (async () => {
           await agent.ensureContext();
           const resolvedDb =

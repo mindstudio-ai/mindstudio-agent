@@ -212,6 +212,11 @@ export interface Db {
    * push, update, remove, removeAll, clear). Compiles them to SQL,
    * sends all in one batch request, and returns typed results.
    *
+   * Only un-awaited Query/Mutation objects can be batched — their SQL is
+   * compiled and bundled. A plain Promise has no SQL to extract, so it is
+   * rejected at the type level (and would throw at runtime): pass
+   * `Table.filter(...)`, not `await`ed results or wrapper functions.
+   *
    * @example
    * ```ts
    * // Mixed reads and writes in one round trip
@@ -222,13 +227,22 @@ export interface Db {
    * );
    * ```
    */
-  batch<A>(q1: PromiseLike<A>): Promise<[A]>;
-  batch<A, B>(q1: PromiseLike<A>, q2: PromiseLike<B>): Promise<[A, B]>;
-  batch<A, B, C>(q1: PromiseLike<A>, q2: PromiseLike<B>, q3: PromiseLike<C>): Promise<[A, B, C]>;
-  batch<A, B, C, D>(q1: PromiseLike<A>, q2: PromiseLike<B>, q3: PromiseLike<C>, q4: PromiseLike<D>): Promise<[A, B, C, D]>;
-  batch<A, B, C, D, E>(q1: PromiseLike<A>, q2: PromiseLike<B>, q3: PromiseLike<C>, q4: PromiseLike<D>, q5: PromiseLike<E>): Promise<[A, B, C, D, E]>;
-  batch(...queries: PromiseLike<unknown>[]): Promise<unknown[]>;
+  batch<A>(q1: Batchable<A>): Promise<[A]>;
+  batch<A, B>(q1: Batchable<A>, q2: Batchable<B>): Promise<[A, B]>;
+  batch<A, B, C>(q1: Batchable<A>, q2: Batchable<B>, q3: Batchable<C>): Promise<[A, B, C]>;
+  batch<A, B, C, D>(q1: Batchable<A>, q2: Batchable<B>, q3: Batchable<C>, q4: Batchable<D>): Promise<[A, B, C, D]>;
+  batch<A, B, C, D, E>(q1: Batchable<A>, q2: Batchable<B>, q3: Batchable<C>, q4: Batchable<D>, q5: Batchable<E>): Promise<[A, B, C, D, E]>;
+  batch(...queries: Batchable<unknown>[]): Promise<unknown[]>;
 }
+
+/**
+ * An operation `db.batch()` can bundle: an un-awaited Query (read) or
+ * Mutation (write). The batch executor compiles these to SQL — a plain
+ * Promise carries no SQL and cannot be batched, which is why this is not
+ * `PromiseLike`.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type Batchable<A> = Query<any, A> | Mutation<A>;
 
 // ---------------------------------------------------------------------------
 // Factory — creates a Db instance from app context
@@ -291,7 +305,7 @@ export function createDb(
 
     // --- Batch execution ---
 
-    batch: ((...operations: PromiseLike<unknown>[]) => {
+    batch: ((...operations: Batchable<unknown>[]) => {
       return (async () => {
       // Compile each operation into SQL
       type CompiledOp =
