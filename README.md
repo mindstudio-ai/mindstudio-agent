@@ -374,6 +374,60 @@ mindstudio batch --no-meta '[...]'
 
 Run `mindstudio batch` with no arguments for full usage help.
 
+## Task agents
+
+`runTask()` runs a multi-step tool-use loop: the model receives your prompt and a set of tools
+(SDK actions and/or your own app's methods), calls them as needed, and produces structured
+output. Use it when the task needs judgment between steps — research, enrichment, content
+pipelines — rather than a fixed sequence of calls.
+
+Define the output contract with `outputSchema` — plain JSON Schema in the same dialect as a
+tool definition (`type`, `properties`, `required`, `enum`, `items`; nullability via type
+arrays like `['string', 'null']`). The output is validated every turn with automatic repair,
+and `result.output` is typed by inference from the schema — no generic argument, no manual
+validation:
+
+```typescript
+const result = await agent.runTask({
+  prompt: 'Find canonical info for this restaurant, then save it.',
+  input: { restaurantName: 'Tartine Bakery SF' },
+  tools: [
+    'searchGoogle',
+    'fetchUrl',
+    { appMethod: 'saveRestaurant', description: 'Persist the researched restaurant.' },
+  ],
+  outputSchema: {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      url: { type: ['string', 'null'] },
+      kind: { enum: ['bakery', 'cafe', 'restaurant'] },
+    },
+    required: ['name', 'kind'],
+  },
+  model: 'claude-5-sonnet', // any current tool-use model id
+});
+
+result.output.kind; // typed as 'bakery' | 'cafe' | 'restaurant'
+```
+
+With `outputSchema`, `runTask()` either returns conforming output or throws a
+`MindStudioError` with `code === 'task_output_schema_mismatch'` (raw text and validation
+errors in `err.details`) — it never resolves with garbage. Schemas outside the supported
+dialect subset (`oneOf`, `$ref`, `nullable: true`, …) are rejected up front with
+`task_output_schema_unsupported`. When building a schema in a variable rather than inline,
+write it `as const satisfies JsonObjectSchema` to keep the literal inference.
+
+The legacy alternative, `structuredOutputExample`, shapes output by example only: `output` is
+typed by your generic argument and unvalidated — always check `result.parsedSuccessfully`
+before using it.
+
+App-method tools run as the user who invoked the method that started the task, with their
+roles. Pass `onEvent` to stream progress (text chunks, tool calls, the final `done` event).
+
+> `outputSchema` typing uses a `const` type parameter — consuming projects need
+> TypeScript 5.0+.
+
 ## Thread persistence
 
 Steps execute within threads. Pass `$threadId` and `$appId` from a previous call to maintain state:
@@ -526,6 +580,11 @@ import type {
   BatchStepResult,
   ExecuteStepBatchOptions,
   ExecuteStepBatchResult,
+  RunTaskOptions,
+  RunTaskResult,
+  JsonSchema,
+  JsonObjectSchema,
+  FromSchema,
 } from '@mindstudio-ai/agent';
 ```
 

@@ -14,6 +14,7 @@ import { request, type HttpClientConfig } from '../http.js';
 import { MindStudioError } from '../errors.js';
 import { getRequestContext } from '../context.js';
 import { stepMetadata } from '../generated/metadata.js';
+import { buildExampleFromSchema } from './schema.js';
 import type {
   TaskToolConfig,
   RunTaskOptions,
@@ -27,11 +28,20 @@ import type {
 export type {
   TaskToolConfig,
   RunTaskOptions,
+  RunTaskOptionsWithExample,
+  RunTaskOptionsWithSchema,
   RunTaskResult,
   TaskEvent,
   TaskUsage,
   TaskToolCall,
 } from './types.js';
+export type {
+  JsonSchema,
+  JsonObjectSchema,
+  JsonSchemaTypeName,
+  FromSchema,
+  SchemaValidationError,
+} from './schema.js';
 
 // ---------------------------------------------------------------------------
 // Tool mapping — developer-friendly config → API request format
@@ -70,8 +80,13 @@ export function buildTaskRequestBody(options: RunTaskOptions): TaskRequestBody {
     prompt: options.prompt,
     input: options.input,
     tools: mapTools(options.tools),
-    structuredOutputExample:
-      typeof options.structuredOutputExample === 'string'
+    // The legacy whole-task route requires structuredOutputExample and
+    // composes its own prompt server-side, so in schema mode we synthesize a
+    // skeleton example from the schema. Validation still happens client-side
+    // after the result comes back (see _runTaskInner).
+    structuredOutputExample: options.outputSchema
+      ? JSON.stringify(buildExampleFromSchema(options.outputSchema))
+      : typeof options.structuredOutputExample === 'string'
         ? options.structuredOutputExample
         : JSON.stringify(options.structuredOutputExample),
     model: options.model,

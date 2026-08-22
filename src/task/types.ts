@@ -3,8 +3,11 @@
  *
  * A task agent is a multi-step tool-use loop: the model receives a prompt
  * and a set of SDK actions as tools, calls them as needed, and produces
- * structured output matching the developer's example.
+ * structured output — validated against the developer's `outputSchema`, or
+ * shaped by a `structuredOutputExample`.
  */
+
+import type { JsonObjectSchema } from './schema.js';
 
 /**
  * Tool configuration for {@link RunTaskOptions.tools}.
@@ -31,16 +34,14 @@ export type TaskToolConfig =
       defaults?: Record<string, unknown>;
     };
 
-/** Options for {@link MindStudioAgent.runTask}. */
-export interface RunTaskOptions {
+/** Options shared by both output modes of {@link MindStudioAgent.runTask}. */
+interface RunTaskOptionsBase {
   /** System prompt — defines the agent's behavior and approach. */
   prompt: string;
   /** Structured input for this task instance. Passed as the user message. */
   input: Record<string, unknown>;
   /** SDK actions and/or app methods to make available as tools. */
   tools: TaskToolConfig[];
-  /** Expected output shape. Pass a JSON string or an object (will be stringified automatically). */
-  structuredOutputExample: string | Record<string, unknown>;
   /** Model ID for the task agent. Must support tool use. */
   model: string;
   /** Max loop iterations before forcing final output. Default 20, max 100. */
@@ -56,6 +57,37 @@ export interface RunTaskOptions {
    */
   onEvent?: (event: TaskEvent) => void;
 }
+
+/**
+ * Example mode: the output shape is suggested by example only. `output` is
+ * whatever `JSON.parse` produced (or the raw string when
+ * `parsedSuccessfully` is false) — callers must validate it themselves.
+ */
+export interface RunTaskOptionsWithExample extends RunTaskOptionsBase {
+  /** Expected output shape. Pass a JSON string or an object (will be stringified automatically). */
+  structuredOutputExample: string | Record<string, unknown>;
+  outputSchema?: never;
+}
+
+/**
+ * Schema mode: the output contract is a plain JSON Schema (the Anthropic
+ * tool `input_schema` dialect subset — type/properties/required/enum/items,
+ * nullability via type arrays like `['string', 'null']`). Output is
+ * validated every turn with automatic repair, `result.output` is typed by
+ * inference from the schema value, and `runTask` either returns conforming
+ * output or throws (`task_output_schema_mismatch`) — it never resolves with
+ * garbage.
+ */
+export interface RunTaskOptionsWithSchema<
+  S extends JsonObjectSchema = JsonObjectSchema,
+> extends RunTaskOptionsBase {
+  /** Plain JSON Schema for the output. Root must be `type: 'object'`. */
+  outputSchema: S;
+  structuredOutputExample?: never;
+}
+
+/** Options for {@link MindStudioAgent.runTask} — one of the two output modes. */
+export type RunTaskOptions = RunTaskOptionsWithExample | RunTaskOptionsWithSchema;
 
 /** An event from a streaming task agent execution. */
 export interface TaskEvent {
