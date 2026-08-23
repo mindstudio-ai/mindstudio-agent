@@ -1093,7 +1093,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     "- **Cost estimation**: AI-powered actions (text generation, image generation, video, audio, etc.) cost money. Call `estimateStepCost(stepType, stepInput)` before running these and confirm with the user before proceeding — unless they've explicitly given permission to go ahead. Non-AI actions (data lookups, OAuth connectors, etc.) are generally free.",
   );
   lines.push(
-    '- **Task agents**: For multi-step tasks that need autonomous tool use (research, content creation, data enrichment), use `runTask()`. Provide a prompt, input, tools, an output contract, and a tool-use model id. The SDK runs a tool-use loop — calling the model, executing tools, feeding results back — until structured output is produced. Tools are SDK action names and/or your own app methods, written as `{ appMethod: "saveVendor", description: "when to use it" }`. App methods run as the user who invoked the method that started the task, with their roles, so the agent can read and write app state on their behalf. Prefer `outputSchema` for the output contract: plain JSON Schema (`type`/`properties`/`required`/`enum`/`items`; nullable via type arrays like `["string","null"]` — no `oneOf`/`$ref`/`nullable`). Output is validated every turn with automatic repair, `result.output` is fully typed from the schema (no generic argument, no `parsedSuccessfully` check), and the call throws `MindStudioError` code `task_output_schema_mismatch` if the agent cannot produce conforming output. Example: `runTask({ prompt: "Research this restaurant and save it", input: { name: "Tartine" }, tools: ["searchGoogle", "fetchUrl", { appMethod: "saveRestaurant", description: "Persist the researched restaurant." }], outputSchema: { type: "object", properties: { name: { type: "string" }, url: { type: ["string", "null"] } }, required: ["name"] }, model: yourModelId })`. The legacy `structuredOutputExample` option (an example object the model imitates) still works but is unvalidated — check `result.parsedSuccessfully` before using its output. Pass a current tool-use model id (call `listModels` or ask). Don\'t hardcode one.',
+    '- **Task agents**: For multi-step tasks that need autonomous tool use (research, content creation, data enrichment), use `runTask()`. Provide a prompt, input, tools, an output contract, and a tool-use model id. The SDK runs a tool-use loop — calling the model, executing tools, feeding results back — until structured output is produced. Tools are SDK action names and/or your own app methods, written as `{ appMethod: "save-vendor", description: "when to use it" }`. App methods run as the user who invoked the method that started the task, with their roles, so the agent can read and write app state on their behalf. Prefer `outputSchema` for the output contract: plain JSON Schema (`type`/`properties`/`required`/`enum`/`items`; nullable via type arrays like `["string","null"]` — no `oneOf`/`$ref`/`nullable`). Output is validated every turn with automatic repair, `result.output` is fully typed from the schema (no generic argument, no `parsedSuccessfully` check), and the call throws `MindStudioError` code `task_output_schema_mismatch` if the agent cannot produce conforming output. Example: `runTask({ prompt: "Research this restaurant and save it", input: { name: "Tartine" }, tools: ["searchGoogle", "fetchUrl", { appMethod: "saveRestaurant", description: "Persist the researched restaurant." }], outputSchema: { type: "object", properties: { name: { type: "string" }, url: { type: ["string", "null"] } }, required: ["name"] }, model: yourModelId })`. The legacy `structuredOutputExample` option (an example object the model imitates) still works but is unvalidated — check `result.parsedSuccessfully` before using its output. Pass a current tool-use model id (call `listModels` or ask). Don\'t hardcode one.',
   );
   lines.push('');
 
@@ -1207,9 +1207,13 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('Inside MindStudio apps (auth is automatic):');
   lines.push('```typescript');
-  lines.push("import { mindstudio, db, auth, Roles, stream } from '@mindstudio-ai/agent';");
+  lines.push(
+    "import { mindstudio, db, auth, Roles, stream } from '@mindstudio-ai/agent';",
+  );
   lines.push('');
-  lines.push("const { imageUrl } = await mindstudio.generateImage({ prompt: 'a sunset' });");
+  lines.push(
+    "const { imageUrl } = await mindstudio.generateImage({ prompt: 'a sunset' });",
+  );
   lines.push('```');
   lines.push('');
   lines.push('External usage (API key required):');
@@ -1235,7 +1239,9 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push('```typescript');
-  lines.push("const { models } = await mindstudio.listModelsByType('llm_chat');");
+  lines.push(
+    "const { models } = await mindstudio.listModelsByType('llm_chat');",
+  );
   lines.push('const model = models.find(m => m.name.includes("Gemini"));');
   lines.push('');
   lines.push('const { content } = await mindstudio.generateText({');
@@ -1268,21 +1274,25 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('```typescript');
   lines.push("await mindstudio.generateImage({ prompt: '...' }, {");
-  lines.push('  onLog: (event) => console.log(`[${event.tag}] ${event.value}`),');
+  lines.push(
+    '  onLog: (event) => console.log(`[${event.tag}] ${event.value}`),',
+  );
   lines.push('});');
   lines.push('// event: { value: string, tag: string, ts: number }');
   lines.push('```');
   lines.push('');
-  lines.push(
-    '**`stream()` — push real-time updates to the frontend:**',
-  );
+  lines.push('**`stream()` — push real-time updates to the frontend:**');
   lines.push('```typescript');
   lines.push("import { mindstudio, stream } from '@mindstudio-ai/agent';");
   lines.push('');
-  lines.push("// String → 'token' event (frontend receives via onToken, accumulated text)");
+  lines.push(
+    "// String → 'token' event (frontend receives via onToken, accumulated text)",
+  );
   lines.push("await stream('Processing...');");
   lines.push('');
-  lines.push("// Object → 'data' event (frontend receives via onStreamData, NOT onToken)");
+  lines.push(
+    "// Object → 'data' event (frontend receives via onStreamData, NOT onToken)",
+  );
   lines.push("await stream({ status: 'generating', progress: 50 });");
   lines.push('```');
   lines.push(
@@ -1299,7 +1309,9 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push('// Full result shape for any method:');
-  lines.push('const result = await mindstudio.generateText({ message: `Hello` });');
+  lines.push(
+    'const result = await mindstudio.generateText({ message: `Hello` });',
+  );
   lines.push('result.content;              // step-specific output field');
   lines.push(
     'result.$appId;               // string — app ID for this execution',
@@ -1798,7 +1810,9 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('```typescript');
   lines.push("import { dataSources } from '@mindstudio-ai/agent';");
-  lines.push("export const Policies = dataSources.defineDataSource('policies');");
+  lines.push(
+    "export const Policies = dataSources.defineDataSource('policies');",
+  );
   lines.push('');
   lines.push('// search');
   lines.push(
@@ -1811,19 +1825,23 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     'const context = results.map((r) => r.text).join(String.fromCharCode(10, 10));',
   );
   lines.push('');
-  lines.push('// narrow before ranking: metadata tags, filename, pages, required words');
+  lines.push(
+    '// narrow before ranking: metadata tags, filename, pages, required words',
+  );
   lines.push("await Policies.search('termination clause', {");
   lines.push(
     "  filter: { metadata: { department: 'legal', year: [2025, 2026] }, phrase: 'notice period' },",
   );
-  lines.push('  maxPerDocument: 2,  // stop one document monopolizing the results');
+  lines.push(
+    '  maxPerDocument: 2,  // stop one document monopolizing the results',
+  );
   lines.push('});');
   lines.push('');
   lines.push(
     "// mode: 'hybrid' (default) | 'semantic' | 'lexical'. Lexical skips the query",
   );
   lines.push(
-    "// embedding — fastest, right for identifier-shaped queries (error codes, SKUs).",
+    '// embedding — fastest, right for identifier-shaped queries (error codes, SKUs).',
   );
   lines.push("await Policies.search('ERR-7741X', { mode: 'lexical' });");
   lines.push('');
@@ -1833,15 +1851,19 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('const docs = await Policies.documents();');
   lines.push('');
-  lines.push('// introspection — what is in the corpus, and how one document was split');
+  lines.push(
+    '// introspection — what is in the corpus, and how one document was split',
+  );
   lines.push(
     'const { chunkCount, pipeline } = await Policies.stats();  // counts + the config actually in effect',
   );
-  lines.push('const chunks = await Policies.chunks(docs[0].id);       // why a document does or doesn\'t match');
+  lines.push(
+    "const chunks = await Policies.chunks(docs[0].id);       // why a document does or doesn't match",
+  );
   lines.push('```');
   lines.push('');
   lines.push(
-    '`SearchHit`: `{ score, text, citation: { documentId, filename, pageNumber, chunkIndex, headingPath, boundingBox?, url } }`. `citation.url` is a stable on-domain link to the source document — drop it in an `<a href>`. `(documentId, chunkIndex)` is a chunk\'s stable identity — key an eval set on that, not on `text`.',
+    "`SearchHit`: `{ score, text, citation: { documentId, filename, pageNumber, chunkIndex, headingPath, boundingBox?, url } }`. `citation.url` is a stable on-domain link to the source document — drop it in an `<a href>`. `(documentId, chunkIndex)` is a chunk's stable identity — key an eval set on that, not on `text`.",
   );
   lines.push('');
   lines.push(
@@ -1849,7 +1871,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push(
-    "`filter` fields (all AND together, and only narrow): `metadata` (per-key equals, or any-of via an array), `filename`, `documentIds`, `pages: {min?, max?}`, `contains` (all words, any order), `phrase` (exact adjacent sequence). Document metadata is set at add time: scalars only, ≤16 keys, keys `[a-zA-Z0-9_-]`. Re-adding the same bytes with different metadata updates the tags in place — no re-processing.",
+    '`filter` fields (all AND together, and only narrow): `metadata` (per-key equals, or any-of via an array), `filename`, `documentIds`, `pages: {min?, max?}`, `contains` (all words, any order), `phrase` (exact adjacent sequence). Document metadata is set at add time: scalars only, ≤16 keys, keys `[a-zA-Z0-9_-]`. Re-adding the same bytes with different metadata updates the tags in place — no re-processing.',
   );
   lines.push('');
   lines.push(
