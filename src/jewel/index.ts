@@ -62,11 +62,21 @@ export type JewelMethodInput<M extends JewelMethod> =
 export interface JewelProposal<I> {
   input: I | null;
   reasoning: string;
+  /**
+   * Transcript id(s) of the runTask call(s) that constitute this decision
+   * (`task.traceId`; an array for escalation chains). Attaching preserves
+   * the full model transcript with the pair — the training row and, at
+   * auto, the audit trail. Helper/formatting calls stay unattached: the
+   * attachment is the label for which run WAS the decision.
+   */
+  trace?: string | string[];
 }
 
 export interface JewelVerdict {
   verdict: 'agree' | 'disagree' | 'skip';
   notes?: string;
+  /** Transcript id(s) of the judge's runTask call(s), when grade used one. */
+  trace?: string | string[];
 }
 
 /**
@@ -151,6 +161,14 @@ export interface JewelPairRecord<I = unknown, S = unknown> {
   notes?: string;
   /** Present iff subject() or propose() threw. Grade errors become verdict 'skip'. */
   error?: { phase: 'subject' | 'propose'; message: string; stack?: string };
+  /**
+   * Transcript ids attached by propose. The transcripts themselves live
+   * platform-side, recorded per turn and keyed by (run id, trace id) — the
+   * record carries only the ids.
+   */
+  trace?: string[];
+  /** Transcript ids attached by a custom grade's verdict. */
+  gradeTrace?: string[];
   /**
    * Whether this jewel declares a custom `grade`. The platform's deferred
    * grading dispatches a grade-mode run when true; when false it grades
@@ -421,6 +439,16 @@ export function defineJewel<M extends JewelMethod, S>(
       ...rest,
     });
 
+    // Normalize an authored trace attachment (id | ids | absent) to the
+    // record's array form.
+    const traceIds = (t: string | string[] | undefined): string[] | undefined => {
+      if (t === undefined) return undefined;
+      const ids = (Array.isArray(t) ? t : [t]).filter(
+        (id) => typeof id === 'string' && id.length > 0,
+      );
+      return ids.length > 0 ? ids : undefined;
+    };
+
     // hasOwnProperty rather than truthiness: a zero-input method's
     // humanInput is legitimately undefined, and the caller's contract is
     // "exactly one key present".
@@ -429,12 +457,14 @@ export function defineJewel<M extends JewelMethod, S>(
       // human's eventual action. Runs the grader and nothing else.
       const ctx = (params as { grade: JewelGradeContext<I> }).grade;
       const verdict = await runGrade(ctx.proposed, ctx.actual);
+      const gradeTrace = traceIds(verdict.trace);
       return done({
         mode: 'grade',
         proposed: ctx.proposed,
         actual: ctx.actual,
         verdict: verdict.verdict,
         ...(verdict.notes !== undefined ? { notes: verdict.notes } : {}),
+        ...(gradeTrace ? { gradeTrace } : {}),
       });
     }
 
@@ -467,6 +497,8 @@ export function defineJewel<M extends JewelMethod, S>(
       });
     }
 
+    const trace = traceIds(proposal.trace);
+
     // Eval runs have no ground truth — the record stays ungraded.
     if (!isShadow) {
       return done({
@@ -474,10 +506,12 @@ export function defineJewel<M extends JewelMethod, S>(
         subject,
         proposed: proposal.input,
         reasoning: proposal.reasoning,
+        ...(trace ? { trace } : {}),
       });
     }
 
     const verdict = await runGrade(proposal.input, actual as I);
+    const gradeTrace = traceIds(verdict.trace);
 
     return done({
       mode,
@@ -487,6 +521,8 @@ export function defineJewel<M extends JewelMethod, S>(
       actual,
       verdict: verdict.verdict,
       ...(verdict.notes !== undefined ? { notes: verdict.notes } : {}),
+      ...(trace ? { trace } : {}),
+      ...(gradeTrace ? { gradeTrace } : {}),
     });
   };
 

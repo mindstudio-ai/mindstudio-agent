@@ -134,6 +134,14 @@ export interface RunTaskResult<T = unknown> {
   usage: TaskUsage;
   /** Summary of every tool call made during execution. */
   toolCalls: TaskToolCall[];
+  /**
+   * Stable id for this task's model transcript. Inside a jewel, attach it to
+   * the propose/grade return (`trace: task.traceId`) to preserve the full
+   * transcript with the pair — the training row and the audit trail. The
+   * platform records transcripts server-side per turn; only the id rides the
+   * result.
+   */
+  traceId: string;
 }
 
 /** @internal API request body shape for POST /developer/v2/task. */
