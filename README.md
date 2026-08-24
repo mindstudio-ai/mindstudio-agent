@@ -428,6 +428,56 @@ roles. Pass `onEvent` to stream progress (text chunks, tool calls, the final `do
 > `outputSchema` typing uses a `const` type parameter — consuming projects need
 > TypeScript 5.0+.
 
+## Jewels
+
+A jewel is an agentic shadow companion for an app method — `foo.jewel.ts` beside `foo.ts`,
+built with `defineJewel(method, { subject, propose, grade? })`. It proposes the method
+input a careful operator would submit (or abstains with `input: null`), gets graded
+against what a human actually did, and climbs an autonomy ladder (`shadow` → `approve` →
+`auto`) declared in the app manifest.
+
+For decision moments the app detects itself (an ingest branch that lands a row in a
+pending state), hand the moment to the jewels from backend code:
+
+```ts
+mindstudio.waitUntil((async () => {
+  const merge = await mindstudio.jewels.propose(
+    'merge-issues', { sourceId: issue.id }, { idempotencyKey: issue.id });
+  if (merge.outcome !== 'committed') {
+    await mindstudio.jewels.propose(
+      'triage-issue', { issueId: issue.id }, { idempotencyKey: issue.id });
+  }
+})());
+```
+
+The platform routes each proposal by the method's autonomy — `recorded` (shadow),
+`queued` (approve), `committed` (auto: the method ran) — and `idempotencyKey` has Stripe
+semantics (a replayed key returns the original outcome, so webhook retries are safe).
+Backend/managed contexts only.
+
+For `approve`-mode methods, build the review inbox natively in the app with
+`jewels.queue`:
+
+```ts
+// Backend method — gate with the app's own reviewer role.
+export async function listDraftReplies() {
+  auth.requireRole('support_lead');
+  return mindstudio.jewels.queue.list({ methodId: 'send-reply' });
+}
+
+export async function reviewDraft({ itemId, action, edited }) {
+  auth.requireRole('support_lead');
+  return mindstudio.jewels.queue.resolve(itemId, {
+    action, // 'approve' | 'dismiss'
+    ...(edited ? { input: edited } : {}), // an edit is captured with the pair
+  });
+}
+```
+
+Approving **applies the target method as the signed-in reviewer** — the effect belongs
+to the human who clicked, and the target method's own auth checks are the real gate on
+who may approve. Unresolved items expire at the method's `attributionWindow`.
+
 ## Thread persistence
 
 Steps execute within threads. Pass `$threadId` and `$appId` from a previous call to maintain state:
@@ -585,6 +635,10 @@ import type {
   JsonSchema,
   JsonObjectSchema,
   FromSchema,
+  JewelConfig,
+  JewelPairRecord,
+  JewelProposeOutcome,
+  JewelProposeResult,
 } from '@mindstudio-ai/agent';
 ```
 

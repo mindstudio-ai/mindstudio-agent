@@ -46,6 +46,12 @@ export type {
   JewelGradeContext,
   JewelRunParams,
   JewelPairRecord,
+  JewelsApi,
+  JewelProposeOutcome,
+  JewelProposeResult,
+  JewelQueueItem,
+  JewelQueueResolution,
+  JewelQueueResolveResult,
 } from './jewel/index.js';
 export type {
   Files,

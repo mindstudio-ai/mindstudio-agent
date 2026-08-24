@@ -24,12 +24,16 @@
  * calls the same function, so dev and production share one executor body,
  * versioned here in the SDK.
  *
- * Two run modes, discriminated by which key the caller provides:
+ * Three run modes, discriminated by which key the caller provides:
  * - `{ humanInput }` — shadow mode. The subject is derived via the jewel's
  *   projection (the human's decision fields never reach `propose`), and
  *   `humanInput` doubles as ground truth for grading.
- * - `{ subject }` — eval / event-shaped mode. No human action exists, so the
- *   record is ungraded.
+ * - `{ subject }` — eval / arrival mode. No human action exists yet, so the
+ *   record is ungraded (an arrival proposal is graded later, when the human
+ *   acts — see the grade mode below).
+ * - `{ grade: { proposed, actual } }` — grade-only mode: deferred grading of
+ *   an earlier arrival proposal against the human's eventual action. Runs
+ *   the jewel's own `grade` (or the default deep-equal) and nothing else.
  *
  * The executor NEVER throws: a shadow run must never break anything. Author
  * code failing (`subject`/`propose`) is captured in the record's `error`;
@@ -117,11 +121,12 @@ export interface JewelConfig<M extends JewelMethod, S> {
 
 /**
  * Executor params — constructed by the platform (or dev tooling), exactly
- * one key. `?: never` on the other key rejects passing both.
+ * one key. `?: never` on the other keys rejects passing more than one.
  */
 export type JewelRunParams<I, S> =
-  | { humanInput: I; subject?: never }
-  | { subject: S; humanInput?: never };
+  | { humanInput: I; subject?: never; grade?: never }
+  | { subject: S; humanInput?: never; grade?: never }
+  | { grade: JewelGradeContext<I>; humanInput?: never; subject?: never };
 
 /**
  * The versioned, JSON-serializable output of one jewel run — the row the
@@ -130,7 +135,9 @@ export type JewelRunParams<I, S> =
  */
 export interface JewelPairRecord<I = unknown, S = unknown> {
   v: 1;
-  mode: 'shadow' | 'eval';
+  /** `grade` records are consumed by the platform (verdict extracted from a
+   *  grade-only run) and never persisted as pair rows themselves. */
+  mode: 'shadow' | 'eval' | 'grade';
   /** Absent only when the projection itself threw (shadow mode). */
   subject?: S;
   /** null = abstention. Absent when propose failed. */
@@ -139,11 +146,18 @@ export interface JewelPairRecord<I = unknown, S = unknown> {
   reasoning?: string;
   /** The human's input — present in shadow mode. */
   actual?: I;
-  /** Present iff graded (shadow mode, propose succeeded). */
+  /** Present iff graded (shadow or grade mode, propose succeeded). */
   verdict?: 'agree' | 'disagree' | 'skip';
   notes?: string;
   /** Present iff subject() or propose() threw. Grade errors become verdict 'skip'. */
   error?: { phase: 'subject' | 'propose'; message: string; stack?: string };
+  /**
+   * Whether this jewel declares a custom `grade`. The platform's deferred
+   * grading dispatches a grade-mode run when true; when false it grades
+   * locally with an equivalent of the default deep-equal (no sandbox trip
+   * to evaluate a pure structural comparison).
+   */
+  customGrade: boolean;
   startedAt: number;
   durationMs: number;
 }
@@ -169,6 +183,129 @@ export interface Jewel<M extends JewelMethod, S> {
   readonly grade:
     | ((ctx: JewelGradeContext<JewelMethodInput<M>>) => MaybePromise<JewelVerdict>)
     | undefined;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Arrival triggers — mindstudio.jewels.propose
+//////////////////////////////////////////////////////////////////////////////
+
+/**
+ * What the platform did with a proposal, routed by the method's autonomy:
+ * - `recorded` — shadow: proposal written to the pair ledger, graded later
+ *   against the human's eventual action (within the attribution window).
+ * - `queued` — approve: waiting in the review queue.
+ * - `committed` — auto: the jewel's proposal was applied (the method ran);
+ *   `output` carries the method's return value.
+ * - `abstained` — the jewel chose not to act; recorded, still gradeable.
+ * - `disabled` — the method has no jewel or autonomy is `manual`. Returned,
+ *   never thrown: dialing a method down must not break the app code that
+ *   proposes to it.
+ * - `skipped` — dev session, jewel-descended recursion, or unsampled
+ *   (sampleRate).
+ * - `failed` — an auto commit was attempted and the method rejected it
+ *   (e.g. the state was consumed concurrently). The moment stays pending.
+ * - `pending` — a concurrent replay: the original propose for this
+ *   idempotencyKey is still mid-run. Treat as accepted.
+ */
+export type JewelProposeOutcome =
+  | 'recorded'
+  | 'queued'
+  | 'committed'
+  | 'abstained'
+  | 'disabled'
+  | 'skipped'
+  | 'failed'
+  | 'pending';
+
+export interface JewelProposeResult {
+  outcome: JewelProposeOutcome;
+  /** Present on `committed` — the method's return value. */
+  output?: unknown;
+  /** Present on `queued` — address the item via `jewels.queue.resolve`. */
+  queueItemId?: string;
+}
+
+/** A pending approval-queue item awaiting a reviewer. */
+export interface JewelQueueItem {
+  id: string;
+  methodId: string;
+  subject: Record<string, unknown>;
+  /** The method input the jewel proposes to apply. */
+  proposed: unknown;
+  reasoning: string | null;
+  proposedAt: string;
+  /** Unresolved items expire (verdict `expired`) at the attribution window. */
+  expiresAt: string;
+}
+
+export type JewelQueueResolution = 'approved' | 'edited' | 'dismissed';
+
+export interface JewelQueueResolveResult {
+  resolution: JewelQueueResolution;
+  /** Present on approve — the applied method's return value. */
+  output?: unknown;
+}
+
+export interface JewelsApi {
+  /**
+   * Hand a decision moment to a method's jewel — the arrival-shaped trigger.
+   * Place it where the app knows the moment was born (an ingest branch that
+   * lands a row in its pending state). The platform routes by the method's
+   * autonomy; see {@link JewelProposeOutcome}.
+   *
+   * `idempotencyKey` (Stripe semantics — a replayed key returns the ORIGINAL
+   * outcome, so retried webhooks are invisible to this code) defaults to a
+   * hash of the subject. Sibling proposals for one decision moment should
+   * share a key so cross-verb grading can close them together.
+   *
+   * Backend/managed contexts only (rides the execution's hook token). Runs
+   * the jewel synchronously — wrap chains in `mindstudio.waitUntil(...)` so
+   * the calling method returns immediately:
+   *
+   * ```ts
+   * mindstudio.waitUntil((async () => {
+   *   const merge = await mindstudio.jewels.propose(
+   *     'merge-issues', { sourceId: issue.id }, { idempotencyKey: issue.id });
+   *   if (merge.outcome !== 'committed') {
+   *     await mindstudio.jewels.propose(
+   *       'triage-issue', { issueId: issue.id }, { idempotencyKey: issue.id });
+   *   }
+   * })());
+   * ```
+   */
+  propose(
+    methodId: string,
+    subject: Record<string, unknown>,
+    opts?: { idempotencyKey?: string },
+  ): Promise<JewelProposeResult>;
+
+  /**
+   * The app-native approval queue for `approve`-mode methods. Build the
+   * review UI in the app itself: a backend method lists items (gate it with
+   * the app's reviewer role), the frontend renders the inbox, and a resolve
+   * method approves or dismisses.
+   */
+  queue: {
+    /** Pending items, oldest first. */
+    list(opts?: {
+      methodId?: string;
+      limit?: number;
+    }): Promise<{ items: JewelQueueItem[] }>;
+    /**
+     * Resolve one item. `approve` APPLIES the target method as the current
+     * session user — the reviewer — so the effect belongs to the human who
+     * clicked, and the target method's own auth checks are the real gate on
+     * who may approve. Pass `input` to apply an edited version of the
+     * proposal (captured as resolution `edited` — proposed/edited/final ride
+     * the pair record; the richest training signal). `dismiss` records the
+     * rejection and closes the item without running anything; other verbs'
+     * proposals for the same moment stay open.
+     */
+    resolve(
+      itemId: string,
+      opts: { action: 'approve' | 'dismiss'; input?: Record<string, unknown> },
+    ): Promise<JewelQueueResolveResult>;
+  };
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -251,14 +388,34 @@ export function defineJewel<M extends JewelMethod, S>(
 ): Jewel<M, S> {
   type I = JewelMethodInput<M>;
 
+  // Shared by the shadow path and grade-only mode: the jewel's own grade, or
+  // the default deep-equal. Never throws — author failures soften to 'skip'.
+  const runGrade = async (proposed: I | null, actual: I): Promise<JewelVerdict> => {
+    if (config.grade) {
+      try {
+        return normalizeVerdict(await config.grade({ proposed, actual }));
+      } catch (e) {
+        return { verdict: 'skip', notes: `grade threw: ${errorInfo(e).message}` };
+      }
+    }
+    return deepEqual(proposed, actual)
+      ? { verdict: 'agree' }
+      : { verdict: 'disagree' };
+  };
+
   const run = async (
     params: JewelRunParams<I, S>,
   ): Promise<JewelPairRecord<I, S>> => {
     const startedAt = Date.now();
+    const customGrade = config.grade !== undefined;
     const done = (
-      rest: Omit<JewelPairRecord<I, S>, 'v' | 'startedAt' | 'durationMs'>,
+      rest: Omit<
+        JewelPairRecord<I, S>,
+        'v' | 'customGrade' | 'startedAt' | 'durationMs'
+      >,
     ): JewelPairRecord<I, S> => ({
       v: 1,
+      customGrade,
       startedAt,
       durationMs: Date.now() - startedAt,
       ...rest,
@@ -267,6 +424,20 @@ export function defineJewel<M extends JewelMethod, S>(
     // hasOwnProperty rather than truthiness: a zero-input method's
     // humanInput is legitimately undefined, and the caller's contract is
     // "exactly one key present".
+    if (Object.prototype.hasOwnProperty.call(params, 'grade')) {
+      // Grade-only mode: deferred grading of an arrival proposal against the
+      // human's eventual action. Runs the grader and nothing else.
+      const ctx = (params as { grade: JewelGradeContext<I> }).grade;
+      const verdict = await runGrade(ctx.proposed, ctx.actual);
+      return done({
+        mode: 'grade',
+        proposed: ctx.proposed,
+        actual: ctx.actual,
+        verdict: verdict.verdict,
+        ...(verdict.notes !== undefined ? { notes: verdict.notes } : {}),
+      });
+    }
+
     const isShadow = Object.prototype.hasOwnProperty.call(params, 'humanInput');
     const mode = isShadow ? ('shadow' as const) : ('eval' as const);
     const actual = isShadow ? (params as { humanInput: I }).humanInput : undefined;
@@ -306,20 +477,7 @@ export function defineJewel<M extends JewelMethod, S>(
       });
     }
 
-    let verdict: JewelVerdict;
-    if (config.grade) {
-      try {
-        verdict = normalizeVerdict(
-          await config.grade({ proposed: proposal.input, actual: actual as I }),
-        );
-      } catch (e) {
-        verdict = { verdict: 'skip', notes: `grade threw: ${errorInfo(e).message}` };
-      }
-    } else {
-      verdict = deepEqual(proposal.input, actual)
-        ? { verdict: 'agree' }
-        : { verdict: 'disagree' };
-    }
+    const verdict = await runGrade(proposal.input, actual as I);
 
     return done({
       mode,

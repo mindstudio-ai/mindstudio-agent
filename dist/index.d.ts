@@ -1563,6 +1563,311 @@ interface Files {
     defineStore(name: string, options?: DefineStoreOptions): Store;
 }
 
+/**
+ * Jewels — agentic shadow companions for app methods.
+ *
+ * A jewel lives in `foo.jewel.ts` beside the method `foo.ts` it shadows. It
+ * proposes what a careful teammate would have done — an input for the method
+ * — without ever applying it: the method stays the only door for writes.
+ *
+ * ```ts
+ * // updateIssue.jewel.ts
+ * export default defineJewel(updateIssue, {
+ *   subject: ({ issueId }) => ({ issueId }),
+ *   propose: async ({ issueId }) => {
+ *     // arbitrary TS: reads via plain imports, model calls via runTask
+ *     return { input: { issueId, status: 'triaged' }, reasoning: '...' };
+ *   },
+ * });
+ * ```
+ *
+ * `defineJewel` returns a CALLABLE — the executor — with the config attached
+ * as properties (the Express-app pattern). That shape is deliberate: the
+ * platform's sandbox worker invokes one exported function per execution
+ * frame (`mod[handlerName](params)`), so a jewel run is an ordinary
+ * method-execution frame with zero worker or protocol changes. Dev tooling
+ * calls the same function, so dev and production share one executor body,
+ * versioned here in the SDK.
+ *
+ * Three run modes, discriminated by which key the caller provides:
+ * - `{ humanInput }` — shadow mode. The subject is derived via the jewel's
+ *   projection (the human's decision fields never reach `propose`), and
+ *   `humanInput` doubles as ground truth for grading.
+ * - `{ subject }` — eval / arrival mode. No human action exists yet, so the
+ *   record is ungraded (an arrival proposal is graded later, when the human
+ *   acts — see the grade mode below).
+ * - `{ grade: { proposed, actual } }` — grade-only mode: deferred grading of
+ *   an earlier arrival proposal against the human's eventual action. Runs
+ *   the jewel's own `grade` (or the default deep-equal) and nothing else.
+ *
+ * The executor NEVER throws: a shadow run must never break anything. Author
+ * code failing (`subject`/`propose`) is captured in the record's `error`;
+ * `grade` failing softens to verdict `'skip'`.
+ */
+/** Any app method a jewel can shadow: one JSON-serializable input, any result. */
+type JewelMethod = (input: any) => any;
+/**
+ * The input type of the shadowed method. Guarded so a zero-parameter method
+ * resolves to `undefined` instead of erroring on `Parameters<M>[0]`.
+ */
+type JewelMethodInput<M extends JewelMethod> = Parameters<M> extends [] ? undefined : Parameters<M>[0];
+/**
+ * What `propose` returns. `input: null` is abstention — a first-class,
+ * graded outcome, not an error. Reasoning is most valuable on abstention.
+ */
+interface JewelProposal<I> {
+    input: I | null;
+    reasoning: string;
+}
+interface JewelVerdict {
+    verdict: 'agree' | 'disagree' | 'skip';
+    notes?: string;
+}
+/**
+ * Argument to a custom `grade`. `proposed` is null when the jewel abstained;
+ * `actual` is always present — grading only happens in shadow mode, where
+ * the human acted.
+ */
+interface JewelGradeContext<I> {
+    proposed: I | null;
+    actual: I;
+}
+type MaybePromise<T> = T | Promise<T>;
+/**
+ * Authoring config. Declare `subject` before `propose` — the subject type
+ * is inferred from the projection's return and flows into `propose`'s
+ * parameter.
+ */
+interface JewelConfig<M extends JewelMethod, S> {
+    /**
+     * Projection: method input → subject. What the human was looking at,
+     * never what they decided — this is what keeps the label out of the exam.
+     */
+    subject: (input: JewelMethodInput<M>) => S;
+    /**
+     * The proposal. Runs on the projection only; arbitrary TS (plain imports
+     * for context, model calls via runTask). Throwing never propagates — it
+     * becomes an `error` on the pair record.
+     */
+    propose: (subject: NoInfer<S>) => MaybePromise<JewelProposal<JewelMethodInput<M>>>;
+    /**
+     * The custom assertion. Omit for deep-equal on the method input. May be
+     * async and call models. Throwing softens to verdict `'skip'`.
+     *
+     * Strict-safe field iteration, when grading only touched fields:
+     * ```ts
+     * grade: ({ proposed, actual }) => {
+     *   if (!proposed) return { verdict: 'disagree', notes: 'abstained' };
+     *   const keys = Object.keys(actual) as (keyof typeof actual)[];
+     *   const misses = keys.filter((k) => proposed[k] !== actual[k]);
+     *   return misses.length
+     *     ? { verdict: 'disagree', notes: misses.join(', ') }
+     *     : { verdict: 'agree' };
+     * }
+     * ```
+     */
+    grade?: (ctx: JewelGradeContext<JewelMethodInput<M>>) => MaybePromise<JewelVerdict>;
+}
+/**
+ * Executor params — constructed by the platform (or dev tooling), exactly
+ * one key. `?: never` on the other keys rejects passing more than one.
+ */
+type JewelRunParams<I, S> = {
+    humanInput: I;
+    subject?: never;
+    grade?: never;
+} | {
+    subject: S;
+    humanInput?: never;
+    grade?: never;
+} | {
+    grade: JewelGradeContext<I>;
+    humanInput?: never;
+    subject?: never;
+};
+/**
+ * The versioned, JSON-serializable output of one jewel run — the row the
+ * pair ledger stores. Values are kept verbatim, so method inputs must be
+ * JSON-safe (they already crossed the wire as JSON in real use).
+ */
+interface JewelPairRecord<I = unknown, S = unknown> {
+    v: 1;
+    /** `grade` records are consumed by the platform (verdict extracted from a
+     *  grade-only run) and never persisted as pair rows themselves. */
+    mode: 'shadow' | 'eval' | 'grade';
+    /** Absent only when the projection itself threw (shadow mode). */
+    subject?: S;
+    /** null = abstention. Absent when propose failed. */
+    proposed?: I | null;
+    /** Absent when propose failed. */
+    reasoning?: string;
+    /** The human's input — present in shadow mode. */
+    actual?: I;
+    /** Present iff graded (shadow or grade mode, propose succeeded). */
+    verdict?: 'agree' | 'disagree' | 'skip';
+    notes?: string;
+    /** Present iff subject() or propose() threw. Grade errors become verdict 'skip'. */
+    error?: {
+        phase: 'subject' | 'propose';
+        message: string;
+        stack?: string;
+    };
+    /**
+     * Whether this jewel declares a custom `grade`. The platform's deferred
+     * grading dispatches a grade-mode run when true; when false it grades
+     * locally with an equivalent of the default deep-equal (no sandbox trip
+     * to evaluate a pure structural comparison).
+     */
+    customGrade: boolean;
+    startedAt: number;
+    durationMs: number;
+}
+/**
+ * The export of a `foo.jewel.ts` file: the executor, callable as an
+ * ordinary handler, with the authored config attached for the compiler and
+ * dev tooling. `method` carries the actual function reference — reference
+ * identity is what lets the compiler verify the manifest's method↔jewel
+ * pairing against the code. `grade` is `undefined` when the default
+ * deep-equal grade applies; presence is the custom-grade signal.
+ */
+interface Jewel<M extends JewelMethod, S> {
+    (params: JewelRunParams<JewelMethodInput<M>, S>): Promise<JewelPairRecord<JewelMethodInput<M>, S>>;
+    readonly kind: 'jewel';
+    readonly method: M;
+    readonly subject: (input: JewelMethodInput<M>) => S;
+    readonly propose: (subject: S) => MaybePromise<JewelProposal<JewelMethodInput<M>>>;
+    readonly grade: ((ctx: JewelGradeContext<JewelMethodInput<M>>) => MaybePromise<JewelVerdict>) | undefined;
+}
+/**
+ * What the platform did with a proposal, routed by the method's autonomy:
+ * - `recorded` — shadow: proposal written to the pair ledger, graded later
+ *   against the human's eventual action (within the attribution window).
+ * - `queued` — approve: waiting in the review queue.
+ * - `committed` — auto: the jewel's proposal was applied (the method ran);
+ *   `output` carries the method's return value.
+ * - `abstained` — the jewel chose not to act; recorded, still gradeable.
+ * - `disabled` — the method has no jewel or autonomy is `manual`. Returned,
+ *   never thrown: dialing a method down must not break the app code that
+ *   proposes to it.
+ * - `skipped` — dev session, jewel-descended recursion, or unsampled
+ *   (sampleRate).
+ * - `failed` — an auto commit was attempted and the method rejected it
+ *   (e.g. the state was consumed concurrently). The moment stays pending.
+ * - `pending` — a concurrent replay: the original propose for this
+ *   idempotencyKey is still mid-run. Treat as accepted.
+ */
+type JewelProposeOutcome = 'recorded' | 'queued' | 'committed' | 'abstained' | 'disabled' | 'skipped' | 'failed' | 'pending';
+interface JewelProposeResult {
+    outcome: JewelProposeOutcome;
+    /** Present on `committed` — the method's return value. */
+    output?: unknown;
+    /** Present on `queued` — address the item via `jewels.queue.resolve`. */
+    queueItemId?: string;
+}
+/** A pending approval-queue item awaiting a reviewer. */
+interface JewelQueueItem {
+    id: string;
+    methodId: string;
+    subject: Record<string, unknown>;
+    /** The method input the jewel proposes to apply. */
+    proposed: unknown;
+    reasoning: string | null;
+    proposedAt: string;
+    /** Unresolved items expire (verdict `expired`) at the attribution window. */
+    expiresAt: string;
+}
+type JewelQueueResolution = 'approved' | 'edited' | 'dismissed';
+interface JewelQueueResolveResult {
+    resolution: JewelQueueResolution;
+    /** Present on approve — the applied method's return value. */
+    output?: unknown;
+}
+interface JewelsApi {
+    /**
+     * Hand a decision moment to a method's jewel — the arrival-shaped trigger.
+     * Place it where the app knows the moment was born (an ingest branch that
+     * lands a row in its pending state). The platform routes by the method's
+     * autonomy; see {@link JewelProposeOutcome}.
+     *
+     * `idempotencyKey` (Stripe semantics — a replayed key returns the ORIGINAL
+     * outcome, so retried webhooks are invisible to this code) defaults to a
+     * hash of the subject. Sibling proposals for one decision moment should
+     * share a key so cross-verb grading can close them together.
+     *
+     * Backend/managed contexts only (rides the execution's hook token). Runs
+     * the jewel synchronously — wrap chains in `mindstudio.waitUntil(...)` so
+     * the calling method returns immediately:
+     *
+     * ```ts
+     * mindstudio.waitUntil((async () => {
+     *   const merge = await mindstudio.jewels.propose(
+     *     'merge-issues', { sourceId: issue.id }, { idempotencyKey: issue.id });
+     *   if (merge.outcome !== 'committed') {
+     *     await mindstudio.jewels.propose(
+     *       'triage-issue', { issueId: issue.id }, { idempotencyKey: issue.id });
+     *   }
+     * })());
+     * ```
+     */
+    propose(methodId: string, subject: Record<string, unknown>, opts?: {
+        idempotencyKey?: string;
+    }): Promise<JewelProposeResult>;
+    /**
+     * The app-native approval queue for `approve`-mode methods. Build the
+     * review UI in the app itself: a backend method lists items (gate it with
+     * the app's reviewer role), the frontend renders the inbox, and a resolve
+     * method approves or dismisses.
+     */
+    queue: {
+        /** Pending items, oldest first. */
+        list(opts?: {
+            methodId?: string;
+            limit?: number;
+        }): Promise<{
+            items: JewelQueueItem[];
+        }>;
+        /**
+         * Resolve one item. `approve` APPLIES the target method as the current
+         * session user — the reviewer — so the effect belongs to the human who
+         * clicked, and the target method's own auth checks are the real gate on
+         * who may approve. Pass `input` to apply an edited version of the
+         * proposal (captured as resolution `edited` — proposed/edited/final ride
+         * the pair record; the richest training signal). `dismiss` records the
+         * rejection and closes the item without running anything; other verbs'
+         * proposals for the same moment stay open.
+         */
+        resolve(itemId: string, opts: {
+            action: 'approve' | 'dismiss';
+            input?: Record<string, unknown>;
+        }): Promise<JewelQueueResolveResult>;
+    };
+}
+/**
+ * Define a jewel — the agentic shadow companion for an app method.
+ *
+ * @example
+ * ```ts
+ * export default defineJewel(updateIssue, {
+ *   subject: ({ issueId }) => ({ issueId }),
+ *   propose: async ({ issueId }) => {
+ *     const issue = await resolveIssue(issueId);
+ *     if (!issue || issue.status !== 'new') {
+ *       return { input: null, reasoning: 'Nothing to propose.' };
+ *     }
+ *     // ...gather context, call a model via runTask + outputSchema...
+ *     return { input: { issueId, status: 'triaged' }, reasoning: '...' };
+ *   },
+ *   grade: async ({ proposed, actual }) => {
+ *     if (!proposed) return { verdict: 'disagree', notes: 'abstained' };
+ *     return proposed.status === actual.status
+ *       ? { verdict: 'agree' }
+ *       : { verdict: 'disagree' };
+ *   },
+ * });
+ * ```
+ */
+declare function defineJewel<M extends JewelMethod, S>(method: M, config: JewelConfig<M, S>): Jewel<M, S>;
+
 /** @internal Transport: `POST /_internal/v2/datasources/<op>` with the hook token. */
 type DataSourcesTransport = (op: string, body: unknown) => Promise<any>;
 /** Where a retrieved chunk came from — enough to show the user the source. */
@@ -2648,6 +2953,17 @@ declare class MindStudioAgent$1 {
      * ```
      */
     get files(): Files;
+    /**
+     * Jewel surfaces: arrival-shaped triggers (`propose`) and the app-native
+     * approval queue (`queue.list` / `queue.resolve`). See {@link JewelsApi}.
+     */
+    get jewels(): JewelsApi;
+    /**
+     * Raw hook-token call shared by the jewels surfaces (mirrors reportIssue).
+     * No retries: propose holds the request for the jewel run and is idempotent
+     * by key anyway; resolve applies a method and must never double-fire.
+     */
+    private _jewelsRequest;
     /**
      * Searchable document corpora.
      *
@@ -5532,10 +5848,10 @@ interface ScrapeUrlStepInput {
     url: string;
     /** Scraping service to use */
     service?: "default" | "firecrawl";
-    /** Whether to enable enhanced scraping for social media URLs (e.g. Twitter, LinkedIn) */
+    /** No longer selects a provider — the default service's anti-bot engine decides per request how hard to work. Retained because existing workflows set it and the builder still renders it. */
     autoEnhance?: boolean;
-    /** Output format: text returns markdown, html returns raw HTML, json returns structured scraper data */
-    outputFormat?: "text" | "json" | "html";
+    /** Output format: text returns markdown, html returns raw HTML, json returns structured scraper data, summary returns a model-written summary (Firecrawl only) */
+    outputFormat?: "text" | "json" | "html" | "summary";
     /** Page-level scraping options (content filtering, screenshots, headers, etc.) */
     pageOptions?: {
         /** Whether to extract only the main content of the page, excluding navigation, footers, etc. */
@@ -5581,6 +5897,12 @@ interface ScrapeUrlStepOutput {
             code: string;
             message: string;
         };
+        /**
+     * What the provider actually charged, when it tells us. Scrapfly returns an exact per-request credit total that varies with how hard the target fought back (6 for an unprotected page, 80 for Glassdoor), so billing a flat rate would either overcharge the easy case or eat the hard one. Providers that report nothing leave this undefined and fall back to the route's estimate.
+     *
+     * Includes every attempt made on the caller's behalf, not just the last one.
+     */
+        costUnits?: number;
     } | {
         /** Markdown/plain-text content of the scraped page */
         text: string;
@@ -5606,6 +5928,12 @@ interface ScrapeUrlStepOutput {
             code: string;
             message: string;
         };
+        /**
+     * What the provider actually charged, when it tells us. Scrapfly returns an exact per-request credit total that varies with how hard the target fought back (6 for an unprotected page, 80 for Glassdoor), so billing a flat rate would either overcharge the easy case or eat the hard one. Providers that report nothing leave this undefined and fall back to the route's estimate.
+     *
+     * Includes every attempt made on the caller's behalf, not just the last one.
+     */
+        costUnits?: number;
     }[];
     /** Screenshot URL(s), only present when a screenshot was captured */
     screenshot?: string | string[];
@@ -5641,6 +5969,12 @@ interface ScrapeXPostStepOutput {
             code: string;
             message: string;
         };
+        /**
+     * What the provider actually charged, when it tells us. Scrapfly returns an exact per-request credit total that varies with how hard the target fought back (6 for an unprotected page, 80 for Glassdoor), so billing a flat rate would either overcharge the easy case or eat the hard one. Providers that report nothing leave this undefined and fall back to the route's estimate.
+     *
+     * Includes every attempt made on the caller's behalf, not just the last one.
+     */
+        costUnits?: number;
     };
 }
 interface ScrapeXProfileStepInput {
@@ -5674,6 +6008,12 @@ interface ScrapeXProfileStepOutput {
             code: string;
             message: string;
         };
+        /**
+     * What the provider actually charged, when it tells us. Scrapfly returns an exact per-request credit total that varies with how hard the target fought back (6 for an unprotected page, 80 for Glassdoor), so billing a flat rate would either overcharge the easy case or eat the hard one. Providers that report nothing leave this undefined and fall back to the route's estimate.
+     *
+     * Includes every attempt made on the caller's behalf, not just the last one.
+     */
+        costUnits?: number;
     };
 }
 interface ScreenshotUrlStepInput {
@@ -8917,8 +9257,9 @@ interface StepMethods {
      *
      * @remarks
      * - Accepts a single URL or multiple URLs (as a JSON array, comma-separated, or newline-separated).
-     * - Output format controls the result shape: "text" returns markdown, "html" returns raw HTML, "json" returns structured scraper data.
+     * - Output format controls the result shape: "text" returns markdown, "html" returns raw HTML, "json" returns structured scraper data, "summary" returns a model-written summary and requires the "firecrawl" service.
      * - Can optionally capture a screenshot of each page.
+     * - Handles bot protection automatically; no proxy or rendering configuration is needed.
      *
      * @example
      * ```typescript
@@ -9950,188 +10291,6 @@ declare function getRequestContext(): RequestContext | undefined;
  */
 declare function runWithContext<T>(ctx: RequestContext, fn: () => T | Promise<T>): T | Promise<T>;
 
-/**
- * Jewels — agentic shadow companions for app methods.
- *
- * A jewel lives in `foo.jewel.ts` beside the method `foo.ts` it shadows. It
- * proposes what a careful teammate would have done — an input for the method
- * — without ever applying it: the method stays the only door for writes.
- *
- * ```ts
- * // updateIssue.jewel.ts
- * export default defineJewel(updateIssue, {
- *   subject: ({ issueId }) => ({ issueId }),
- *   propose: async ({ issueId }) => {
- *     // arbitrary TS: reads via plain imports, model calls via runTask
- *     return { input: { issueId, status: 'triaged' }, reasoning: '...' };
- *   },
- * });
- * ```
- *
- * `defineJewel` returns a CALLABLE — the executor — with the config attached
- * as properties (the Express-app pattern). That shape is deliberate: the
- * platform's sandbox worker invokes one exported function per execution
- * frame (`mod[handlerName](params)`), so a jewel run is an ordinary
- * method-execution frame with zero worker or protocol changes. Dev tooling
- * calls the same function, so dev and production share one executor body,
- * versioned here in the SDK.
- *
- * Two run modes, discriminated by which key the caller provides:
- * - `{ humanInput }` — shadow mode. The subject is derived via the jewel's
- *   projection (the human's decision fields never reach `propose`), and
- *   `humanInput` doubles as ground truth for grading.
- * - `{ subject }` — eval / event-shaped mode. No human action exists, so the
- *   record is ungraded.
- *
- * The executor NEVER throws: a shadow run must never break anything. Author
- * code failing (`subject`/`propose`) is captured in the record's `error`;
- * `grade` failing softens to verdict `'skip'`.
- */
-/** Any app method a jewel can shadow: one JSON-serializable input, any result. */
-type JewelMethod = (input: any) => any;
-/**
- * The input type of the shadowed method. Guarded so a zero-parameter method
- * resolves to `undefined` instead of erroring on `Parameters<M>[0]`.
- */
-type JewelMethodInput<M extends JewelMethod> = Parameters<M> extends [] ? undefined : Parameters<M>[0];
-/**
- * What `propose` returns. `input: null` is abstention — a first-class,
- * graded outcome, not an error. Reasoning is most valuable on abstention.
- */
-interface JewelProposal<I> {
-    input: I | null;
-    reasoning: string;
-}
-interface JewelVerdict {
-    verdict: 'agree' | 'disagree' | 'skip';
-    notes?: string;
-}
-/**
- * Argument to a custom `grade`. `proposed` is null when the jewel abstained;
- * `actual` is always present — grading only happens in shadow mode, where
- * the human acted.
- */
-interface JewelGradeContext<I> {
-    proposed: I | null;
-    actual: I;
-}
-type MaybePromise<T> = T | Promise<T>;
-/**
- * Authoring config. Declare `subject` before `propose` — the subject type
- * is inferred from the projection's return and flows into `propose`'s
- * parameter.
- */
-interface JewelConfig<M extends JewelMethod, S> {
-    /**
-     * Projection: method input → subject. What the human was looking at,
-     * never what they decided — this is what keeps the label out of the exam.
-     */
-    subject: (input: JewelMethodInput<M>) => S;
-    /**
-     * The proposal. Runs on the projection only; arbitrary TS (plain imports
-     * for context, model calls via runTask). Throwing never propagates — it
-     * becomes an `error` on the pair record.
-     */
-    propose: (subject: NoInfer<S>) => MaybePromise<JewelProposal<JewelMethodInput<M>>>;
-    /**
-     * The custom assertion. Omit for deep-equal on the method input. May be
-     * async and call models. Throwing softens to verdict `'skip'`.
-     *
-     * Strict-safe field iteration, when grading only touched fields:
-     * ```ts
-     * grade: ({ proposed, actual }) => {
-     *   if (!proposed) return { verdict: 'disagree', notes: 'abstained' };
-     *   const keys = Object.keys(actual) as (keyof typeof actual)[];
-     *   const misses = keys.filter((k) => proposed[k] !== actual[k]);
-     *   return misses.length
-     *     ? { verdict: 'disagree', notes: misses.join(', ') }
-     *     : { verdict: 'agree' };
-     * }
-     * ```
-     */
-    grade?: (ctx: JewelGradeContext<JewelMethodInput<M>>) => MaybePromise<JewelVerdict>;
-}
-/**
- * Executor params — constructed by the platform (or dev tooling), exactly
- * one key. `?: never` on the other key rejects passing both.
- */
-type JewelRunParams<I, S> = {
-    humanInput: I;
-    subject?: never;
-} | {
-    subject: S;
-    humanInput?: never;
-};
-/**
- * The versioned, JSON-serializable output of one jewel run — the row the
- * pair ledger stores. Values are kept verbatim, so method inputs must be
- * JSON-safe (they already crossed the wire as JSON in real use).
- */
-interface JewelPairRecord<I = unknown, S = unknown> {
-    v: 1;
-    mode: 'shadow' | 'eval';
-    /** Absent only when the projection itself threw (shadow mode). */
-    subject?: S;
-    /** null = abstention. Absent when propose failed. */
-    proposed?: I | null;
-    /** Absent when propose failed. */
-    reasoning?: string;
-    /** The human's input — present in shadow mode. */
-    actual?: I;
-    /** Present iff graded (shadow mode, propose succeeded). */
-    verdict?: 'agree' | 'disagree' | 'skip';
-    notes?: string;
-    /** Present iff subject() or propose() threw. Grade errors become verdict 'skip'. */
-    error?: {
-        phase: 'subject' | 'propose';
-        message: string;
-        stack?: string;
-    };
-    startedAt: number;
-    durationMs: number;
-}
-/**
- * The export of a `foo.jewel.ts` file: the executor, callable as an
- * ordinary handler, with the authored config attached for the compiler and
- * dev tooling. `method` carries the actual function reference — reference
- * identity is what lets the compiler verify the manifest's method↔jewel
- * pairing against the code. `grade` is `undefined` when the default
- * deep-equal grade applies; presence is the custom-grade signal.
- */
-interface Jewel<M extends JewelMethod, S> {
-    (params: JewelRunParams<JewelMethodInput<M>, S>): Promise<JewelPairRecord<JewelMethodInput<M>, S>>;
-    readonly kind: 'jewel';
-    readonly method: M;
-    readonly subject: (input: JewelMethodInput<M>) => S;
-    readonly propose: (subject: S) => MaybePromise<JewelProposal<JewelMethodInput<M>>>;
-    readonly grade: ((ctx: JewelGradeContext<JewelMethodInput<M>>) => MaybePromise<JewelVerdict>) | undefined;
-}
-/**
- * Define a jewel — the agentic shadow companion for an app method.
- *
- * @example
- * ```ts
- * export default defineJewel(updateIssue, {
- *   subject: ({ issueId }) => ({ issueId }),
- *   propose: async ({ issueId }) => {
- *     const issue = await resolveIssue(issueId);
- *     if (!issue || issue.status !== 'new') {
- *       return { input: null, reasoning: 'Nothing to propose.' };
- *     }
- *     // ...gather context, call a model via runTask + outputSchema...
- *     return { input: { issueId, status: 'triaged' }, reasoning: '...' };
- *   },
- *   grade: async ({ proposed, actual }) => {
- *     if (!proposed) return { verdict: 'disagree', notes: 'abstained' };
- *     return proposed.status === actual.status
- *       ? { verdict: 'agree' }
- *       : { verdict: 'disagree' };
- *   },
- * });
- * ```
- */
-declare function defineJewel<M extends JewelMethod, S>(method: M, config: JewelConfig<M, S>): Jewel<M, S>;
-
 type MonacoSnippetFieldType = 'string' | 'number' | 'boolean' | 'array' | 'object' | string[];
 type MonacoSnippetField = [name: string, type: MonacoSnippetFieldType];
 interface MonacoSnippet {
@@ -10344,4 +10503,4 @@ declare const prerender: {
     }>;
 };
 
-export { type Accessor, type ActiveCampaignAddNoteStepInput, type ActiveCampaignAddNoteStepOutput, type ActiveCampaignCreateContactStepInput, type ActiveCampaignCreateContactStepOutput, type AddSubtitlesToVideoStepInput, type AddSubtitlesToVideoStepOutput, type AgentInfo, type AgentOptions, type AirtableCreateUpdateRecordStepInput, type AirtableCreateUpdateRecordStepOutput, type AirtableDeleteRecordStepInput, type AirtableDeleteRecordStepOutput, type AirtableGetRecordStepInput, type AirtableGetRecordStepOutput, type AirtableGetTableRecordsStepInput, type AirtableGetTableRecordsStepOutput, type AnalyzeImageStepInput, type AnalyzeImageStepOutput, type AnalyzeVideoStepInput, type AnalyzeVideoStepOutput, type AppAuthContext, type AppContextResult, type AppDatabase, type AppDatabaseColumnSchema, type AppDatabaseTable, type AppRoleAssignment, AuthContext, type AuthTableConfig, type BatchStepInput, type BatchStepResult, type Batchable, type CaptureThumbnailStepInput, type CaptureThumbnailStepOutput, type CheckAppRoleStepInput, type CheckAppRoleStepOutput, type CodaCreateUpdatePageStepInput, type CodaCreateUpdatePageStepOutput, type CodaCreateUpdateRowStepInput, type CodaCreateUpdateRowStepOutput, type CodaFindRowStepInput, type CodaFindRowStepOutput, type CodaGetPageStepInput, type CodaGetPageStepOutput, type CodaGetTableRowsStepInput, type CodaGetTableRowsStepOutput, type Connection, type ConnectorActionDetail, type ConnectorService, type ConvertPdfToImagesStepInput, type ConvertPdfToImagesStepOutput, type CreateDataSourceStepInput, type CreateDataSourceStepOutput, type CreateGmailDraftStepInput, type CreateGmailDraftStepOutput, type CreateGoogleCalendarEventStepInput, type CreateGoogleCalendarEventStepOutput, type CreateGoogleDocStepInput, type CreateGoogleDocStepOutput, type CreateGoogleSheetStepInput, type CreateGoogleSheetStepOutput, type Db, type DefineStoreOptions, type DefineTableOptions, type DeleteDataSourceDocumentStepInput, type DeleteDataSourceDocumentStepOutput, type DeleteDataSourceStepInput, type DeleteDataSourceStepOutput, type DeleteGmailEmailStepInput, type DeleteGmailEmailStepOutput, type DeleteGoogleCalendarEventStepInput, type DeleteGoogleCalendarEventStepOutput, type DeleteGoogleSheetRowsStepInput, type DeleteGoogleSheetRowsStepOutput, type DetectChangesStepInput, type DetectChangesStepOutput, type DetectPIIStepInput, type DetectPIIStepOutput, type DiscordEditMessageStepInput, type DiscordEditMessageStepOutput, type DiscordSendFollowUpStepInput, type DiscordSendFollowUpStepOutput, type DiscordSendMessageStepInput, type DiscordSendMessageStepOutput, type DownloadVideoStepInput, type DownloadVideoStepOutput, type EnhanceImageGenerationPromptStepInput, type EnhanceImageGenerationPromptStepOutput, type EnhanceVideoGenerationPromptStepInput, type EnhanceVideoGenerationPromptStepOutput, type EnrichPersonStepInput, type EnrichPersonStepOutput, type ExecuteStepBatchOptions, type ExecuteStepBatchResult, type ExtractAudioFromVideoStepInput, type ExtractAudioFromVideoStepOutput, type ExtractTextStepInput, type ExtractTextStepOutput, type FetchDataSourceDocumentStepInput, type FetchDataSourceDocumentStepOutput, type FetchGoogleDocStepInput, type FetchGoogleDocStepOutput, type FetchGoogleSheetStepInput, type FetchGoogleSheetStepOutput, type FetchSlackChannelHistoryStepInput, type FetchSlackChannelHistoryStepOutput, type FetchYoutubeCaptionsStepInput, type FetchYoutubeCaptionsStepOutput, type FetchYoutubeChannelStepInput, type FetchYoutubeChannelStepOutput, type FetchYoutubeCommentsStepInput, type FetchYoutubeCommentsStepOutput, type FetchYoutubeVideoStepInput, type FetchYoutubeVideoStepOutput, type FileAccess, type Files, type FromSchema, type Generate3dModelStepInput, type Generate3dModelStepOutput, type GenerateAssetStepInput, type GenerateAssetStepOutput, type GenerateChartStepInput, type GenerateChartStepOutput, type GenerateImageStepInput, type GenerateImageStepOutput, type GenerateLipsyncStepInput, type GenerateLipsyncStepOutput, type GenerateMusicStepInput, type GenerateMusicStepOutput, type GeneratePdfStepInput, type GeneratePdfStepOutput, type GenerateStaticVideoFromImageStepInput, type GenerateStaticVideoFromImageStepOutput, type GenerateTextStepInput, type GenerateTextStepOutput, type GenerateVideoStepInput, type GenerateVideoStepOutput, type GetGmailAttachmentsStepInput, type GetGmailAttachmentsStepOutput, type GetGmailDraftStepInput, type GetGmailDraftStepOutput, type GetGmailEmailStepInput, type GetGmailEmailStepOutput, type GetGmailUnreadCountStepInput, type GetGmailUnreadCountStepOutput, type GetGoogleCalendarEventStepInput, type GetGoogleCalendarEventStepOutput, type GetGoogleDriveFileStepInput, type GetGoogleDriveFileStepOutput, type GetGoogleSheetInfoStepInput, type GetGoogleSheetInfoStepOutput, type GetMediaMetadataStepInput, type GetMediaMetadataStepOutput, type HubspotCreateCompanyStepInput, type HubspotCreateCompanyStepOutput, type HubspotCreateContactStepInput, type HubspotCreateContactStepOutput, type HubspotGetCompanyStepInput, type HubspotGetCompanyStepOutput, type HubspotGetContactStepInput, type HubspotGetContactStepOutput, type HunterApiCompanyEnrichmentStepInput, type HunterApiCompanyEnrichmentStepOutput, type HunterApiDomainSearchStepInput, type HunterApiDomainSearchStepOutput, type HunterApiEmailFinderStepInput, type HunterApiEmailFinderStepOutput, type HunterApiEmailVerificationStepInput, type HunterApiEmailVerificationStepOutput, type HunterApiPersonEnrichmentStepInput, type HunterApiPersonEnrichmentStepOutput, type ImageFaceSwapStepInput, type ImageFaceSwapStepOutput, type ImageRemoveWatermarkStepInput, type ImageRemoveWatermarkStepOutput, type InsertVideoClipsStepInput, type InsertVideoClipsStepOutput, type Jewel, type JewelConfig, type JewelGradeContext, type JewelMethod, type JewelMethodInput, type JewelPairRecord, type JewelProposal, type JewelRunParams, type JewelVerdict, type JsonObjectSchema, type JsonSchema, type JsonSchemaTypeName, type ListAgentsResult, type ListDataSourcesStepInput, type ListDataSourcesStepOutput, type ListGmailDraftsStepInput, type ListGmailDraftsStepOutput, type ListGmailLabelsStepInput, type ListGmailLabelsStepOutput, type ListGoogleCalendarEventsStepInput, type ListGoogleCalendarEventsStepOutput, type ListGoogleDriveFilesStepInput, type ListGoogleDriveFilesStepOutput, type ListOptions, type ListRecentGmailEmailsStepInput, type ListRecentGmailEmailsStepOutput, type LogicStepInput, type LogicStepOutput, type MakeDotComRunScenarioStepInput, type MakeDotComRunScenarioStepOutput, type MergeAudioStepInput, type MergeAudioStepOutput, type MergeVideosStepInput, type MergeVideosStepOutput, type MeshyAnimateStepInput, type MeshyAnimateStepOutput, type MeshyImageTo3dStepInput, type MeshyImageTo3dStepOutput, type MeshyRemeshStepInput, type MeshyRemeshStepOutput, type MeshyRigStepInput, type MeshyRigStepOutput, type MeshyTextTo3dStepInput, type MeshyTextTo3dStepOutput, type MeshyTextureStepInput, type MeshyTextureStepOutput, MindStudioAgent, MindStudioError, type MindStudioModel, type MindStudioModelSummary, type MixAudioIntoVideoStepInput, type MixAudioIntoVideoStepOutput, type ModelType, type MonacoSnippet, type MonacoSnippetField, type MonacoSnippetFieldType, type MuteVideoStepInput, type MuteVideoStepOutput, type N8nRunNodeStepInput, type N8nRunNodeStepOutput, type NotionCreatePageStepInput, type NotionCreatePageStepOutput, type NotionUpdatePageStepInput, type NotionUpdatePageStepOutput, type PackagedWorkflow, type PackagedWorkflowInput, type PackagedWorkflowSignature, type ParticlePodcastsFindMentionsStepInput, type ParticlePodcastsFindMentionsStepOutput, type ParticlePodcastsGetEpisodeStepInput, type ParticlePodcastsGetEpisodeStepOutput, type ParticlePodcastsGetEpisodeTranscriptStepInput, type ParticlePodcastsGetEpisodeTranscriptStepOutput, type ParticlePodcastsSearchCompaniesStepInput, type ParticlePodcastsSearchCompaniesStepOutput, type ParticlePodcastsSearchDialogueStepInput, type ParticlePodcastsSearchDialogueStepOutput, type ParticlePodcastsSearchPodcastsStepInput, type ParticlePodcastsSearchPodcastsStepOutput, type PeopleSearchStepInput, type PeopleSearchStepOutput, type PostToLinkedInStepInput, type PostToLinkedInStepOutput, type PostToSlackChannelStepInput, type PostToSlackChannelStepOutput, type PostToXStepInput, type PostToXStepOutput, type PostToZapierStepInput, type PostToZapierStepOutput, type Predicate, type PushInput, type PutOptions, Query, type QueryAppDatabaseStepInput, type QueryAppDatabaseStepOutput, type QueryDataSourceStepInput, type QueryDataSourceStepOutput, type QueryExternalDatabaseStepInput, type QueryExternalDatabaseStepOutput, type RedactPIIStepInput, type RedactPIIStepOutput, type RemoveBackgroundFromImageStepInput, type RemoveBackgroundFromImageStepOutput, type ReplyToGmailEmailStepInput, type ReplyToGmailEmailStepOutput, type ReportIssueInput, type ReportedIssue, type RequestContext, type ResizeVideoStepInput, type ResizeVideoStepOutput, type ResolvedUser, Roles, type RunAgentOptions, type RunAgentResult, type RunFromConnectorRegistryStepInput, type RunFromConnectorRegistryStepOutput, type RunPackagedWorkflowStepInput, type RunPackagedWorkflowStepOutput, type RunTaskOptions, type RunTaskOptionsWithExample, type RunTaskOptionsWithSchema, type RunTaskResult, type SchemaValidationError, type ScrapeLinkedInCompanyStepInput, type ScrapeLinkedInCompanyStepOutput, type ScrapeLinkedInProfileStepInput, type ScrapeLinkedInProfileStepOutput, type ScrapeUrlStepInput, type ScrapeUrlStepOutput, type ScrapeXPostStepInput, type ScrapeXPostStepOutput, type ScrapeXProfileStepInput, type ScrapeXProfileStepOutput, type ScreenshotUrlStepInput, type ScreenshotUrlStepOutput, type SearchGmailEmailsStepInput, type SearchGmailEmailsStepOutput, type SearchGoogleCalendarEventsStepInput, type SearchGoogleCalendarEventsStepOutput, type SearchGoogleDriveStepInput, type SearchGoogleDriveStepOutput, type SearchGoogleImagesStepInput, type SearchGoogleImagesStepOutput, type SearchGoogleNewsStepInput, type SearchGoogleNewsStepOutput, type SearchGoogleStepInput, type SearchGoogleStepOutput, type SearchGoogleTrendsStepInput, type SearchGoogleTrendsStepOutput, type SearchPerplexityStepInput, type SearchPerplexityStepOutput, type SearchXPostsStepInput, type SearchXPostsStepOutput, type SearchYoutubeStepInput, type SearchYoutubeStepOutput, type SearchYoutubeTrendsStepInput, type SearchYoutubeTrendsStepOutput, type SendEmailStepInput, type SendEmailStepOutput, type SendGmailDraftStepInput, type SendGmailDraftStepOutput, type SendGmailMessageStepInput, type SendGmailMessageStepOutput, type SendSMSStepInput, type SendSMSStepOutput, type SendSlackDirectMessageStepInput, type SendSlackDirectMessageStepOutput, type SessionContext, type SetGmailReadStatusStepInput, type SetGmailReadStatusStepOutput, type SetRunTitleStepInput, type SetRunTitleStepOutput, type SetVariableStepInput, type SetVariableStepOutput, type StepCostEstimateEntry, type StepExecutionMeta, type StepExecutionOptions, type StepExecutionResult, type StepInputMap, type StepLogEvent, type StepMetadata, type StepMethods, type StepName, type StepOutputMap, Store, type StoredFile, type SystemFields, Table, type TaskEvent, type TaskToolCall, type TaskToolConfig, type TaskUsage, type TelegramEditMessageStepInput, type TelegramEditMessageStepOutput, type TelegramReplyToMessageStepInput, type TelegramReplyToMessageStepOutput, type TelegramSendAudioStepInput, type TelegramSendAudioStepOutput, type TelegramSendFileStepInput, type TelegramSendFileStepOutput, type TelegramSendImageStepInput, type TelegramSendImageStepOutput, type TelegramSendMessageStepInput, type TelegramSendMessageStepOutput, type TelegramSendVideoStepInput, type TelegramSendVideoStepOutput, type TelegramSetTypingStepInput, type TelegramSetTypingStepOutput, type TextToSpeechStepInput, type TextToSpeechStepOutput, type TranscribeAudioStepInput, type TranscribeAudioStepOutput, type TrimMediaStepInput, type TrimMediaStepOutput, type UpdateGmailLabelsStepInput, type UpdateGmailLabelsStepOutput, type UpdateGoogleCalendarEventStepInput, type UpdateGoogleCalendarEventStepOutput, type UpdateGoogleDocStepInput, type UpdateGoogleDocStepOutput, type UpdateGoogleSheetStepInput, type UpdateGoogleSheetStepOutput, type UpdateInput, type UploadDataSourceDocumentStepInput, type UploadDataSourceDocumentStepOutput, type UploadFileResult, type UploadToken, type UpscaleImageStepInput, type UpscaleImageStepOutput, type UpscaleVideoStepInput, type UpscaleVideoStepOutput, type User, type UserInfoResult, type UserMessageStepInput, type UserMessageStepOutput, type VideoFaceSwapStepInput, type VideoFaceSwapStepOutput, type VideoRemoveBackgroundStepInput, type VideoRemoveBackgroundStepOutput, type VideoRemoveWatermarkStepInput, type VideoRemoveWatermarkStepOutput, type Voice, type VoiceCallResult, type WatermarkImageStepInput, type WatermarkImageStepOutput, type WatermarkVideoStepInput, type WatermarkVideoStepOutput, type YouDotComFinanceResearchStepInput, type YouDotComFinanceResearchStepOutput, type YouDotComGetPageContentStepInput, type YouDotComGetPageContentStepOutput, type YouDotComLiveNewsStepInput, type YouDotComLiveNewsStepOutput, type YouDotComWebResearchStepInput, type YouDotComWebResearchStepOutput, type YouDotComWebSearchStepInput, type YouDotComWebSearchStepOutput, auth, blockTypeAliases, dataSources, db, mindstudio as default, defineJewel, files, getRequestContext, mindstudio, monacoSnippets, prerender, reportIssue, resolveUser, runWithContext, session, stepMetadata, stream, voice, waitUntil };
+export { type Accessor, type ActiveCampaignAddNoteStepInput, type ActiveCampaignAddNoteStepOutput, type ActiveCampaignCreateContactStepInput, type ActiveCampaignCreateContactStepOutput, type AddSubtitlesToVideoStepInput, type AddSubtitlesToVideoStepOutput, type AgentInfo, type AgentOptions, type AirtableCreateUpdateRecordStepInput, type AirtableCreateUpdateRecordStepOutput, type AirtableDeleteRecordStepInput, type AirtableDeleteRecordStepOutput, type AirtableGetRecordStepInput, type AirtableGetRecordStepOutput, type AirtableGetTableRecordsStepInput, type AirtableGetTableRecordsStepOutput, type AnalyzeImageStepInput, type AnalyzeImageStepOutput, type AnalyzeVideoStepInput, type AnalyzeVideoStepOutput, type AppAuthContext, type AppContextResult, type AppDatabase, type AppDatabaseColumnSchema, type AppDatabaseTable, type AppRoleAssignment, AuthContext, type AuthTableConfig, type BatchStepInput, type BatchStepResult, type Batchable, type CaptureThumbnailStepInput, type CaptureThumbnailStepOutput, type CheckAppRoleStepInput, type CheckAppRoleStepOutput, type CodaCreateUpdatePageStepInput, type CodaCreateUpdatePageStepOutput, type CodaCreateUpdateRowStepInput, type CodaCreateUpdateRowStepOutput, type CodaFindRowStepInput, type CodaFindRowStepOutput, type CodaGetPageStepInput, type CodaGetPageStepOutput, type CodaGetTableRowsStepInput, type CodaGetTableRowsStepOutput, type Connection, type ConnectorActionDetail, type ConnectorService, type ConvertPdfToImagesStepInput, type ConvertPdfToImagesStepOutput, type CreateDataSourceStepInput, type CreateDataSourceStepOutput, type CreateGmailDraftStepInput, type CreateGmailDraftStepOutput, type CreateGoogleCalendarEventStepInput, type CreateGoogleCalendarEventStepOutput, type CreateGoogleDocStepInput, type CreateGoogleDocStepOutput, type CreateGoogleSheetStepInput, type CreateGoogleSheetStepOutput, type Db, type DefineStoreOptions, type DefineTableOptions, type DeleteDataSourceDocumentStepInput, type DeleteDataSourceDocumentStepOutput, type DeleteDataSourceStepInput, type DeleteDataSourceStepOutput, type DeleteGmailEmailStepInput, type DeleteGmailEmailStepOutput, type DeleteGoogleCalendarEventStepInput, type DeleteGoogleCalendarEventStepOutput, type DeleteGoogleSheetRowsStepInput, type DeleteGoogleSheetRowsStepOutput, type DetectChangesStepInput, type DetectChangesStepOutput, type DetectPIIStepInput, type DetectPIIStepOutput, type DiscordEditMessageStepInput, type DiscordEditMessageStepOutput, type DiscordSendFollowUpStepInput, type DiscordSendFollowUpStepOutput, type DiscordSendMessageStepInput, type DiscordSendMessageStepOutput, type DownloadVideoStepInput, type DownloadVideoStepOutput, type EnhanceImageGenerationPromptStepInput, type EnhanceImageGenerationPromptStepOutput, type EnhanceVideoGenerationPromptStepInput, type EnhanceVideoGenerationPromptStepOutput, type EnrichPersonStepInput, type EnrichPersonStepOutput, type ExecuteStepBatchOptions, type ExecuteStepBatchResult, type ExtractAudioFromVideoStepInput, type ExtractAudioFromVideoStepOutput, type ExtractTextStepInput, type ExtractTextStepOutput, type FetchDataSourceDocumentStepInput, type FetchDataSourceDocumentStepOutput, type FetchGoogleDocStepInput, type FetchGoogleDocStepOutput, type FetchGoogleSheetStepInput, type FetchGoogleSheetStepOutput, type FetchSlackChannelHistoryStepInput, type FetchSlackChannelHistoryStepOutput, type FetchYoutubeCaptionsStepInput, type FetchYoutubeCaptionsStepOutput, type FetchYoutubeChannelStepInput, type FetchYoutubeChannelStepOutput, type FetchYoutubeCommentsStepInput, type FetchYoutubeCommentsStepOutput, type FetchYoutubeVideoStepInput, type FetchYoutubeVideoStepOutput, type FileAccess, type Files, type FromSchema, type Generate3dModelStepInput, type Generate3dModelStepOutput, type GenerateAssetStepInput, type GenerateAssetStepOutput, type GenerateChartStepInput, type GenerateChartStepOutput, type GenerateImageStepInput, type GenerateImageStepOutput, type GenerateLipsyncStepInput, type GenerateLipsyncStepOutput, type GenerateMusicStepInput, type GenerateMusicStepOutput, type GeneratePdfStepInput, type GeneratePdfStepOutput, type GenerateStaticVideoFromImageStepInput, type GenerateStaticVideoFromImageStepOutput, type GenerateTextStepInput, type GenerateTextStepOutput, type GenerateVideoStepInput, type GenerateVideoStepOutput, type GetGmailAttachmentsStepInput, type GetGmailAttachmentsStepOutput, type GetGmailDraftStepInput, type GetGmailDraftStepOutput, type GetGmailEmailStepInput, type GetGmailEmailStepOutput, type GetGmailUnreadCountStepInput, type GetGmailUnreadCountStepOutput, type GetGoogleCalendarEventStepInput, type GetGoogleCalendarEventStepOutput, type GetGoogleDriveFileStepInput, type GetGoogleDriveFileStepOutput, type GetGoogleSheetInfoStepInput, type GetGoogleSheetInfoStepOutput, type GetMediaMetadataStepInput, type GetMediaMetadataStepOutput, type HubspotCreateCompanyStepInput, type HubspotCreateCompanyStepOutput, type HubspotCreateContactStepInput, type HubspotCreateContactStepOutput, type HubspotGetCompanyStepInput, type HubspotGetCompanyStepOutput, type HubspotGetContactStepInput, type HubspotGetContactStepOutput, type HunterApiCompanyEnrichmentStepInput, type HunterApiCompanyEnrichmentStepOutput, type HunterApiDomainSearchStepInput, type HunterApiDomainSearchStepOutput, type HunterApiEmailFinderStepInput, type HunterApiEmailFinderStepOutput, type HunterApiEmailVerificationStepInput, type HunterApiEmailVerificationStepOutput, type HunterApiPersonEnrichmentStepInput, type HunterApiPersonEnrichmentStepOutput, type ImageFaceSwapStepInput, type ImageFaceSwapStepOutput, type ImageRemoveWatermarkStepInput, type ImageRemoveWatermarkStepOutput, type InsertVideoClipsStepInput, type InsertVideoClipsStepOutput, type Jewel, type JewelConfig, type JewelGradeContext, type JewelMethod, type JewelMethodInput, type JewelPairRecord, type JewelProposal, type JewelProposeOutcome, type JewelProposeResult, type JewelQueueItem, type JewelQueueResolution, type JewelQueueResolveResult, type JewelRunParams, type JewelVerdict, type JewelsApi, type JsonObjectSchema, type JsonSchema, type JsonSchemaTypeName, type ListAgentsResult, type ListDataSourcesStepInput, type ListDataSourcesStepOutput, type ListGmailDraftsStepInput, type ListGmailDraftsStepOutput, type ListGmailLabelsStepInput, type ListGmailLabelsStepOutput, type ListGoogleCalendarEventsStepInput, type ListGoogleCalendarEventsStepOutput, type ListGoogleDriveFilesStepInput, type ListGoogleDriveFilesStepOutput, type ListOptions, type ListRecentGmailEmailsStepInput, type ListRecentGmailEmailsStepOutput, type LogicStepInput, type LogicStepOutput, type MakeDotComRunScenarioStepInput, type MakeDotComRunScenarioStepOutput, type MergeAudioStepInput, type MergeAudioStepOutput, type MergeVideosStepInput, type MergeVideosStepOutput, type MeshyAnimateStepInput, type MeshyAnimateStepOutput, type MeshyImageTo3dStepInput, type MeshyImageTo3dStepOutput, type MeshyRemeshStepInput, type MeshyRemeshStepOutput, type MeshyRigStepInput, type MeshyRigStepOutput, type MeshyTextTo3dStepInput, type MeshyTextTo3dStepOutput, type MeshyTextureStepInput, type MeshyTextureStepOutput, MindStudioAgent, MindStudioError, type MindStudioModel, type MindStudioModelSummary, type MixAudioIntoVideoStepInput, type MixAudioIntoVideoStepOutput, type ModelType, type MonacoSnippet, type MonacoSnippetField, type MonacoSnippetFieldType, type MuteVideoStepInput, type MuteVideoStepOutput, type N8nRunNodeStepInput, type N8nRunNodeStepOutput, type NotionCreatePageStepInput, type NotionCreatePageStepOutput, type NotionUpdatePageStepInput, type NotionUpdatePageStepOutput, type PackagedWorkflow, type PackagedWorkflowInput, type PackagedWorkflowSignature, type ParticlePodcastsFindMentionsStepInput, type ParticlePodcastsFindMentionsStepOutput, type ParticlePodcastsGetEpisodeStepInput, type ParticlePodcastsGetEpisodeStepOutput, type ParticlePodcastsGetEpisodeTranscriptStepInput, type ParticlePodcastsGetEpisodeTranscriptStepOutput, type ParticlePodcastsSearchCompaniesStepInput, type ParticlePodcastsSearchCompaniesStepOutput, type ParticlePodcastsSearchDialogueStepInput, type ParticlePodcastsSearchDialogueStepOutput, type ParticlePodcastsSearchPodcastsStepInput, type ParticlePodcastsSearchPodcastsStepOutput, type PeopleSearchStepInput, type PeopleSearchStepOutput, type PostToLinkedInStepInput, type PostToLinkedInStepOutput, type PostToSlackChannelStepInput, type PostToSlackChannelStepOutput, type PostToXStepInput, type PostToXStepOutput, type PostToZapierStepInput, type PostToZapierStepOutput, type Predicate, type PushInput, type PutOptions, Query, type QueryAppDatabaseStepInput, type QueryAppDatabaseStepOutput, type QueryDataSourceStepInput, type QueryDataSourceStepOutput, type QueryExternalDatabaseStepInput, type QueryExternalDatabaseStepOutput, type RedactPIIStepInput, type RedactPIIStepOutput, type RemoveBackgroundFromImageStepInput, type RemoveBackgroundFromImageStepOutput, type ReplyToGmailEmailStepInput, type ReplyToGmailEmailStepOutput, type ReportIssueInput, type ReportedIssue, type RequestContext, type ResizeVideoStepInput, type ResizeVideoStepOutput, type ResolvedUser, Roles, type RunAgentOptions, type RunAgentResult, type RunFromConnectorRegistryStepInput, type RunFromConnectorRegistryStepOutput, type RunPackagedWorkflowStepInput, type RunPackagedWorkflowStepOutput, type RunTaskOptions, type RunTaskOptionsWithExample, type RunTaskOptionsWithSchema, type RunTaskResult, type SchemaValidationError, type ScrapeLinkedInCompanyStepInput, type ScrapeLinkedInCompanyStepOutput, type ScrapeLinkedInProfileStepInput, type ScrapeLinkedInProfileStepOutput, type ScrapeUrlStepInput, type ScrapeUrlStepOutput, type ScrapeXPostStepInput, type ScrapeXPostStepOutput, type ScrapeXProfileStepInput, type ScrapeXProfileStepOutput, type ScreenshotUrlStepInput, type ScreenshotUrlStepOutput, type SearchGmailEmailsStepInput, type SearchGmailEmailsStepOutput, type SearchGoogleCalendarEventsStepInput, type SearchGoogleCalendarEventsStepOutput, type SearchGoogleDriveStepInput, type SearchGoogleDriveStepOutput, type SearchGoogleImagesStepInput, type SearchGoogleImagesStepOutput, type SearchGoogleNewsStepInput, type SearchGoogleNewsStepOutput, type SearchGoogleStepInput, type SearchGoogleStepOutput, type SearchGoogleTrendsStepInput, type SearchGoogleTrendsStepOutput, type SearchPerplexityStepInput, type SearchPerplexityStepOutput, type SearchXPostsStepInput, type SearchXPostsStepOutput, type SearchYoutubeStepInput, type SearchYoutubeStepOutput, type SearchYoutubeTrendsStepInput, type SearchYoutubeTrendsStepOutput, type SendEmailStepInput, type SendEmailStepOutput, type SendGmailDraftStepInput, type SendGmailDraftStepOutput, type SendGmailMessageStepInput, type SendGmailMessageStepOutput, type SendSMSStepInput, type SendSMSStepOutput, type SendSlackDirectMessageStepInput, type SendSlackDirectMessageStepOutput, type SessionContext, type SetGmailReadStatusStepInput, type SetGmailReadStatusStepOutput, type SetRunTitleStepInput, type SetRunTitleStepOutput, type SetVariableStepInput, type SetVariableStepOutput, type StepCostEstimateEntry, type StepExecutionMeta, type StepExecutionOptions, type StepExecutionResult, type StepInputMap, type StepLogEvent, type StepMetadata, type StepMethods, type StepName, type StepOutputMap, Store, type StoredFile, type SystemFields, Table, type TaskEvent, type TaskToolCall, type TaskToolConfig, type TaskUsage, type TelegramEditMessageStepInput, type TelegramEditMessageStepOutput, type TelegramReplyToMessageStepInput, type TelegramReplyToMessageStepOutput, type TelegramSendAudioStepInput, type TelegramSendAudioStepOutput, type TelegramSendFileStepInput, type TelegramSendFileStepOutput, type TelegramSendImageStepInput, type TelegramSendImageStepOutput, type TelegramSendMessageStepInput, type TelegramSendMessageStepOutput, type TelegramSendVideoStepInput, type TelegramSendVideoStepOutput, type TelegramSetTypingStepInput, type TelegramSetTypingStepOutput, type TextToSpeechStepInput, type TextToSpeechStepOutput, type TranscribeAudioStepInput, type TranscribeAudioStepOutput, type TrimMediaStepInput, type TrimMediaStepOutput, type UpdateGmailLabelsStepInput, type UpdateGmailLabelsStepOutput, type UpdateGoogleCalendarEventStepInput, type UpdateGoogleCalendarEventStepOutput, type UpdateGoogleDocStepInput, type UpdateGoogleDocStepOutput, type UpdateGoogleSheetStepInput, type UpdateGoogleSheetStepOutput, type UpdateInput, type UploadDataSourceDocumentStepInput, type UploadDataSourceDocumentStepOutput, type UploadFileResult, type UploadToken, type UpscaleImageStepInput, type UpscaleImageStepOutput, type UpscaleVideoStepInput, type UpscaleVideoStepOutput, type User, type UserInfoResult, type UserMessageStepInput, type UserMessageStepOutput, type VideoFaceSwapStepInput, type VideoFaceSwapStepOutput, type VideoRemoveBackgroundStepInput, type VideoRemoveBackgroundStepOutput, type VideoRemoveWatermarkStepInput, type VideoRemoveWatermarkStepOutput, type Voice, type VoiceCallResult, type WatermarkImageStepInput, type WatermarkImageStepOutput, type WatermarkVideoStepInput, type WatermarkVideoStepOutput, type YouDotComFinanceResearchStepInput, type YouDotComFinanceResearchStepOutput, type YouDotComGetPageContentStepInput, type YouDotComGetPageContentStepOutput, type YouDotComLiveNewsStepInput, type YouDotComLiveNewsStepOutput, type YouDotComWebResearchStepInput, type YouDotComWebResearchStepOutput, type YouDotComWebSearchStepInput, type YouDotComWebSearchStepOutput, auth, blockTypeAliases, dataSources, db, mindstudio as default, defineJewel, files, getRequestContext, mindstudio, monacoSnippets, prerender, reportIssue, resolveUser, runWithContext, session, stepMetadata, stream, voice, waitUntil };

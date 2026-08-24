@@ -3134,23 +3134,23 @@ var stepMetadata = {
   "scrapeUrl": {
     stepType: "scrapeUrl",
     description: "Extract text, HTML, or structured content from one or more web pages.",
-    usageNotes: '- Accepts a single URL or multiple URLs (as a JSON array, comma-separated, or newline-separated).\n- Output format controls the result shape: "text" returns markdown, "html" returns raw HTML, "json" returns structured scraper data.\n- Can optionally capture a screenshot of each page.',
-    inputSchema: { "type": "object", "properties": { "url": { "type": "string", "description": "URL(s) to scrape. Accepts a single URL, JSON array, or comma/newline-separated list" }, "service": { "enum": ["default", "firecrawl"], "type": "string", "description": "Scraping service to use" }, "autoEnhance": { "type": "boolean", "description": "Whether to enable enhanced scraping for social media URLs (e.g. Twitter, LinkedIn)" }, "outputFormat": { "enum": ["text", "json", "html"], "type": "string", "description": "Output format: text returns markdown, html returns raw HTML, json returns structured scraper data" }, "pageOptions": { "type": "object", "properties": { "onlyMainContent": { "type": "boolean", "description": "Whether to extract only the main content of the page, excluding navigation, footers, etc." }, "screenshot": { "type": "boolean", "description": "Whether to capture a screenshot of the page" }, "waitFor": { "type": "number", "description": "Milliseconds to wait before scraping (0 for immediate)" }, "replaceAllPathsWithAbsolutePaths": { "type": "boolean", "description": "Whether to convert relative URLs to absolute URLs in the result" }, "headers": { "type": "object", "properties": {}, "required": [], "description": "Custom HTTP request headers as key-value pairs" }, "removeTags": { "type": "array", "items": { "type": "string" }, "description": "HTML tags to remove from the scraped result" }, "mobile": { "type": "boolean", "description": "Whether to scrape using a mobile user-agent" } }, "required": ["onlyMainContent", "screenshot", "waitFor", "replaceAllPathsWithAbsolutePaths", "headers", "removeTags", "mobile"], "description": "Page-level scraping options (content filtering, screenshots, headers, etc.)" } }, "required": ["url"] },
-    outputSchema: { "type": "object", "properties": { "content": { "anyOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }, { "type": "object", "properties": { "text": { "type": "string", "description": "Markdown/plain-text content of the scraped page" }, "html": { "type": "string", "description": "Raw HTML content of the scraped page" }, "json": { "type": "object", "properties": {}, "required": [], "description": "Structured data extracted from the page" }, "screenshotUrl": { "type": "string", "description": "Screenshot URL of the page (if requested)" }, "metadata": { "type": "object", "properties": { "title": { "type": "string", "description": "Page title" }, "description": { "type": "string", "description": "Page meta description" }, "url": { "type": "string", "description": "Canonical URL" }, "image": { "type": "string", "description": "Open Graph image URL" } }, "required": ["title", "description", "url", "image"], "description": "Page metadata (Open Graph / meta tags)" }, "error": { "type": "object", "properties": { "code": { "type": "string" }, "message": { "type": "string" } }, "required": ["code", "message"], "description": "Set when the scrape failed. `text`/`html` still carry the human-readable error so existing callers behave as before, but callers that care \u2014 billing, in particular \u2014 can tell a failure from real page content." } }, "required": ["text", "html"] }, { "type": "array", "items": { "type": "object", "properties": { "text": { "type": "string", "description": "Markdown/plain-text content of the scraped page" }, "html": { "type": "string", "description": "Raw HTML content of the scraped page" }, "json": { "type": "object", "properties": {}, "required": [], "description": "Structured data extracted from the page" }, "screenshotUrl": { "type": "string", "description": "Screenshot URL of the page (if requested)" }, "metadata": { "type": "object", "properties": { "title": { "type": "string", "description": "Page title" }, "description": { "type": "string", "description": "Page meta description" }, "url": { "type": "string", "description": "Canonical URL" }, "image": { "type": "string", "description": "Open Graph image URL" } }, "required": ["title", "description", "url", "image"], "description": "Page metadata (Open Graph / meta tags)" }, "error": { "type": "object", "properties": { "code": { "type": "string" }, "message": { "type": "string" } }, "required": ["code", "message"], "description": "Set when the scrape failed. `text`/`html` still carry the human-readable error so existing callers behave as before, but callers that care \u2014 billing, in particular \u2014 can tell a failure from real page content." } }, "required": ["text", "html"] } }] }, "screenshot": { "anyOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }] } }, "required": ["content"] }
+    usageNotes: '- Accepts a single URL or multiple URLs (as a JSON array, comma-separated, or newline-separated).\n- Output format controls the result shape: "text" returns markdown, "html" returns raw HTML, "json" returns structured scraper data, "summary" returns a model-written summary and requires the "firecrawl" service.\n- Can optionally capture a screenshot of each page.\n- Handles bot protection automatically; no proxy or rendering configuration is needed.',
+    inputSchema: { "type": "object", "properties": { "url": { "type": "string", "description": "URL(s) to scrape. Accepts a single URL, JSON array, or comma/newline-separated list" }, "service": { "enum": ["default", "firecrawl"], "type": "string", "description": "Scraping service to use" }, "autoEnhance": { "type": "boolean", "description": "No longer selects a provider \u2014 the default service's anti-bot engine decides per request how hard to work. Retained because existing workflows set it and the builder still renders it." }, "outputFormat": { "enum": ["text", "json", "html", "summary"], "type": "string", "description": "Output format: text returns markdown, html returns raw HTML, json returns structured scraper data, summary returns a model-written summary (Firecrawl only)" }, "pageOptions": { "type": "object", "properties": { "onlyMainContent": { "type": "boolean", "description": "Whether to extract only the main content of the page, excluding navigation, footers, etc." }, "screenshot": { "type": "boolean", "description": "Whether to capture a screenshot of the page" }, "waitFor": { "type": "number", "description": "Milliseconds to wait before scraping (0 for immediate)" }, "replaceAllPathsWithAbsolutePaths": { "type": "boolean", "description": "Whether to convert relative URLs to absolute URLs in the result" }, "headers": { "type": "object", "properties": {}, "required": [], "description": "Custom HTTP request headers as key-value pairs" }, "removeTags": { "type": "array", "items": { "type": "string" }, "description": "HTML tags to remove from the scraped result" }, "mobile": { "type": "boolean", "description": "Whether to scrape using a mobile user-agent" } }, "required": ["onlyMainContent", "screenshot", "waitFor", "replaceAllPathsWithAbsolutePaths", "headers", "removeTags", "mobile"], "description": "Page-level scraping options (content filtering, screenshots, headers, etc.)" } }, "required": ["url"] },
+    outputSchema: { "type": "object", "properties": { "content": { "anyOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }, { "type": "object", "properties": { "text": { "type": "string", "description": "Markdown/plain-text content of the scraped page" }, "html": { "type": "string", "description": "Raw HTML content of the scraped page" }, "json": { "type": "object", "properties": {}, "required": [], "description": "Structured data extracted from the page" }, "screenshotUrl": { "type": "string", "description": "Screenshot URL of the page (if requested)" }, "metadata": { "type": "object", "properties": { "title": { "type": "string", "description": "Page title" }, "description": { "type": "string", "description": "Page meta description" }, "url": { "type": "string", "description": "Canonical URL" }, "image": { "type": "string", "description": "Open Graph image URL" } }, "required": ["title", "description", "url", "image"], "description": "Page metadata (Open Graph / meta tags)" }, "error": { "type": "object", "properties": { "code": { "type": "string" }, "message": { "type": "string" } }, "required": ["code", "message"], "description": "Set when the scrape failed. `text`/`html` still carry the human-readable error so existing callers behave as before, but callers that care \u2014 billing, in particular \u2014 can tell a failure from real page content." }, "costUnits": { "type": "number", "description": "What the provider actually charged, when it tells us. Scrapfly returns an exact per-request credit total that varies with how hard the target fought back (6 for an unprotected page, 80 for Glassdoor), so billing a flat rate would either overcharge the easy case or eat the hard one. Providers that report nothing leave this undefined and fall back to the route's estimate.\n\nIncludes every attempt made on the caller's behalf, not just the last one." } }, "required": ["text", "html"] }, { "type": "array", "items": { "type": "object", "properties": { "text": { "type": "string", "description": "Markdown/plain-text content of the scraped page" }, "html": { "type": "string", "description": "Raw HTML content of the scraped page" }, "json": { "type": "object", "properties": {}, "required": [], "description": "Structured data extracted from the page" }, "screenshotUrl": { "type": "string", "description": "Screenshot URL of the page (if requested)" }, "metadata": { "type": "object", "properties": { "title": { "type": "string", "description": "Page title" }, "description": { "type": "string", "description": "Page meta description" }, "url": { "type": "string", "description": "Canonical URL" }, "image": { "type": "string", "description": "Open Graph image URL" } }, "required": ["title", "description", "url", "image"], "description": "Page metadata (Open Graph / meta tags)" }, "error": { "type": "object", "properties": { "code": { "type": "string" }, "message": { "type": "string" } }, "required": ["code", "message"], "description": "Set when the scrape failed. `text`/`html` still carry the human-readable error so existing callers behave as before, but callers that care \u2014 billing, in particular \u2014 can tell a failure from real page content." }, "costUnits": { "type": "number", "description": "What the provider actually charged, when it tells us. Scrapfly returns an exact per-request credit total that varies with how hard the target fought back (6 for an unprotected page, 80 for Glassdoor), so billing a flat rate would either overcharge the easy case or eat the hard one. Providers that report nothing leave this undefined and fall back to the route's estimate.\n\nIncludes every attempt made on the caller's behalf, not just the last one." } }, "required": ["text", "html"] } }] }, "screenshot": { "anyOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }] } }, "required": ["content"] }
   },
   "scrapeXPost": {
     stepType: "scrapeXPost",
     description: "Scrape data from a single X (Twitter) post by URL.",
     usageNotes: "- Returns structured post data (text, html, optional json/screenshot/metadata).\n- Optionally saves the text content to a variable.",
     inputSchema: { "type": "object", "properties": { "url": { "type": "string", "description": "Full URL to the X post (e.g. https://x.com/elonmusk/status/1655608985058267139)" } }, "required": ["url"] },
-    outputSchema: { "type": "object", "properties": { "post": { "type": "object", "properties": { "text": { "type": "string", "description": "Markdown/plain-text content of the scraped page" }, "html": { "type": "string", "description": "Raw HTML content of the scraped page" }, "json": { "type": "object", "properties": {}, "required": [], "description": "Structured data extracted from the page" }, "screenshotUrl": { "type": "string", "description": "Screenshot URL of the page (if requested)" }, "metadata": { "type": "object", "properties": { "title": { "type": "string", "description": "Page title" }, "description": { "type": "string", "description": "Page meta description" }, "url": { "type": "string", "description": "Canonical URL" }, "image": { "type": "string", "description": "Open Graph image URL" } }, "required": ["title", "description", "url", "image"], "description": "Page metadata (Open Graph / meta tags)" }, "error": { "type": "object", "properties": { "code": { "type": "string" }, "message": { "type": "string" } }, "required": ["code", "message"], "description": "Set when the scrape failed. `text`/`html` still carry the human-readable error so existing callers behave as before, but callers that care \u2014 billing, in particular \u2014 can tell a failure from real page content." } }, "required": ["text", "html"], "description": "Scraped post data including text, HTML, and optional structured JSON" } }, "required": ["post"] }
+    outputSchema: { "type": "object", "properties": { "post": { "type": "object", "properties": { "text": { "type": "string", "description": "Markdown/plain-text content of the scraped page" }, "html": { "type": "string", "description": "Raw HTML content of the scraped page" }, "json": { "type": "object", "properties": {}, "required": [], "description": "Structured data extracted from the page" }, "screenshotUrl": { "type": "string", "description": "Screenshot URL of the page (if requested)" }, "metadata": { "type": "object", "properties": { "title": { "type": "string", "description": "Page title" }, "description": { "type": "string", "description": "Page meta description" }, "url": { "type": "string", "description": "Canonical URL" }, "image": { "type": "string", "description": "Open Graph image URL" } }, "required": ["title", "description", "url", "image"], "description": "Page metadata (Open Graph / meta tags)" }, "error": { "type": "object", "properties": { "code": { "type": "string" }, "message": { "type": "string" } }, "required": ["code", "message"], "description": "Set when the scrape failed. `text`/`html` still carry the human-readable error so existing callers behave as before, but callers that care \u2014 billing, in particular \u2014 can tell a failure from real page content." }, "costUnits": { "type": "number", "description": "What the provider actually charged, when it tells us. Scrapfly returns an exact per-request credit total that varies with how hard the target fought back (6 for an unprotected page, 80 for Glassdoor), so billing a flat rate would either overcharge the easy case or eat the hard one. Providers that report nothing leave this undefined and fall back to the route's estimate.\n\nIncludes every attempt made on the caller's behalf, not just the last one." } }, "required": ["text", "html"], "description": "Scraped post data including text, HTML, and optional structured JSON" } }, "required": ["post"] }
   },
   "scrapeXProfile": {
     stepType: "scrapeXProfile",
     description: "Scrape public profile data from an X (Twitter) account by URL.",
     usageNotes: "- Returns structured profile data.\n- Optionally saves the result to a variable.",
     inputSchema: { "type": "object", "properties": { "url": { "type": "string", "description": "Full URL or username for the X profile (e.g. https://x.com/elonmusk)" } }, "required": ["url"] },
-    outputSchema: { "type": "object", "properties": { "profile": { "type": "object", "properties": { "text": { "type": "string", "description": "Markdown/plain-text content of the scraped page" }, "html": { "type": "string", "description": "Raw HTML content of the scraped page" }, "json": { "type": "object", "properties": {}, "required": [], "description": "Structured data extracted from the page" }, "screenshotUrl": { "type": "string", "description": "Screenshot URL of the page (if requested)" }, "metadata": { "type": "object", "properties": { "title": { "type": "string", "description": "Page title" }, "description": { "type": "string", "description": "Page meta description" }, "url": { "type": "string", "description": "Canonical URL" }, "image": { "type": "string", "description": "Open Graph image URL" } }, "required": ["title", "description", "url", "image"], "description": "Page metadata (Open Graph / meta tags)" }, "error": { "type": "object", "properties": { "code": { "type": "string" }, "message": { "type": "string" } }, "required": ["code", "message"], "description": "Set when the scrape failed. `text`/`html` still carry the human-readable error so existing callers behave as before, but callers that care \u2014 billing, in particular \u2014 can tell a failure from real page content." } }, "required": ["text", "html"], "description": "Scraped profile data including text, HTML, and optional structured JSON" } }, "required": ["profile"] }
+    outputSchema: { "type": "object", "properties": { "profile": { "type": "object", "properties": { "text": { "type": "string", "description": "Markdown/plain-text content of the scraped page" }, "html": { "type": "string", "description": "Raw HTML content of the scraped page" }, "json": { "type": "object", "properties": {}, "required": [], "description": "Structured data extracted from the page" }, "screenshotUrl": { "type": "string", "description": "Screenshot URL of the page (if requested)" }, "metadata": { "type": "object", "properties": { "title": { "type": "string", "description": "Page title" }, "description": { "type": "string", "description": "Page meta description" }, "url": { "type": "string", "description": "Canonical URL" }, "image": { "type": "string", "description": "Open Graph image URL" } }, "required": ["title", "description", "url", "image"], "description": "Page metadata (Open Graph / meta tags)" }, "error": { "type": "object", "properties": { "code": { "type": "string" }, "message": { "type": "string" } }, "required": ["code", "message"], "description": "Set when the scrape failed. `text`/`html` still carry the human-readable error so existing callers behave as before, but callers that care \u2014 billing, in particular \u2014 can tell a failure from real page content." }, "costUnits": { "type": "number", "description": "What the provider actually charged, when it tells us. Scrapfly returns an exact per-request credit total that varies with how hard the target fought back (6 for an unprotected page, 80 for Glassdoor), so billing a flat rate would either overcharge the easy case or eat the hard one. Providers that report nothing leave this undefined and fall back to the route's estimate.\n\nIncludes every attempt made on the caller's behalf, not just the last one." } }, "required": ["text", "html"], "description": "Scraped profile data including text, HTML, and optional structured JSON" } }, "required": ["profile"] }
   },
   "screenshotUrl": {
     stepType: "screenshotUrl",
@@ -5959,6 +5959,79 @@ var MindStudioAgent = class {
     return this._files ??= createFiles(this._filesRequest.bind(this));
   }
   /**
+   * Jewel surfaces: arrival-shaped triggers (`propose`) and the app-native
+   * approval queue (`queue.list` / `queue.resolve`). See {@link JewelsApi}.
+   */
+  get jewels() {
+    return {
+      propose: (methodId, subject, opts) => {
+        if (!methodId || typeof methodId !== "string") {
+          throw new MindStudioError(
+            "methodId is required",
+            "missing_method_id",
+            400
+          );
+        }
+        return this._jewelsRequest("propose", {
+          methodId,
+          subject,
+          ...opts?.idempotencyKey !== void 0 && {
+            idempotencyKey: opts.idempotencyKey
+          }
+        });
+      },
+      queue: {
+        list: (opts) => this._jewelsRequest("queue/list", {
+          ...opts?.methodId !== void 0 && { methodId: opts.methodId },
+          ...opts?.limit !== void 0 && { limit: opts.limit }
+        }),
+        resolve: (itemId, opts) => this._jewelsRequest("queue/resolve", {
+          itemId,
+          action: opts.action,
+          ...opts.input !== void 0 && { input: opts.input }
+        })
+      }
+    };
+  }
+  /**
+   * Raw hook-token call shared by the jewels surfaces (mirrors reportIssue).
+   * No retries: propose holds the request for the jewel run and is idempotent
+   * by key anyway; resolve applies a method and must never double-fire.
+   */
+  async _jewelsRequest(path, body) {
+    const rctx = getRequestContext();
+    if (this._authType !== "internal" && !rctx?.callbackToken) {
+      throw new MindStudioError(
+        `jewels.${path.replace("/", ".")} requires an app execution context (hook token) \u2014 it cannot be called with an API key.`,
+        "jewels_requires_app_context",
+        400
+      );
+    }
+    const url = `${this._currentHttpConfig.baseUrl}/_internal/v2/jewels/${path}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: this._token
+      },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      let code = "jewels_error";
+      let message = `jewels.${path.replace("/", ".")} failed: ${res.status} ${res.statusText}`;
+      let details;
+      try {
+        const errBody = await res.json();
+        details = errBody;
+        if (typeof errBody.errorString === "string") code = errBody.errorString;
+        message = typeof errBody.errorMessage === "string" && errBody.errorMessage || typeof errBody.errorString === "string" && errBody.errorString || message;
+      } catch {
+      }
+      throw new MindStudioError(message, code, res.status, details);
+    }
+    return await res.json();
+  }
+  /**
    * Searchable document corpora.
    *
    * @example
@@ -6554,14 +6627,37 @@ function normalizeVerdict(v) {
   return v.notes === void 0 ? { verdict: v.verdict } : { verdict: v.verdict, notes: v.notes };
 }
 function defineJewel(method, config) {
+  const runGrade = async (proposed, actual) => {
+    if (config.grade) {
+      try {
+        return normalizeVerdict(await config.grade({ proposed, actual }));
+      } catch (e) {
+        return { verdict: "skip", notes: `grade threw: ${errorInfo(e).message}` };
+      }
+    }
+    return deepEqual(proposed, actual) ? { verdict: "agree" } : { verdict: "disagree" };
+  };
   const run = async (params) => {
     const startedAt = Date.now();
+    const customGrade = config.grade !== void 0;
     const done = (rest) => ({
       v: 1,
+      customGrade,
       startedAt,
       durationMs: Date.now() - startedAt,
       ...rest
     });
+    if (Object.prototype.hasOwnProperty.call(params, "grade")) {
+      const ctx = params.grade;
+      const verdict2 = await runGrade(ctx.proposed, ctx.actual);
+      return done({
+        mode: "grade",
+        proposed: ctx.proposed,
+        actual: ctx.actual,
+        verdict: verdict2.verdict,
+        ...verdict2.notes !== void 0 ? { notes: verdict2.notes } : {}
+      });
+    }
     const isShadow = Object.prototype.hasOwnProperty.call(params, "humanInput");
     const mode = isShadow ? "shadow" : "eval";
     const actual = isShadow ? params.humanInput : void 0;
@@ -6594,18 +6690,7 @@ function defineJewel(method, config) {
         reasoning: proposal.reasoning
       });
     }
-    let verdict;
-    if (config.grade) {
-      try {
-        verdict = normalizeVerdict(
-          await config.grade({ proposed: proposal.input, actual })
-        );
-      } catch (e) {
-        verdict = { verdict: "skip", notes: `grade threw: ${errorInfo(e).message}` };
-      }
-    } else {
-      verdict = deepEqual(proposal.input, actual) ? { verdict: "agree" } : { verdict: "disagree" };
-    }
+    const verdict = await runGrade(proposal.input, actual);
     return done({
       mode,
       subject,
