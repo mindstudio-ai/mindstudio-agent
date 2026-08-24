@@ -27,6 +27,18 @@ export interface PutOptions {
    * assets baked into source.
    */
   contentAddressed?: boolean;
+  /**
+   * Cache-Control header stored on the object and served by the CDN — this is
+   * how you control public-read freshness. Defaults (public stores):
+   * auto-minted keys (`key` omitted — UUID or content-addressed, never
+   * reused) → `public, max-age=31536000, immutable`; explicitly named
+   * (overwritable) keys → `public, max-age=300`, so an overwrite propagates
+   * within ~5 minutes. Recipes: `'public, max-age=31536000, immutable'`
+   * (content never changes at this key), `'public, max-age=60'` (near-live
+   * config), `'no-store'` (revalidate every read). Validated server-side —
+   * known directives only.
+   */
+  cacheControl?: string;
 }
 
 /** Options for {@link Store.list}. */
@@ -134,12 +146,22 @@ export class Store {
       (options?.contentAddressed
         ? `${createHash('sha256').update(content).digest('hex')}${ext}`
         : `${randomUUID()}${ext}`);
+    // Auto-minted keys are never reused, so their content is immutable by
+    // construction — cache forever. Only the client knows how the key was
+    // minted, so this default lives here; named keys fall through to the
+    // server's short default (`public, max-age=300`).
+    const cacheControl =
+      options?.cacheControl ??
+      (!options?.key && this._access === 'public'
+        ? 'public, max-age=31536000, immutable'
+        : undefined);
     const meta = await this._call('put', {
       store: this._store,
       access: this._access,
       key,
       body: toBase64(content),
       ...(options?.contentType ? { contentType: options.contentType } : {}),
+      ...(cacheControl ? { cacheControl } : {}),
     });
     return this._toFile(key, meta);
   }
@@ -247,6 +269,12 @@ export class Store {
     filename?: string;
     maxSize?: number;
     expiresIn?: number;
+    /**
+     * Cache-Control header stored on the uploaded object and served by the
+     * CDN (see {@link PutOptions.cacheControl}). Public uploads default to
+     * `public, max-age=300` server-side.
+     */
+    cacheControl?: string;
   }): Promise<UploadToken> {
     if (
       options?.contentType &&
@@ -269,6 +297,7 @@ export class Store {
       ...(options?.contentType ? { contentType: options.contentType } : {}),
       ...(maxSize ? { maxSize } : {}),
       ...(options?.expiresIn ? { expiresIn: options.expiresIn } : {}),
+      ...(options?.cacheControl ? { cacheControl: options.cacheControl } : {}),
     });
     return {
       key,

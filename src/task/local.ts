@@ -20,6 +20,8 @@
  * doesn't have the turn endpoint yet.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import { request, type HttpClientConfig } from '../http.js';
 import { MindStudioError } from '../errors.js';
 import { mapTools, isDevMode, logTaskResult, sleep } from './index.js';
@@ -129,6 +131,9 @@ interface TurnRequestBody {
   system: string;
   messages: WireMessage[];
   tools: TaskRequestBody['tools'];
+  /** Task-stable transcript id — the server persists jewel-run transcripts
+   *  under it (latest turn wins, so the last write is the whole story). */
+  traceId: string;
 }
 
 interface TurnResult {
@@ -448,6 +453,8 @@ export async function runTaskLocal<T = unknown>(
     MAX_TURNS_LIMIT,
   );
 
+  const traceId = randomUUID();
+
   const messages: WireMessage[] = [
     { role: 'user', content: JSON.stringify(options.input) },
   ];
@@ -475,6 +482,7 @@ export async function runTaskLocal<T = unknown>(
     turns,
     usage: totalUsage as TaskUsage,
     toolCalls: toolCallLog,
+    traceId,
   });
 
   const accumulate = (turn: TurnResult) => {
@@ -564,6 +572,7 @@ export async function runTaskLocal<T = unknown>(
         system,
         messages,
         tools: wireTools,
+        traceId,
       });
     } catch (err) {
       // Route missing on the first turn (nothing has run yet) — signal
@@ -711,6 +720,7 @@ export async function runTaskLocal<T = unknown>(
       system,
       messages,
       tools: [],
+      traceId,
     });
     accumulate(turn);
     finalText = turn.text;

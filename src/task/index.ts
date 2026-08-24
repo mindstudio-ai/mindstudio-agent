@@ -10,6 +10,8 @@
  * - **SSE** (when onEvent provided): POST streams events in real time.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import { request, type HttpClientConfig } from '../http.js';
 import { MindStudioError } from '../errors.js';
 import { getRequestContext } from '../context.js';
@@ -130,6 +132,9 @@ export async function runTaskPoll<T = unknown>(
   httpConfig: HttpClientConfig,
   body: TaskRequestBody,
 ): Promise<RunTaskResult<T>> {
+  // Legacy server-side loop: turns never reach `/task/turn`, so nothing is
+  // recorded under this id — minted only to satisfy the result contract.
+  const traceId = randomUUID();
   // POST to async endpoint — returns immediately with a poll token
   const { data } = await request<{ taskToken: string }>(
     httpConfig,
@@ -215,6 +220,7 @@ export async function runTaskPoll<T = unknown>(
         totalBillingCost: 0,
       },
       toolCalls: poll.toolCalls ?? [],
+      traceId,
     };
 
     logTaskResult(result);
@@ -232,6 +238,8 @@ export async function runTaskStream<T = unknown>(
   body: TaskRequestBody,
   onEvent: (event: TaskEvent) => void,
 ): Promise<RunTaskResult<T>> {
+  // Legacy server-side loop — see the note in runTaskPoll.
+  const traceId = randomUUID();
   const url = `${httpConfig.baseUrl}/developer/v2/task`;
 
   const res = await fetch(url, {
@@ -311,6 +319,7 @@ export async function runTaskStream<T = unknown>(
               totalBillingCost: 0,
             },
             toolCalls: (event.toolCalls as TaskToolCall[]) ?? [],
+            traceId,
           };
         }
       } catch (err) {
@@ -346,6 +355,7 @@ export async function runTaskStream<T = unknown>(
             totalBillingCost: 0,
           },
           toolCalls: (event.toolCalls as TaskToolCall[]) ?? [],
+          traceId,
         };
       }
     } catch (err) {

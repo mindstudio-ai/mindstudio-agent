@@ -436,6 +436,12 @@ input a careful operator would submit (or abstains with `input: null`), gets gra
 against what a human actually did, and climbs an autonomy ladder (`shadow` → `approve` →
 `auto`) declared in the app manifest.
 
+Attach the deciding task's transcript to the proposal: `return { input, reasoning,
+trace: task.traceId }` (an array for escalation chains). The platform records
+jewel-run transcripts server-side per turn; the attached id preserves the full model
+transcript with the pair — the training row and the audit trail. A custom `grade`'s
+verdict may attach its judge's `trace` the same way.
+
 For decision moments the app detects itself (an ingest branch that lands a row in a
 pending state), hand the moment to the jewels from backend code:
 

@@ -1722,7 +1722,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
 
   lines.push('#### `files` — per-app file storage (private by default)');
   lines.push(
-    "Typed per-app file storage: user uploads, generated documents, images, marketing assets. Think of a store as a CDN-backed bucket the app talks to — NOT app-defined state like a `db` table. The API is *shaped* like the `db` namespace (define a store at module scope, then read/write), but its contents aren't modeled by code, and one store is shared across dev and prod (a file uploaded in the dev editor is already live in prod at the same URL). Creates are safe by default because keys default to unique (UUID, or a content-addressed hash); the operations to treat with care are `delete(key)` and overwriting a fixed key. Files are served on the app's own domain: private stores (the default) are signed / session-authorized; public stores are world-readable, CDN-served, and images resize via query params (e.g. `?w=400&h=300&fit=cover`). Prefer this over the deprecated `uploadFile()` for app storage.",
+    "Typed per-app file storage: user uploads, generated documents, images, marketing assets. Think of a store as a CDN-backed bucket the app talks to — NOT app-defined state like a `db` table. The API is *shaped* like the `db` namespace (define a store at module scope, then read/write), but its contents aren't modeled by code, and one store is shared across dev and prod (a file uploaded in the dev editor is already live in prod at the same URL). Creates are safe by default because keys default to unique (UUID, or a content-addressed hash); the operations to treat with care are `delete(key)` and overwriting a fixed key. Public objects are CDN-cached per their `Cache-Control`, set at put time via `cacheControl`: auto-minted keys default to immutable (cache-forever — the key is never reused), and named keys default to `public, max-age=300`, so overwriting one propagates publicly within ~5 minutes; pass `cacheControl` to tune (e.g. `'public, max-age=60'` for near-live config, `'no-store'` to revalidate every read). Files are served on the app's own domain: private stores (the default) are signed / session-authorized; public stores are world-readable, CDN-served, and images resize via query params (e.g. `?w=400&h=300&fit=cover`). Prefer this over the deprecated `uploadFile()` for app storage.",
   );
   lines.push('');
   lines.push('```typescript');
@@ -1750,7 +1750,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('Store methods:');
   lines.push(
-    '- `put(content, { key?, contentType?, filename?, contentAddressed? })` → `StoredFile`. `content` is `Buffer | Uint8Array | string`. Omit `key` for a random UUID; `contentAddressed: true` derives an immutable `<sha256>.<ext>` key.',
+    '- `put(content, { key?, contentType?, filename?, contentAddressed?, cacheControl? })` → `StoredFile`. `content` is `Buffer | Uint8Array | string`. Omit `key` for a random UUID; `contentAddressed: true` derives an immutable `<sha256>.<ext>` key. `cacheControl` sets the CDN caching of a public object (defaults: auto-minted keys immutable, named keys `public, max-age=300`).',
   );
   lines.push(
     '- `get(key)` → `Buffer` · `head(key)` → `StoredFile` · `exists(key)` → `boolean`',
@@ -1777,7 +1777,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('```typescript');
   lines.push('// backend method');
   lines.push(
-    'const token = await Uploads.createUploadToken({ contentType, maxSize: 25 * 1024 * 1024 });',
+    'const token = await Uploads.createUploadToken({ contentType, maxSize: 25 * 1024 * 1024 }); // also accepts cacheControl',
   );
   lines.push('return token;');
   lines.push('// frontend (@mindstudio-ai/interface)');
