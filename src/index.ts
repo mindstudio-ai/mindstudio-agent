@@ -35,6 +35,24 @@ export type {
   UpdateInput,
   SystemFields,
 } from './db/index.js';
+export { defineJewel } from './jewel/index.js';
+export type {
+  Jewel,
+  JewelConfig,
+  JewelMethod,
+  JewelMethodInput,
+  JewelProposal,
+  JewelVerdict,
+  JewelGradeContext,
+  JewelRunParams,
+  JewelPairRecord,
+  JewelsApi,
+  JewelProposeOutcome,
+  JewelProposeResult,
+  JewelQueueItem,
+  JewelQueueResolution,
+  JewelQueueResolveResult,
+} from './jewel/index.js';
 export type {
   Files,
   DefineStoreOptions,

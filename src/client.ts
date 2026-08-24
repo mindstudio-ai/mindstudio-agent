@@ -19,6 +19,12 @@ import {
 } from './db/index.js';
 import { createFiles, type Files } from './files/index.js';
 import type { Store } from './files/store.js';
+import type {
+  JewelsApi,
+  JewelProposeResult,
+  JewelQueueItem,
+  JewelQueueResolveResult,
+} from './jewel/index.js';
 import { createDataSources, type DataSources } from './datasources/index.js';
 import { createVoice, type Voice } from './voice/index.js';
 import {
@@ -1541,6 +1547,95 @@ export class MindStudioAgent {
    */
   get files(): Files {
     return (this._files ??= createFiles(this._filesRequest.bind(this)));
+  }
+
+  /**
+   * Jewel surfaces: arrival-shaped triggers (`propose`) and the app-native
+   * approval queue (`queue.list` / `queue.resolve`). See {@link JewelsApi}.
+   */
+  get jewels(): JewelsApi {
+    return {
+      propose: (methodId, subject, opts) => {
+        if (!methodId || typeof methodId !== 'string') {
+          throw new MindStudioError(
+            'methodId is required',
+            'missing_method_id',
+            400,
+          );
+        }
+        return this._jewelsRequest<JewelProposeResult>('propose', {
+          methodId,
+          subject,
+          ...(opts?.idempotencyKey !== undefined && {
+            idempotencyKey: opts.idempotencyKey,
+          }),
+        });
+      },
+      queue: {
+        list: (opts) =>
+          this._jewelsRequest<{ items: JewelQueueItem[] }>('queue/list', {
+            ...(opts?.methodId !== undefined && { methodId: opts.methodId }),
+            ...(opts?.limit !== undefined && { limit: opts.limit }),
+          }),
+        resolve: (itemId, opts) =>
+          this._jewelsRequest<JewelQueueResolveResult>('queue/resolve', {
+            itemId,
+            action: opts.action,
+            ...(opts.input !== undefined && { input: opts.input }),
+          }),
+      },
+    };
+  }
+
+  /**
+   * Raw hook-token call shared by the jewels surfaces (mirrors reportIssue).
+   * No retries: propose holds the request for the jewel run and is idempotent
+   * by key anyway; resolve applies a method and must never double-fire.
+   */
+  private async _jewelsRequest<T>(
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<T> {
+    // Backend/managed contexts only — the app identity comes from the
+    // execution's hook token.
+    const rctx = getRequestContext();
+    if (this._authType !== 'internal' && !rctx?.callbackToken) {
+      throw new MindStudioError(
+        `jewels.${path.replace('/', '.')} requires an app execution context (hook token) — it cannot be called with an API key.`,
+        'jewels_requires_app_context',
+        400,
+      );
+    }
+
+    const url = `${this._currentHttpConfig.baseUrl}/_internal/v2/jewels/${path}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: this._token,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      let code = 'jewels_error';
+      let message = `jewels.${path.replace('/', '.')} failed: ${res.status} ${res.statusText}`;
+      let details: unknown;
+      try {
+        const errBody = (await res.json()) as Record<string, unknown>;
+        details = errBody;
+        if (typeof errBody.errorString === 'string') code = errBody.errorString;
+        message =
+          (typeof errBody.errorMessage === 'string' && errBody.errorMessage) ||
+          (typeof errBody.errorString === 'string' && errBody.errorString) ||
+          message;
+      } catch {
+        // Non-JSON body — keep the defaults.
+      }
+      throw new MindStudioError(message, code, res.status, details);
+    }
+
+    return (await res.json()) as T;
   }
 
   /**
