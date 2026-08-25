@@ -6,6 +6,7 @@ import type { Db as _Db } from './db/index.js';
 import type { Files as _Files } from './files/index.js';
 import type { DataSources as _DataSources } from './datasources/index.js';
 import type { Voice as _Voice } from './voice/index.js';
+import type { Analytics as _Analytics } from './analytics/index.js';
 
 /** MindStudioAgent with all generated step methods. */
 export type MindStudioAgent = _MindStudioAgent & StepMethods;
@@ -121,6 +122,26 @@ export type {
   SchemaValidationError,
 } from './task/index.js';
 export type { Voice, VoiceCallResult } from './voice/index.js';
+export type {
+  Analytics,
+  AnalyticsMetric,
+  AnalyticsDimension,
+  AnalyticsFilterOp,
+  AnalyticsFilter,
+  AnalyticsGranularity,
+  AnalyticsDateRange,
+  AnalyticsQuerySpec,
+  AnalyticsQueryResultRow,
+  AnalyticsQueryResponse,
+  AnalyticsReadOptions,
+  LiveNow,
+  TopSource,
+  MapPoint,
+  AiSourceVendor,
+  CrawlerOverview,
+  CrawlerBucket,
+  CrawlerHit,
+} from './analytics/index.js';
 
 // Re-export all generated types
 export * from './generated/types.js';
@@ -284,6 +305,34 @@ export const dataSources: _DataSources = new Proxy({} as _DataSources, {
 export const voice: _Voice = new Proxy({} as _Voice, {
   get(_, prop) {
     const target = mindstudio.voice;
+    const value = Reflect.get(target, prop, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  },
+});
+
+/**
+ * Top-level `analytics` namespace bound to the default singleton.
+ *
+ * Read the app's own traffic + event analytics from method code. Queries
+ * touching at most one dimension with `is` filters read a lifetime rollup;
+ * cross-dimension / `is_not` / `contains` reads scan 90-day raw events —
+ * `meta.source` and `meta.clamped` report which. See the `analytics` module
+ * docs.
+ *
+ * @example
+ * ```ts
+ * import { analytics } from '@mindstudio-ai/agent';
+ *
+ * const top = await analytics.query({
+ *   metrics: ['pageviews', 'visitors'],
+ *   dimensions: ['path'],
+ *   dateRange: 'all',
+ * });
+ * ```
+ */
+export const analytics: _Analytics = new Proxy({} as _Analytics, {
+  get(_, prop) {
+    const target = mindstudio.analytics;
     const value = Reflect.get(target, prop, target);
     return typeof value === 'function' ? value.bind(target) : value;
   },

@@ -31,6 +31,7 @@ import type {
 } from './jewel/index.js';
 import { createDataSources, type DataSources } from './datasources/index.js';
 import { createVoice, type Voice } from './voice/index.js';
+import { createAnalytics, type Analytics } from './analytics/index.js';
 import {
   buildTaskRequestBody,
   runTaskPoll,
@@ -153,6 +154,7 @@ export class MindStudioAgent {
   private _files: Files | undefined;
   private _dataSources: DataSources | undefined;
   private _voice: Voice | undefined;
+  private _analytics: Analytics | undefined;
 
   /** @internal Auth type — 'internal' for CALLBACK_TOKEN (managed mode), 'apiKey' otherwise. */
   private _authType: AuthType;
@@ -1554,6 +1556,28 @@ export class MindStudioAgent {
   }
 
   /**
+   * The `analytics` namespace — read the app's own traffic + event analytics
+   * (auto-tracked pageviews, `analytics.track()` events). One general
+   * `query()` (metrics × dimensions × filters × time) plus `live()`,
+   * `sources()`, `map()`, `aiSources()`, `crawlers.*`. See {@link Analytics}
+   * for the lifetime-rollup vs 90-day-events split.
+   *
+   * @example
+   * ```ts
+   * const top = await agent.analytics.query({
+   *   metrics: ['pageviews', 'visitors'],
+   *   dimensions: ['path'],
+   *   dateRange: 'all',
+   * });
+   * ```
+   */
+  get analytics(): Analytics {
+    return (this._analytics ??= createAnalytics(
+      this._analyticsRequest.bind(this),
+    ));
+  }
+
+  /**
    * Jewel surfaces: arrival-shaped triggers (`propose`) and the app-native
    * approval queue (`queue.list` / `queue.resolve`). See {@link JewelsApi}.
    */
@@ -1699,6 +1723,17 @@ export class MindStudioAgent {
     return this._brokeredRequest('voice', op, body, {
       fallbackMessage: 'Voice operation failed',
       fallbackCode: 'voice_error',
+    });
+  }
+
+  /**
+   * @internal Transport for the `analytics` namespace —
+   * POST /_internal/v2/analytics/<op> with the raw hook token.
+   */
+  private async _analyticsRequest(op: string, body: unknown): Promise<any> {
+    return this._brokeredRequest('analytics', op, body, {
+      fallbackMessage: 'Analytics read failed',
+      fallbackCode: 'analytics_error',
     });
   }
 
