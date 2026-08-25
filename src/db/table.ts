@@ -27,6 +27,7 @@ import {
   deserializeRow,
 } from './sql.js';
 import type { Predicate, PredicateBindings, Accessor, PushInput, UpdateInput, SystemFields, TableConfig } from './types.js';
+import type { AggregateSelect, AggregateRow } from './aggregate.js';
 
 export class Table<T> {
   /** @internal */
@@ -110,7 +111,64 @@ export class Table<T> {
     return this.sortBy(accessor as Accessor<T>).reverse().first();
   }
 
-  /** Group rows by a field. Returns a Map. */
+  /**
+   * Sum of a numeric field across all rows (0 for an empty table).
+   * Runs as a SQL aggregate — no rows are fetched. Chain from filter()
+   * to sum a subset: `Orders.filter(...).sum(o => o.amount)`.
+   */
+  sum(accessor: Accessor<T, number | null | undefined>): Query<T, number> {
+    return this.toArray().sum(accessor);
+  }
+
+  /**
+   * Average of a numeric field across all rows (null for an empty table).
+   * Runs as a SQL aggregate — no rows are fetched.
+   */
+  avg(
+    accessor: Accessor<T, number | null | undefined>,
+  ): Query<T, number | null> {
+    return this.toArray().avg(accessor);
+  }
+
+  /**
+   * Number of distinct non-null values of a field across all rows.
+   * Runs as a SQL aggregate — no rows are fetched.
+   */
+  countDistinct(accessor: Accessor<T>): Query<T, number> {
+    return this.toArray().countDistinct(accessor);
+  }
+
+  /**
+   * Grouped (or whole-table) aggregation compiling to a single SQL
+   * statement — see Query.aggregate() for the spec shape and examples.
+   */
+  aggregate<S extends AggregateSelect<T>>(spec: {
+    select: S;
+  }): Query<T, AggregateRow<T, S>>;
+  aggregate<
+    const By extends readonly (keyof T & string)[],
+    S extends AggregateSelect<T>,
+  >(spec: {
+    by: By;
+    select: S;
+    orderBy?: (keyof S & string) | By[number];
+    desc?: boolean;
+    limit?: number;
+  }): Query<T, Array<Pick<T, By[number]> & AggregateRow<T, S>>>;
+  aggregate(spec: {
+    by?: readonly string[];
+    select: AggregateSelect<T>;
+    orderBy?: string;
+    desc?: boolean;
+    limit?: number;
+  }): Query<T, unknown> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return this.toArray().aggregate(spec as any) as Query<T, unknown>;
+  }
+
+  /** Group rows by a field. Returns a Map of FULL rows per group — it
+   * fetches everything. For grouped counts/sums/averages over tables that
+   * can grow large, use `aggregate()` instead (SQL GROUP BY, no row fetch). */
   groupBy<K extends string | number>(
     accessor: Accessor<T, K>,
   ): Query<T, Map<K, T[]>> {

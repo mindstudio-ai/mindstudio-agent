@@ -1798,6 +1798,72 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('```');
   lines.push('');
 
+  // db — hand-written for the same reason as `files`/`dataSources`: codegen
+  // only auto-documents *steps* from the OpenAPI spec, so a client-side
+  // namespace is invisible to `mindstudio ask` / sdkConsultant unless it is
+  // written here. When aggregation was missing, the consultant truthfully
+  // reported it "doesn't exist" and a real app paged 121k rows into JS.
+  lines.push('#### `db` — typed tables over the app\'s managed SQLite');
+  lines.push('');
+  lines.push(
+    "Chainable, typed collection API over the app's managed databases. Define a table at module scope; every read/write is lazy until awaited, and reads/writes can be batched into one round trip with `db.batch()`.",
+  );
+  lines.push('```typescript');
+  lines.push("import { db } from '@mindstudio-ai/agent';");
+  lines.push('');
+  lines.push("export const Orders = db.defineTable<Order>('orders');");
+  lines.push('');
+  lines.push('// Reads — filters compile to SQL WHERE when possible');
+  lines.push(
+    "const recent = await Orders.filter(o => o.status === 'paid').sortBy(o => o.created_at).reverse().take(20);",
+  );
+  lines.push(
+    '// Comparing to an outer-scope value? Use the bindings form so it compiles to SQL:',
+  );
+  lines.push(
+    'const mine = await Orders.filter((o, $) => o.requestedBy === $.uid, { uid: auth.userId }); // bindings: lifts closure var so filter compiles to SQL',
+  );
+  lines.push('');
+  lines.push('// Writes');
+  lines.push(
+    "const order = await Orders.push({ item: 'Laptop', amount: 999, status: 'pending' });",
+  );
+  lines.push("await Orders.update(order.id, { status: 'approved' });");
+  lines.push('```');
+  lines.push('');
+  lines.push(
+    'Aggregation — `count()`, `sum(fn)`, `avg(fn)`, `countDistinct(fn)`, and `aggregate(spec)` compile to SQL aggregates (COUNT/TOTAL/AVG/GROUP BY); no rows are fetched, so they stay cheap at any table size. Never page a whole table into memory to compute a summary.',
+  );
+  lines.push('```typescript');
+  lines.push('const top = await Answers');
+  lines.push(
+    '  .filter((a, $) => a.surveyId === $.surveyId, { surveyId }) // bindings: compiles to SQL',
+  );
+  lines.push('  .aggregate({');
+  lines.push("    by: ['questionId', 'dimension'],");
+  lines.push(
+    "    select: { n: { count: true }, total: { sum: 'score' }, avgScore: { avg: 'score' }, respondents: { countDistinct: 'responseId' } },",
+  );
+  lines.push("    orderBy: 'total', desc: true, limit: 20,");
+  lines.push('  });');
+  lines.push(
+    '// Array<{ questionId, dimension, n: number, total: number, avgScore: number | null, respondents: number }>',
+  );
+  lines.push('```');
+  lines.push(
+    'Select terms: `{ count: true }` · `{ sum: \'col\' }` · `{ avg: \'col\' }` · `{ min: \'col\' }` · `{ max: \'col\' }` · `{ countDistinct: \'col\' }` (string column names). Omit `by` for whole-set aggregates (single object). Empty set: count/countDistinct 0, sum 0, avg/min/max null.',
+  );
+  lines.push('');
+  lines.push(
+    "Raw SQL escape hatch — `db.sql<T>(query, params?, { database? })` runs read-only raw SQL (joins, subqueries, window functions) against the app's own managed database. SELECT/WITH only; writes throw — use Table methods. Lazy and batchable. Last resort: prefer the typed API (including `aggregate()`) whenever it can express the query; raw rows may not exactly match the typed API's value representations.",
+  );
+  lines.push('```typescript');
+  lines.push(
+    "const rows = await db.sql<{ questionId: string; n: number }>('SELECT questionId, COUNT(*) AS n FROM answers WHERE surveyId = ? GROUP BY questionId', [surveyId]);",
+  );
+  lines.push('```');
+  lines.push('');
+
   // dataSources — hand-written for the same reason as `files`: codegen only
   // auto-documents *steps* from the OpenAPI spec, so a client-side namespace is
   // invisible to `mindstudio ask` / sdkConsultant unless it is written here.

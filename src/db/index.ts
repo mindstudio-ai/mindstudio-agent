@@ -51,7 +51,8 @@ import type { AppDatabase, AppDatabaseColumnSchema, AuthTableConfig, User } from
 import { Table } from './table.js';
 import { Query } from './query.js';
 import { Mutation } from './mutation.js';
-import { USER_PREFIX } from './sql.js';
+import { RawQuery } from './raw.js';
+import { USER_PREFIX, serializeParam } from './sql.js';
 import type { TableConfig, SqlQuery, SqlResult, SystemColumns, SystemFields } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -111,10 +112,17 @@ export interface DefineTableOptions<T = unknown> {
   defaults?: Partial<Omit<T, SystemFields>>;
 }
 
-// Re-export Table, Query, Mutation, and types for consumers
+// Re-export Table, Query, Mutation, RawQuery, and types for consumers
 export { Table } from './table.js';
 export { Query } from './query.js';
 export { Mutation } from './mutation.js';
+export { RawQuery } from './raw.js';
+export type { CompiledRawQuery } from './raw.js';
+export type {
+  AggregateSelect,
+  AggregateTerm,
+  AggregateRow,
+} from './aggregate.js';
 export type {
   Predicate,
   Accessor,
@@ -201,6 +209,37 @@ export interface Db {
    */
   userRef(id: string): User;
 
+  // --- Raw SQL (read-only) ---
+
+  /**
+   * Run a raw read-only SQL statement against the app's managed database —
+   * the escape hatch for joins, subqueries, and anything the typed Table
+   * API can't express. SELECT/WITH only; writes are rejected — use Table
+   * methods (push/update/upsert/remove) for writes.
+   *
+   * Positional `?` bind params. Lazy and batchable: await it directly, or
+   * pass it to `db.batch()` alongside Query/Mutation objects.
+   *
+   * Multi-database apps: pass `{ database }` (name or ID); single-database
+   * apps resolve automatically.
+   *
+   * Note: raw rows come back close to how SQLite stores them and may not
+   * exactly match the typed table API's representations.
+   *
+   * @example
+   * ```ts
+   * const rows = await db.sql<{ questionId: string; n: number }>(
+   *   'SELECT questionId, COUNT(*) AS n FROM answers WHERE surveyId = ? GROUP BY questionId',
+   *   [surveyId],
+   * );
+   * ```
+   */
+  sql<T = Record<string, unknown>>(
+    query: string,
+    params?: unknown[],
+    options?: { database?: string },
+  ): RawQuery<T[]>;
+
   // --- Batch execution ---
 
   /**
@@ -236,13 +275,13 @@ export interface Db {
 }
 
 /**
- * An operation `db.batch()` can bundle: an un-awaited Query (read) or
- * Mutation (write). The batch executor compiles these to SQL — a plain
- * Promise carries no SQL and cannot be batched, which is why this is not
- * `PromiseLike`.
+ * An operation `db.batch()` can bundle: an un-awaited Query (read),
+ * Mutation (write), or RawQuery (db.sql). The batch executor compiles
+ * these to SQL — a plain Promise carries no SQL and cannot be batched,
+ * which is why this is not `PromiseLike`.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type Batchable<A> = Query<any, A> | Mutation<A>;
+export type Batchable<A> = Query<any, A> | Mutation<A> | RawQuery<A>;
 
 // ---------------------------------------------------------------------------
 // Factory — creates a Db instance from app context
@@ -303,6 +342,22 @@ export function createDb(
     userRef: (id: string): User =>
       id.startsWith(USER_PREFIX) ? id.slice(USER_PREFIX.length) : id,
 
+    // --- Raw SQL (read-only) ---
+
+    sql<T = Record<string, unknown>>(
+      query: string,
+      params?: unknown[],
+      options?: { database?: string },
+    ): RawQuery<T[]> {
+      validateRawSql(query);
+      const database = resolveDatabase(databases, options?.database);
+      return new RawQuery<T[]>(
+        database.id,
+        (queries: SqlQuery[]) => executeBatch(database.id, queries),
+        { sql: query, params: params?.map(serializeParam) },
+      );
+    },
+
     // --- Batch execution ---
 
     batch: ((...operations: Batchable<unknown>[]) => {
@@ -310,7 +365,8 @@ export function createDb(
       // Compile each operation into SQL
       type CompiledOp =
         | ReturnType<InstanceType<typeof Query<unknown>>['_compile']>
-        | ReturnType<InstanceType<typeof Mutation<unknown>>['_compile']>;
+        | ReturnType<InstanceType<typeof Mutation<unknown>>['_compile']>
+        | ReturnType<InstanceType<typeof RawQuery<unknown>>['_compile']>;
 
       const compiled: CompiledOp[] = operations.map((op) => {
         if (op instanceof Query) {
@@ -319,8 +375,11 @@ export function createDb(
         if (op instanceof Mutation) {
           return (op as InstanceType<typeof Mutation<unknown>>)._compile();
         }
+        if (op instanceof RawQuery) {
+          return (op as InstanceType<typeof RawQuery<unknown>>)._compile();
+        }
         throw new MindStudioError(
-          'db.batch() only accepts Query and Mutation objects (from .filter(), .update(), .push(), etc.)',
+          'db.batch() only accepts Query, Mutation, and RawQuery objects (from .filter(), .update(), .push(), db.sql(), etc.)',
           'invalid_batch_operation',
           400,
         );
@@ -343,6 +402,8 @@ export function createDb(
         if (c.type === 'query') {
           const sqlQuery = c.query ?? c.fallbackQuery!;
           groups.get(dbId)!.push({ opIndex: i, sqlQueries: [sqlQuery] });
+        } else if (c.type === 'raw') {
+          groups.get(dbId)!.push({ opIndex: i, sqlQueries: [c.query] });
         } else {
           groups.get(dbId)!.push({ opIndex: i, sqlQueries: c.queries });
         }
@@ -387,6 +448,8 @@ export function createDb(
             );
           }
           return Query._processResults(results[0], c);
+        } else if (c.type === 'raw') {
+          return RawQuery._processResults(results[0], c);
         } else {
           return Mutation._processResults(results, c);
         }
@@ -397,8 +460,82 @@ export function createDb(
 }
 
 // ---------------------------------------------------------------------------
-// Table resolution — finds the database + schema for a table name
+// Database + table resolution from app context metadata
 // ---------------------------------------------------------------------------
+
+/**
+ * Validate a `db.sql()` statement: non-empty, and read-only. The gate is
+ * advisory — it catches accidents, not adversaries (method authors already
+ * control the SQL strings the typed API compiles, so the trust model is
+ * unchanged). Writes belong on Table methods, which enforce managed-column
+ * rules and role sync.
+ *
+ * @internal Shared by createDb() and the client's lazy Db proxy.
+ */
+export function validateRawSql(query: string): void {
+  if (typeof query !== 'string' || !query.trim()) {
+    throw new MindStudioError(
+      'db.sql() requires a non-empty SQL string.',
+      'invalid_sql',
+      400,
+    );
+  }
+  if (!/^\s*(select|with)\b/i.test(query)) {
+    throw new MindStudioError(
+      'db.sql() is read-only — the statement must start with SELECT or WITH. Use Table methods (push/update/upsert/remove) for writes.',
+      'sql_read_only',
+      400,
+    );
+  }
+}
+
+/**
+ * Resolve a database from app context metadata — by name or ID when a hint
+ * is given, implicitly when the app has exactly one database. Used by
+ * `db.sql()` directly and by `resolveTable`'s hint branch; unlike table
+ * resolution there is no table name to disambiguate with, so multiple
+ * databases without a hint is an error.
+ *
+ * @internal Also used by the client's lazy Db proxy at execution time.
+ */
+export function resolveDatabase(
+  databases: AppDatabase[],
+  hint?: string,
+): AppDatabase {
+  if (databases.length === 0) {
+    throw new MindStudioError(
+      `No databases found in app context. Make sure the app has at least one database configured.`,
+      'no_databases',
+      400,
+    );
+  }
+
+  if (hint) {
+    const targetDb = databases.find(
+      (db) => db.id === hint || db.name === hint,
+    );
+    if (!targetDb) {
+      const available = databases.map((db) => db.name || db.id).join(', ');
+      throw new MindStudioError(
+        `Database "${hint}" not found. Available databases: ${available}`,
+        'database_not_found',
+        400,
+      );
+    }
+    return targetDb;
+  }
+
+  if (databases.length > 1) {
+    const available = databases.map((db) => db.name || db.id).join(', ');
+    throw new MindStudioError(
+      `This app has multiple databases — pass { database } to pick one. Available databases: ${available}`,
+      'ambiguous_database',
+      400,
+    );
+  }
+
+  return databases[0];
+}
 
 interface ResolvedTable {
   databaseId: string;
@@ -435,17 +572,7 @@ function resolveTable(
 
   // If a database hint is provided, narrow to that specific database
   if (databaseHint) {
-    const targetDb = databases.find(
-      (db) => db.id === databaseHint || db.name === databaseHint,
-    );
-    if (!targetDb) {
-      const available = databases.map((db) => db.name || db.id).join(', ');
-      throw new MindStudioError(
-        `Database "${databaseHint}" not found. Available databases: ${available}`,
-        'database_not_found',
-        400,
-      );
-    }
+    const targetDb = resolveDatabase(databases, databaseHint);
 
     const table = targetDb.tables.find((t) => t.name === tableName);
     if (!table) {

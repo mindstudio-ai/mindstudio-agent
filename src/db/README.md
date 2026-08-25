@@ -53,19 +53,32 @@ const recent = await Orders
 // Find one
 const firstPending = await Orders.findOne(o => o.status === 'pending');
 
-// Aggregations
+// Aggregations — these compile to SQL aggregates (COUNT/TOTAL/AVG), so
+// they're cheap on any table size (as long as the predicate compiles to SQL)
 const total = await Orders.count();
 const pendingCount = await Orders.count(o => o.status === 'pending');
+const revenue = await Orders.filter(o => o.status === 'paid').sum(o => o.amount);
+const avgAmount = await Orders.avg(o => o.amount);          // null on empty table
+const customers = await Orders.countDistinct(o => o.requestedBy);
 const hasAny = await Orders.some(o => o.status === 'pending');
 const allDone = await Orders.every(o => o.status === 'approved');
 const empty = await Orders.isEmpty();
+
+// Grouped aggregation — compiles to SELECT ... GROUP BY, never fetches rows
+const byStatus = await Orders.aggregate({
+  by: ['status'],
+  select: { n: { count: true }, revenue: { sum: 'amount' } },
+  orderBy: 'revenue', desc: true,
+});
+// [{ status: 'paid', n: 812, revenue: 90210 }, ...]
 
 // Min/max (returns the full row, not just the value)
 const cheapest = await Orders.min(o => o.amount);
 const biggest = await Orders.max(o => o.amount);
 
-// Grouping
-const byStatus = await Orders.groupBy(o => o.status);
+// Grouping into full rows — fetches everything; prefer aggregate() for
+// grouped counts/sums over tables that can grow large
+const grouped = await Orders.groupBy(o => o.status);
 // Map { 'pending' => [...], 'approved' => [...] }
 
 // Pagination
@@ -224,7 +237,7 @@ Orders.filter(pred).take(10)
                                     │
                                     ├─ Success: SQL WHERE clause
                                     │  buildSelect('orders', { where, limit: 10 })
-                                    │  ──► executeStep('queryAppDatabase', { sql })
+                                    │  ──► POST /_internal/v2/db/query
                                     │                                     ──► SQLite
                                     │
                                     └─ Failure: JS fallback
@@ -298,6 +311,56 @@ Both paths produce **identical results**. The fallback logs a warning so you can
 
 For most apps (hundreds to low thousands of rows), the fallback is fast enough.
 
+## Aggregation
+
+`count()`, `sum()`, `avg()`, `countDistinct()`, and `aggregate()` compile to SQL aggregate statements — no rows are fetched, so they stay cheap at any table size. When a predicate (or a scalar accessor like `o => o.a + o.b`) can't compile to SQL, they fall back to fetching the matching rows and computing in JS, with the usual warning — identical results either way.
+
+Empty-set / NULL semantics (identical on both paths; all aggregates skip NULL values):
+
+| Operation | SQL | Empty set / all-NULL | Result type |
+|---|---|---|---|
+| `count()` / `{ count: true }` | `COUNT(*)` | `0` | `number` |
+| `sum(f)` / `{ sum: 'col' }` | `TOTAL(col)` | `0` (never NULL) | `number` |
+| `avg(f)` / `{ avg: 'col' }` | `AVG(col)` | `null` | `number \| null` |
+| `countDistinct(f)` / `{ countDistinct: 'col' }` | `COUNT(DISTINCT col)` | `0` | `number` |
+| `{ min: 'col' }` / `{ max: 'col' }` (in select) | `MIN/MAX(col)` | `null` | `T['col'] \| null` |
+
+`aggregate()` takes string column names (`by: ['questionId']`, `{ sum: 'score' }`) and returns plain objects — group keys plus one property per select alias. Multi-column group-by, `orderBy` on an alias or group key, `desc`, and `limit` (top-N groups) all compile into the single statement:
+
+```ts
+const top = await Answers
+  .filter((a, $) => a.surveyId === $.surveyId, { surveyId })
+  .aggregate({
+    by: ['questionId', 'dimension'],
+    select: {
+      n: { count: true },
+      total: { sum: 'score' },
+      avgScore: { avg: 'score' },
+      respondents: { countDistinct: 'responseId' },
+    },
+    orderBy: 'total', desc: true, limit: 20,
+  });
+// Array<{ questionId: string; dimension: string; n: number;
+//         total: number; avgScore: number | null; respondents: number }>
+```
+
+Omit `by` for several aggregates over the whole (filtered) set in one statement — the result is a single object rather than an array.
+
+Page semantics: an aggregate after `take()`/`skip()` (e.g. `Orders.take(100).sum(o => o.amount)`) aggregates *the page*, which SQL aggregates can't express — that shape fetches the page and computes in JS.
+
+## Raw SQL — `db.sql()`
+
+The escape hatch for reads the typed API can't express — joins, subqueries, window functions. **Read-only**: the statement must start with `SELECT` or `WITH`; anything else throws. Use Table methods for writes (they enforce managed-column rules and role sync).
+
+```ts
+const rows = await db.sql<{ questionId: string; n: number }>(
+  'SELECT questionId, COUNT(*) AS n FROM answers WHERE surveyId = ? GROUP BY questionId',
+  [surveyId],
+);
+```
+
+Positional `?` bind params. Lazy and batchable — pass it to `db.batch()` alongside typed reads and writes. Multi-database apps pass `{ database: 'name' }` as the third argument. Note: raw rows come back close to how SQLite stores them and may not exactly match the typed table API's representations — prefer the typed API (including `aggregate()`) whenever it can express the query.
+
 ### Bindings — comparing to outer-scope values
 
 Predicates that reference a closure variable (`o.companyId === input.companyId`) cannot be compiled to SQL — JavaScript doesn't expose closure scopes from outside the function. By default, those predicates fall back to JS and scan the whole table.
@@ -364,9 +427,13 @@ All read methods return `Query` objects. Nothing executes until you `await` the 
 | `some(pred)` | `boolean` | True if any row matches |
 | `every(pred)` | `boolean` | True if all rows match (not batchable) |
 | `isEmpty()` | `boolean` | True if table has zero rows (not batchable) |
+| `sum(fn)` | `number` | Sum of a numeric field (SQL aggregate; 0 on empty) |
+| `avg(fn)` | `number \| null` | Average of a numeric field (SQL aggregate; null on empty) |
+| `countDistinct(fn)` | `number` | Distinct non-null values of a field (SQL aggregate) |
+| `aggregate(spec)` | object or array | Grouped/whole-table aggregation (SQL GROUP BY) — see Aggregation |
 | `min(fn)` | `T \| null` | Row with minimum value for field |
 | `max(fn)` | `T \| null` | Row with maximum value for field |
-| `groupBy(fn)` | `Map<K, T[]>` | Group rows by field |
+| `groupBy(fn)` | `Map<K, T[]>` | Group FULL rows by field (fetches everything — prefer `aggregate()` for summaries) |
 | `filter(pred)` | `T[]` | Filter rows, returns chainable Query |
 | `sortBy(fn)` | `T[]` | Sort rows, returns chainable Query |
 
@@ -392,6 +459,10 @@ Terminal methods return a Query with a post-processing transform. They're still 
 | `.first()` | `T \| null` | First matching row (batchable) |
 | `.last()` | `T \| null` | Last matching row (batchable) |
 | `.count()` | `number` | Count of matching rows (batchable) |
+| `.sum(fn)` | `number` | Sum of a numeric field (batchable) |
+| `.avg(fn)` | `number \| null` | Average of a numeric field (batchable) |
+| `.countDistinct(fn)` | `number` | Distinct non-null values (batchable) |
+| `.aggregate(spec)` | object or array | Grouped aggregation — see Aggregation (batchable) |
 | `.some()` | `boolean` | True if any row matches (batchable) |
 | `.every()` | `boolean` | True if all rows match (not batchable) |
 | `.min(fn)` | `T \| null` | Row with minimum value (batchable) |
@@ -529,10 +600,12 @@ The managed column config comes from the platform's execution context (`globalTh
 
 | File | Purpose |
 |------|---------|
-| `index.ts` | `createDb()` factory, `Db` interface, `db.batch()`, time helpers, table name → database resolution |
+| `index.ts` | `createDb()` factory, `Db` interface, `db.batch()`, `db.sql()`, time helpers, table/database resolution |
 | `table.ts` | `Table<T>` class — the full read/write collection API |
-| `query.ts` | `Query<T>` class — lazy chainable read builder, SQL/JS dual execution |
+| `query.ts` | `Query<T>` class — lazy chainable read builder, SQL/JS dual execution, aggregate fast path |
 | `mutation.ts` | `Mutation<T>` class — lazy write operation, batchable via `db.batch()` |
+| `raw.ts` | `RawQuery` class — lazy read-only raw SQL (`db.sql()`), batchable |
+| `aggregate.ts` | Aggregation spec types, validation, JS-fallback computation |
 | `predicate.ts` | Predicate compiler — tokenizer + recursive descent → SQL WHERE |
-| `sql.ts` | SQL string builders, value escaping, row deserialization |
+| `sql.ts` | SQL string builders (incl. aggregates), value escaping, row deserialization |
 | `types.ts` | Internal types (Predicate, Accessor, TableConfig, SystemFields, etc.) |
