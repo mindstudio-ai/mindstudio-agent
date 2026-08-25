@@ -28,12 +28,16 @@ export type {
   DefineTableOptions,
   Table,
   Query,
+  RawQuery,
   Batchable,
   Predicate,
   Accessor,
   PushInput,
   UpdateInput,
   SystemFields,
+  AggregateSelect,
+  AggregateTerm,
+  AggregateRow,
 } from './db/index.js';
 export { defineJewel } from './jewel/index.js';
 export type {

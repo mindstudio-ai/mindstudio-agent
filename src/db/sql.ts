@@ -25,6 +25,7 @@
  * code always works with clean UUID strings.
  */
 
+import { MindStudioError } from '../errors.js';
 import type { AppDatabaseColumnSchema } from '../types.js';
 import type { SqlQuery } from './types.js';
 
@@ -175,13 +176,107 @@ export function buildSelect(table: string, options: SelectOptions = {}): SqlQuer
   return { sql, params: params.length > 0 ? params : undefined };
 }
 
+// ---------------------------------------------------------------------------
+// Aggregate builders
+// ---------------------------------------------------------------------------
+
+export type AggregateFn = 'count' | 'sum' | 'avg' | 'min' | 'max' | 'countDistinct';
+
 /**
- * Build a SELECT COUNT(*) query.
+ * Column names and aliases are interpolated into SQL (SQLite bind params
+ * can't parameterize identifiers), so they must be plain identifiers — the
+ * same charset extractFieldName() can produce.
  */
-export function buildCount(table: string, where?: string, whereParams?: unknown[]): SqlQuery {
-  let sql = `SELECT COUNT(*) as count FROM ${table}`;
+const SQL_IDENTIFIER_RE = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
+
+export function assertSqlIdentifier(name: string, context: string): void {
+  if (!SQL_IDENTIFIER_RE.test(name)) {
+    throw new MindStudioError(
+      `Invalid ${context}: "${name}" — must be a plain identifier (letters, digits, _ and $, not starting with a digit).`,
+      'invalid_identifier',
+      400,
+    );
+  }
+}
+
+/**
+ * SQL expression for one aggregate. `sum` uses TOTAL() rather than SUM() so
+ * an empty set yields 0 instead of NULL — matching the JS fallback's reduce.
+ */
+function aggregateExpr(fn: AggregateFn, column?: string): string {
+  switch (fn) {
+    case 'count':
+      return 'COUNT(*)';
+    case 'sum':
+      return `TOTAL(${column})`;
+    case 'avg':
+      return `AVG(${column})`;
+    case 'min':
+      return `MIN(${column})`;
+    case 'max':
+      return `MAX(${column})`;
+    case 'countDistinct':
+      return `COUNT(DISTINCT ${column})`;
+  }
+}
+
+/**
+ * Build a single-value aggregate: SELECT <expr> AS value FROM t [WHERE ...].
+ * Used by count()/sum()/avg()/countDistinct() terminals.
+ */
+export function buildScalarAggregate(
+  table: string,
+  fn: AggregateFn,
+  column: string | null,
+  where?: string,
+  whereParams?: unknown[],
+): SqlQuery {
+  if (column != null) assertSqlIdentifier(column, 'aggregate column');
+  let sql = `SELECT ${aggregateExpr(fn, column ?? undefined)} AS value FROM ${table}`;
   if (where) sql += ` WHERE ${where}`;
   return { sql, params: whereParams?.length ? whereParams : undefined };
+}
+
+/**
+ * Build a grouped aggregate:
+ * SELECT by..., <expr AS alias>... FROM t [WHERE] [GROUP BY by...]
+ * [ORDER BY key [DESC]] [LIMIT n].
+ * With an empty `by`, this is a whole-set multi-aggregate returning one row.
+ */
+export function buildGroupedAggregate(
+  table: string,
+  options: {
+    by: string[];
+    select: { alias: string; fn: AggregateFn; column?: string }[];
+    where?: string;
+    whereParams?: unknown[];
+    orderBy?: string;
+    desc?: boolean;
+    limit?: number;
+  },
+): SqlQuery {
+  for (const col of options.by) assertSqlIdentifier(col, 'group-by column');
+  for (const term of options.select) {
+    assertSqlIdentifier(term.alias, 'aggregate alias');
+    if (term.column != null) assertSqlIdentifier(term.column, 'aggregate column');
+  }
+  if (options.orderBy != null) assertSqlIdentifier(options.orderBy, 'aggregate order key');
+
+  const selectList = [
+    ...options.by,
+    ...options.select.map((t) => `${aggregateExpr(t.fn, t.column)} AS ${t.alias}`),
+  ].join(', ');
+
+  let sql = `SELECT ${selectList} FROM ${table}`;
+  if (options.where) sql += ` WHERE ${options.where}`;
+  if (options.by.length > 0) sql += ` GROUP BY ${options.by.join(', ')}`;
+  if (options.orderBy) sql += ` ORDER BY ${options.orderBy}${options.desc ? ' DESC' : ' ASC'}`;
+  if (options.limit != null) sql += ` LIMIT ${options.limit}`;
+
+  return {
+    sql,
+    params: options.whereParams?.length ? options.whereParams : undefined,
+  };
 }
 
 /**

@@ -36,10 +36,19 @@
 import { compilePredicate } from './predicate.js';
 import {
   buildSelect,
-  buildCount,
   buildExists,
+  buildScalarAggregate,
+  buildGroupedAggregate,
   deserializeRow,
 } from './sql.js';
+import {
+  normalizeAggregateSpec,
+  computeAggregateInJs,
+  deserializeAggregateRows,
+  type AggregateSelect,
+  type AggregateRow,
+  type NormalizedAggregateSpec,
+} from './aggregate.js';
 import type {
   Predicate,
   PredicateBindings,
@@ -50,6 +59,21 @@ import type {
   SqlQuery,
   SqlResult,
 } from './types.js';
+
+// ---------------------------------------------------------------------------
+// Aggregate state — set by the aggregate terminals (count, sum, avg,
+// countDistinct, aggregate). When present and the chain compiles to SQL,
+// execution runs a single aggregate statement instead of fetching rows;
+// the terminal's postProcess remains the JS-fallback path.
+// ---------------------------------------------------------------------------
+
+type AggregateState<T> =
+  | {
+      kind: 'scalar';
+      fn: 'count' | 'sum' | 'avg' | 'countDistinct';
+      accessor?: Accessor<T>;
+    }
+  | { kind: 'grouped'; spec: NormalizedAggregateSpec };
 
 // ---------------------------------------------------------------------------
 // Query class
@@ -65,6 +89,8 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
   /** @internal Pre-compiled WHERE clause (bypasses predicate compiler). Used by Table.get(). */
   private readonly _rawWhere: string | undefined;
   private readonly _rawWhereParams: unknown[] | undefined;
+  /** @internal See AggregateState — set by aggregate terminals. */
+  private readonly _aggregate: AggregateState<T> | undefined;
   /** @internal Post-process transform applied after row deserialization. */
   readonly _postProcess: ((rows: T[]) => TResult) | undefined;
 
@@ -79,6 +105,7 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
       postProcess?: (rows: T[]) => TResult;
       rawWhere?: string;
       rawWhereParams?: unknown[];
+      aggregate?: AggregateState<T>;
     },
   ) {
     this._config = config;
@@ -90,6 +117,7 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
     this._postProcess = options?.postProcess;
     this._rawWhere = options?.rawWhere;
     this._rawWhereParams = options?.rawWhereParams;
+    this._aggregate = options?.aggregate;
   }
 
   private _clone(overrides: {
@@ -99,6 +127,7 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
     limit?: number;
     offset?: number;
     postProcess?: (rows: T[]) => unknown;
+    aggregate?: AggregateState<T>;
   }): Query<T> {
     return new Query<T>(this._config, {
       predicates: overrides.predicates ?? this._predicates,
@@ -109,6 +138,7 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
       postProcess: overrides.postProcess as ((rows: T[]) => T[]) | undefined,
       rawWhere: this._rawWhere,
       rawWhereParams: this._rawWhereParams,
+      aggregate: overrides.aggregate ?? this._aggregate,
     });
   }
 
@@ -163,9 +193,131 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
   }
 
   count(): Query<T, number> {
+    // The aggregate state compiles to SELECT COUNT(*) when the predicates
+    // compile to SQL; postProcess is the JS-fallback path (fetch matching
+    // rows, count client-side). Same shape for sum/avg/countDistinct below.
     return this._clone({
+      aggregate: { kind: 'scalar', fn: 'count' },
       postProcess: (rows: T[]) => rows.length,
     }) as unknown as Query<T, number>;
+  }
+
+  /**
+   * Sum of a numeric field across matching rows. Compiles to a SQL
+   * aggregate (TOTAL) when possible — no rows are fetched. Returns 0 for
+   * an empty set; NULL values are skipped (SQL semantics).
+   */
+  sum(accessor: Accessor<T, number | null | undefined>): Query<T, number> {
+    return this._clone({
+      aggregate: { kind: 'scalar', fn: 'sum', accessor: accessor as Accessor<T> },
+      postProcess: (rows: T[]) =>
+        rows.reduce((total: number, row) => {
+          const value = accessor(row);
+          return value == null ? total : total + value;
+        }, 0),
+    }) as unknown as Query<T, number>;
+  }
+
+  /**
+   * Average of a numeric field across matching rows. Compiles to SQL AVG
+   * when possible. Returns null for an empty set (or when every value is
+   * null) — SQL AVG semantics.
+   */
+  avg(
+    accessor: Accessor<T, number | null | undefined>,
+  ): Query<T, number | null> {
+    return this._clone({
+      aggregate: { kind: 'scalar', fn: 'avg', accessor: accessor as Accessor<T> },
+      postProcess: (rows: T[]) => {
+        const values = rows
+          .map((row) => accessor(row))
+          .filter((v): v is number => v != null);
+        return values.length === 0
+          ? null
+          : values.reduce((s, v) => s + v, 0) / values.length;
+      },
+    }) as unknown as Query<T, number | null>;
+  }
+
+  /**
+   * Number of distinct non-null values of a field across matching rows.
+   * Compiles to SQL COUNT(DISTINCT col) when possible.
+   */
+  countDistinct(accessor: Accessor<T>): Query<T, number> {
+    return this._clone({
+      aggregate: { kind: 'scalar', fn: 'countDistinct', accessor },
+      postProcess: (rows: T[]) =>
+        new Set(rows.map((row) => accessor(row)).filter((v) => v != null))
+          .size,
+    }) as unknown as Query<T, number>;
+  }
+
+  /**
+   * Multiple aggregates over all matching rows — a single result object.
+   * Compiles to one SQL aggregate statement; no rows are fetched.
+   *
+   * ```ts
+   * const stats = await Orders
+   *   .filter(o => o.status === 'paid')
+   *   .aggregate({ select: { n: { count: true }, revenue: { sum: 'amount' } } });
+   * // { n: number; revenue: number }
+   * ```
+   */
+  aggregate<S extends AggregateSelect<T>>(spec: {
+    select: S;
+  }): Query<T, AggregateRow<T, S>>;
+  /**
+   * Grouped aggregation — compiles to SELECT ... GROUP BY; never fetches
+   * rows (when the filter compiles to SQL). Returns one plain object per
+   * group: the group-key columns plus one property per select alias.
+   * `orderBy` names a select alias or group key; with `desc` + `limit`
+   * this expresses top-N groups in a single statement.
+   *
+   * ```ts
+   * const top = await Answers
+   *   .filter((a, $) => a.surveyId === $.surveyId, { surveyId })
+   *   .aggregate({
+   *     by: ['questionId'],
+   *     select: {
+   *       n: { count: true },
+   *       avgScore: { avg: 'score' },
+   *       respondents: { countDistinct: 'responseId' },
+   *     },
+   *     orderBy: 'n',
+   *     desc: true,
+   *     limit: 20,
+   *   });
+   * // Array<{ questionId: string; n: number; avgScore: number | null; respondents: number }>
+   * ```
+   */
+  aggregate<
+    const By extends readonly (keyof T & string)[],
+    S extends AggregateSelect<T>,
+  >(spec: {
+    by: By;
+    select: S;
+    orderBy?: (keyof S & string) | By[number];
+    desc?: boolean;
+    limit?: number;
+  }): Query<T, Array<Pick<T, By[number]> & AggregateRow<T, S>>>;
+  aggregate(spec: {
+    by?: readonly string[];
+    select: AggregateSelect<T>;
+    orderBy?: string;
+    desc?: boolean;
+    limit?: number;
+  }): Query<T, unknown> {
+    const normalized = normalizeAggregateSpec(
+      spec as Parameters<typeof normalizeAggregateSpec>[0],
+    );
+    return this._clone({
+      aggregate: { kind: 'grouped', spec: normalized },
+      postProcess: (rows: T[]) =>
+        computeAggregateInJs(
+          rows as Record<string, unknown>[],
+          normalized,
+        ),
+    }) as unknown as Query<T, unknown>;
   }
 
   some(): Query<T, boolean> {
@@ -254,6 +406,10 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
       : undefined;
 
     if (compiled.allSql) {
+      const agg = this._compileAggregateSql(compiled.sqlWhere);
+      if (agg) {
+        return { type: 'query', query: agg.query, fallbackQuery: null, config: this._config, processRaw: agg.processRaw };
+      }
       const query = buildSelect(this._config.tableName, {
         where: compiled.sqlWhere || undefined,
         orderBy: sortField ?? undefined,
@@ -291,6 +447,13 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
     result: SqlResult,
     compiled: CompiledQuery<T, R>,
   ): R {
+    // Aggregate fast path — the result rows ARE the answer (aggregate
+    // values, not table rows): the compiled processor reads them directly,
+    // bypassing row deserialization and postProcess.
+    if (compiled.processRaw) {
+      return compiled.processRaw(result);
+    }
+
     const rows = result.rows.map(
       (row) =>
         deserializeRow(
@@ -338,10 +501,99 @@ export class Query<T, TResult = T[]> implements PromiseLike<TResult> {
     onfulfilled?: ((value: TResult) => TResult1 | PromiseLike<TResult1>) | null,
     onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
   ): Promise<TResult1 | TResult2> {
-    const promise = this._execute().then(
-      (rows) => (this._postProcess ? this._postProcess(rows) : rows) as TResult,
-    );
-    return promise.then(onfulfilled, onrejected);
+    return this._run().then(onfulfilled, onrejected);
+  }
+
+  private async _run(): Promise<TResult> {
+    // Aggregate fast path — mirrors the processRaw branch in _compile()/
+    // _processResults() for the standalone-await case. JS-fallback
+    // predicates (and unextractable accessors) drop through to _execute()
+    // + postProcess, which computes the same result over fetched rows.
+    if (this._aggregate && !this._rawWhere) {
+      const compiled = this._compilePredicates();
+      if (compiled.allSql) {
+        const agg = this._compileAggregateSql(compiled.sqlWhere);
+        if (agg) {
+          const results = await this._config.executeBatch([agg.query]);
+          return agg.processRaw(results[0]);
+        }
+      }
+    }
+    const rows = await this._execute();
+    return (this._postProcess ? this._postProcess(rows) : rows) as TResult;
+  }
+
+  /**
+   * @internal Compile the pending aggregate into a single SQL statement +
+   * result processor. Returns null (→ fetch path, postProcess computes the
+   * aggregate) when there is no aggregate, when a pre-compiled WHERE is in
+   * play (Table.get()), when limit/offset are set (aggregate-the-page
+   * semantics — COUNT(*)/TOTAL can't express "over the limited page"), or
+   * when a scalar accessor doesn't extract to a column (computed accessors
+   * stay correct via JS, with a warning to prompt optimization).
+   */
+  private _compileAggregateSql(
+    sqlWhere: string,
+  ): { query: SqlQuery; processRaw: (result: SqlResult) => TResult } | null {
+    const agg = this._aggregate;
+    if (
+      !agg ||
+      this._rawWhere ||
+      this._limit != null ||
+      this._offset != null
+    ) {
+      return null;
+    }
+    const where = sqlWhere || undefined;
+
+    if (agg.kind === 'scalar') {
+      let column: string | null = null;
+      if (agg.accessor) {
+        column = extractFieldName(agg.accessor);
+        if (column == null) {
+          console.warn(
+            `[mindstudio] ${agg.fn}() accessor on '${this._config.tableName}' could not be compiled to SQL — fetching matching rows and computing in JS`,
+          );
+          return null;
+        }
+      }
+      const query = buildScalarAggregate(
+        this._config.tableName,
+        agg.fn,
+        column,
+        where,
+      );
+      const processRaw = (result: SqlResult): TResult => {
+        const value = (result.rows[0] as { value?: unknown } | undefined)
+          ?.value;
+        if (agg.fn === 'avg') {
+          return (value == null ? null : Number(value)) as TResult;
+        }
+        return Number(value ?? 0) as TResult;
+      };
+      return { query, processRaw };
+    }
+
+    const spec = agg.spec;
+    const query = buildGroupedAggregate(this._config.tableName, {
+      by: spec.by,
+      select: spec.select,
+      where,
+      orderBy: spec.orderBy,
+      desc: spec.desc,
+      limit: spec.limit,
+    });
+    const processRaw = (result: SqlResult): TResult => {
+      const rows = deserializeAggregateRows(
+        result.rows,
+        spec,
+        this._config.columns,
+      );
+      // No group-by → the statement returns exactly one row: the result is
+      // that single object, matching computeAggregateInJs.
+      return (spec.by.length === 0 ? rows[0] : rows) as TResult;
+    };
+    return { query, processRaw };
   }
 
   catch<TResult2 = never>(
@@ -501,6 +753,9 @@ export interface CompiledQuery<T, TResult = T[]> {
   offset?: number;
   /** Post-process transform (e.g. first() extracts [0] ?? null). */
   postProcess?: (rows: T[]) => TResult;
+  /** When set, the SQL result rows ARE the answer (aggregate values, not
+   * table rows): called instead of deserialize + postProcess. */
+  processRaw?: (result: SqlResult) => TResult;
 }
 
 export function extractFieldName<T>(accessor: Accessor<T>): string | null {

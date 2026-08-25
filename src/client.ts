@@ -12,11 +12,15 @@ import { AuthContext } from './auth/index.js';
 import {
   createDb,
   Table,
+  RawQuery,
+  validateRawSql,
+  resolveDatabase,
   type Batchable,
   type Db,
   type DefineTableOptions,
   type TableConfig,
 } from './db/index.js';
+import { serializeParam } from './db/sql.js';
 import { createFiles, type Files } from './files/index.js';
 import type { Store } from './files/store.js';
 import type {
@@ -1958,6 +1962,29 @@ export class MindStudioAgent {
 
       userRef: (id: string) =>
         id.startsWith('@@user@@') ? id.slice('@@user@@'.length) : id,
+
+      // Raw SQL — validate synchronously; database resolution needs context,
+      // so it happens inside the executeBatch closure at execution time
+      // (the same deferral lazy defineTable uses).
+      sql: (<T = Record<string, unknown>>(
+        query: string,
+        params?: unknown[],
+        options?: { database?: string },
+      ) => {
+        validateRawSql(query);
+        return new RawQuery<T[]>(
+          '',
+          async (queries) => {
+            await agent.ensureContext();
+            const database = resolveDatabase(
+              agent._getContext()!.databases,
+              options?.database,
+            );
+            return agent._executeDbBatch(database.id, queries);
+          },
+          { sql: query, params: params?.map(serializeParam) },
+        );
+      }) as Db['sql'],
 
       // Batch needs context — hydrate first, then delegate to real db
       batch: ((...queries: Batchable<unknown>[]) => {

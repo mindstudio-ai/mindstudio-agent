@@ -42,7 +42,13 @@ interface RunTaskOptionsBase {
   input: Record<string, unknown>;
   /** SDK actions and/or app methods to make available as tools. */
   tools: TaskToolConfig[];
-  /** Model ID for the task agent. Must support tool use. */
+  /**
+   * Model ID for the task agent. Must support tool use. Tuned model lines
+   * (`tuned/{appId}/{methodId}`) are supported — that's how a jewel is
+   * promoted onto its own fine-tuned model; tool support depends on the
+   * tuned model's base (qwen bases: yes) and is enforced server-side with a
+   * deterministic error.
+   */
   model: string;
   /** Max loop iterations before forcing final output. Default 20, max 100. */
   maxTurns?: number;
