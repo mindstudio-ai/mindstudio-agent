@@ -1965,6 +1965,55 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
 
+  // The analytics read surface is hand-written for the same reason as db:
+  // the namespace is TypeScript, not step specs, so nothing generates it.
+  lines.push('#### `analytics` — read the app\'s own traffic + event analytics');
+  lines.push('');
+  lines.push(
+    'The platform auto-tracks pageviews (and custom events via the frontend\'s `analytics.track()`); the backend `analytics` namespace is the read side, so app code can correlate real traffic with its own data — lifetime views next to each blog post, "N people reading now", conversions beside the records that produced them. Backend only (hook token); reads the LIVE app\'s real traffic even from a dev sandbox. Rate limited per app (120 reads/min).',
+  );
+  lines.push('');
+  lines.push(
+    'One general read, `query()`, shaped like the Plausible/GA4 query APIs:',
+  );
+  lines.push('');
+  lines.push('```typescript');
+  lines.push("import { analytics } from '@mindstudio-ai/agent';");
+  lines.push('');
+  lines.push('// Lifetime pageviews + unique visitors per page — top 10.');
+  lines.push('const top = await analytics.query({');
+  lines.push("  metrics: ['pageviews', 'visitors'],");
+  lines.push("  dimensions: ['path'],");
+  lines.push("  dateRange: 'all',");
+  lines.push('  limit: 10,');
+  lines.push('});');
+  lines.push(
+    "// top.results[0] → { dimensions: { path: '/post/hello' }, metrics: { pageviews: 4210, visitors: 1830 } }",
+  );
+  lines.push('');
+  lines.push('// Daily views for one post, full history.');
+  lines.push('const series = await analytics.query({');
+  lines.push("  metrics: ['pageviews'],");
+  lines.push("  dimensions: ['time'],");
+  lines.push("  granularity: 'day',");
+  lines.push("  filters: [['is', 'path', ['/post/hello']]],");
+  lines.push("  dateRange: 'all',");
+  lines.push('});');
+  lines.push('```');
+  lines.push('');
+  lines.push(
+    'Grammar: `metrics` from `pageviews | visitors | visits | events`; `dimensions` is at most ONE entity dimension (`path`, `referrerHost`, `sourceCategory`, `country`, `city`, `deviceType`, `browser`, `os`, `language`, `visitorType`, `utmSource`…`utmContent`, `eventName`) OR `\'time\'` (with `granularity: \'5m\'|\'hour\'|\'day\'|\'week\'|\'month\'` and optional IANA `timezone`); `filters` are `[op, dimension, values]` triples with ops `is | is_not | contains`; `dateRange` is a shorthand (`\'1h\'|\'24h\'|\'7d\'|\'30d\'|\'90d\'|\'all\'`) or `[startISO, endISO]`; `orderBy` (grouped only) accepts `pageviews` or `events`. With `dateRange: \'all\'`, granularity is a minimum — the server coarsens as history grows. `city` filter values are plain city names (any country) and always read the 90-day event detail.',
+  );
+  lines.push('');
+  lines.push(
+    '**Retention split — the one thing to get right:** queries whose filters are all `is` and touch at most one dimension read a rollup kept forever (full lifetime history, exact unique visitors). Cross-dimension intersections, `is_not`, and `contains` scan raw events retained for 90 days; the server clamps the window and reports it. Check `meta`: `source` (`rollup` vs `events`), `clamped`, `window.served`, and `metricsOmitted` — metrics a shape can\'t carry (e.g. `visits` on grouped reads) are omitted there, never returned as silent zeros. `meta.total` carries the unpaginated group count for paging.',
+  );
+  lines.push('');
+  lines.push(
+    'Specials (same `dateRange`/filter-triple grammar): `analytics.live()` → `{count, countries, sparkline}` right now; `analytics.sources(opts?)` → per-session first-source ranking (UTM > referrer > direct) classified by category/vendor incl. AI assistants; `analytics.map(opts?)` → city lat/lon points; `analytics.aiSources(opts?)` → AI-assistant referrals per vendor; `analytics.crawlers.overview()/timeseries()/recent()` → bot/AI-crawler ingestion of the app\'s pages.',
+  );
+  lines.push('');
+
   return lines.join('\n');
 }
 

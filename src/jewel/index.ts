@@ -218,8 +218,10 @@ export interface Jewel<M extends JewelMethod, S> {
  * - `disabled` — the method has no jewel or autonomy is `manual`. Returned,
  *   never thrown: dialing a method down must not break the app code that
  *   proposes to it.
- * - `skipped` — dev session, jewel-descended recursion, or unsampled
- *   (sampleRate).
+ * - `skipped` — jewel-descended recursion, unsampled (sampleRate), or a dev
+ *   session whose CLI didn't report jewel metadata. Dev sessions otherwise
+ *   run the full behavioral flow (queue items scoped to the session, auto
+ *   commits against the dev database) without recording any training data.
  * - `failed` — an auto commit was attempted and the method rejected it
  *   (e.g. the state was consumed concurrently). The moment stays pending.
  * - `pending` — a concurrent replay: the original propose for this
