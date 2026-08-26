@@ -29,7 +29,18 @@
  *   filters: [['is', 'path', ['/post/hello']]],
  *   dateRange: 'all',
  * });
+ *
+ * // A whole page in one round trip — prefer this over a parallel burst.
+ * const [kpis, byPage, byCountry] = await analytics.batch([
+ *   { metrics: ['pageviews', 'visits', 'visitors'], dateRange: '30d' },
+ *   { metrics: ['pageviews'], dimensions: ['path'], dateRange: '30d' },
+ *   { metrics: ['visitors'], dimensions: ['country'], dateRange: '30d' },
+ * ]);
  * ```
+ *
+ * Reads are rate limited per app (600/min; each query in a batch counts as
+ * one, and the SDK retries a single 429 automatically). Don't swallow
+ * `rate_limited` errors into empty data — surface them or retry.
  *
  * **How far back a query can look depends on its shape.** Queries whose
  * filters are all `is` and touch at most ONE dimension read a rollup kept
@@ -213,6 +224,15 @@ export interface CrawlerHit {
 export interface Analytics {
   /** The general read: metrics × dimensions × filters × time. */
   query(spec: AnalyticsQuerySpec): Promise<AnalyticsQueryResponse>;
+  /**
+   * Up to 10 queries in one round trip, results in request order — the right
+   * shape for a page composed of several reads (KPIs + timeseries + a few
+   * breakdowns), instead of a parallel burst of `query()` calls competing
+   * with each other against the per-app rate limit. Each query in the batch
+   * counts as one read against the limit. One invalid query fails the whole
+   * batch (the error names its index).
+   */
+  batch(specs: AnalyticsQuerySpec[]): Promise<AnalyticsQueryResponse[]>;
   /** Who's on the app right now (Redis presence, no time window). */
   live(): Promise<LiveNow>;
   /**
@@ -262,6 +282,10 @@ export function createAnalytics(call: AnalyticsTransport): Analytics {
   return {
     query(spec) {
       return call('query', spec);
+    },
+    async batch(specs) {
+      const res = await call('query-batch', { queries: specs });
+      return res.results;
     },
     live() {
       return call('live', {});

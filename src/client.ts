@@ -1729,12 +1729,30 @@ export class MindStudioAgent {
   /**
    * @internal Transport for the `analytics` namespace —
    * POST /_internal/v2/analytics/<op> with the raw hook token.
+   *
+   * Retries a single 429 after a short jittered backoff: analytics reads are
+   * idempotent and a 429 means the read never executed, so one retry lets a
+   * momentary burst (a page's fan-out racing a live poller) self-heal instead
+   * of surfacing as empty data. Deliberately single-shot and scoped to this
+   * namespace — the other brokered transports keep their semantics.
    */
   private async _analyticsRequest(op: string, body: unknown): Promise<any> {
-    return this._brokeredRequest('analytics', op, body, {
-      fallbackMessage: 'Analytics read failed',
-      fallbackCode: 'analytics_error',
-    });
+    const call = () =>
+      this._brokeredRequest('analytics', op, body, {
+        fallbackMessage: 'Analytics read failed',
+        fallbackCode: 'analytics_error',
+      });
+    try {
+      return await call();
+    } catch (err) {
+      if (err instanceof MindStudioError && err.status === 429) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 750 + Math.random() * 750),
+        );
+        return call();
+      }
+      throw err;
+    }
   }
 
   /**
