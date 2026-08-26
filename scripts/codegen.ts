@@ -1970,7 +1970,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('#### `analytics` — read the app\'s own traffic + event analytics');
   lines.push('');
   lines.push(
-    'The platform auto-tracks pageviews (and custom events via the frontend\'s `analytics.track()`); the backend `analytics` namespace is the read side, so app code can correlate real traffic with its own data — lifetime views next to each blog post, "N people reading now", conversions beside the records that produced them. Backend only (hook token); reads the LIVE app\'s real traffic even from a dev sandbox. Rate limited per app (120 reads/min).',
+    'The platform auto-tracks pageviews (and custom events via the frontend\'s `analytics.track()`); the backend `analytics` namespace is the read side, so app code can correlate real traffic with its own data — lifetime views next to each blog post, "N people reading now", conversions beside the records that produced them. Backend only (hook token); reads the LIVE app\'s real traffic even from a dev sandbox. Rate limited per app (600 reads/min; the SDK auto-retries one 429). For pages composed of several reads, use `analytics.batch([spec, ...])` — up to 10 queries in one round trip, one rate token each, results in request order — instead of a parallel burst of `query()` calls competing with each other. NEVER swallow `rate_limited` errors into empty data: a page silently rendering zeros is worse than surfacing a retry state.',
   );
   lines.push('');
   lines.push(
