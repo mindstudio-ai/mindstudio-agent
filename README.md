@@ -377,8 +377,8 @@ Run `mindstudio batch` with no arguments for full usage help.
 ## Task agents
 
 `runTask()` runs a multi-step tool-use loop: the model receives your prompt and a set of tools
-(SDK actions and/or your own app's methods), calls them as needed, and produces structured
-output. Use it when the task needs judgment between steps — research, enrichment, content
+(SDK actions, your own app's methods, and/or inline functions defined at the call site), calls
+them as needed, and produces structured output. Use it when the task needs judgment between steps — research, enrichment, content
 pipelines — rather than a fixed sequence of calls.
 
 Define the output contract with `outputSchema` — plain JSON Schema in the same dialect as a
@@ -395,6 +395,12 @@ const result = await agent.runTask({
     'searchGoogle',
     'fetchUrl',
     { appMethod: 'saveRestaurant', description: 'Persist the researched restaurant.' },
+    {
+      name: 'checkExisting',
+      description: 'Look up whether we already track this restaurant.',
+      inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+      execute: async (input) => Restaurants.findByName(String(input.name)),
+    },
   ],
   outputSchema: {
     type: 'object',
@@ -423,7 +429,10 @@ typed by your generic argument and unvalidated — always check `result.parsedSu
 before using it.
 
 App-method tools run as the user who invoked the method that started the task, with their
-roles. Pass `onEvent` to stream progress (text chunks, tool calls, the final `done` event).
+roles. Inline function tools execute in your own process — a thrown error is fed back to the
+model as `{ error }` tool output to work around, and they take no `defaults` (close over what
+you need instead). Pass `onEvent` to stream progress (text chunks, tool calls, the final
+`done` event).
 
 > `outputSchema` typing uses a `const` type parameter — consuming projects need
 > TypeScript 5.0+.

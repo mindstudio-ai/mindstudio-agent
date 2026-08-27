@@ -436,12 +436,25 @@ export async function runTaskLocal<T = unknown>(
   }
 
   const wireTools = mapTools(options.tools);
-  const toolKinds = new Map<string, 'step' | 'method'>();
+  const toolKinds = new Map<string, 'step' | 'method' | 'function'>();
   const toolDefaults = new Map<string, Record<string, unknown>>();
+  // Inline function tools execute right here — the wire carries only their
+  // definitions, so the executors are kept from the original configs.
+  const functionTools = new Map<
+    string,
+    (input: Record<string, unknown>) => Promise<unknown> | unknown
+  >();
+  for (const t of options.tools) {
+    if (typeof t === 'object' && 'execute' in t) {
+      functionTools.set(t.name, t.execute);
+    }
+  }
   for (const t of wireTools) {
     if ('appMethod' in t) {
       toolKinds.set(t.appMethod, 'method');
       if (t.defaults) toolDefaults.set(t.appMethod, t.defaults);
+    } else if ('name' in t) {
+      toolKinds.set(t.name, 'function');
     } else {
       toolKinds.set(t.stepType, 'step');
       if (t.defaults) toolDefaults.set(t.stepType, t.defaults);
@@ -615,11 +628,35 @@ export async function runTaskLocal<T = unknown>(
           const defaults = toolDefaults.get(toolCall.name) || {};
           const mergedInput = mergeToolInput(toolCall.input, defaults);
 
-          const execute =
-            toolKinds.get(toolCall.name) === 'method'
-              ? deps.executeMethodTool
-              : deps.executeStepTool;
-          const result = await execute(toolCall.name, mergedInput);
+          const kind = toolKinds.get(toolCall.name);
+          let result: ToolExecutionResult;
+          if (kind === 'function') {
+            // Same no-throw contract as the platform executors: a thrown
+            // error becomes tool output for the model to work around.
+            try {
+              const output = await functionTools.get(toolCall.name)!(
+                mergedInput,
+              );
+              result = { output: output ?? null, billingCost: 0, isError: false };
+            } catch (err) {
+              result = {
+                output: {
+                  error:
+                    err instanceof Error
+                      ? err.message
+                      : 'Function tool execution failed',
+                },
+                billingCost: 0,
+                isError: true,
+              };
+            }
+          } else {
+            const execute =
+              kind === 'method'
+                ? deps.executeMethodTool
+                : deps.executeStepTool;
+            result = await execute(toolCall.name, mergedInput);
+          }
 
           toolCallLog.push({
             name: toolCall.name,
