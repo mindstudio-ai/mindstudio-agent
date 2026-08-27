@@ -803,8 +803,12 @@ export class MindStudioAgent {
    * to produce structured output. The model receives the prompt and tools,
    * calls actions as needed, and returns structured JSON.
    *
-   * Tools can be SDK actions, your own app's methods, or both. App methods run
-   * as the user who invoked the method that started the task, with their roles.
+   * Tools can be SDK actions, your own app's methods, and/or inline functions
+   * defined right in your code, in any combination. App methods run as the
+   * user who invoked the method that started the task, with their roles.
+   * Function tools run in this process — a thrown error is fed back to the
+   * model as tool output, and there are no `defaults` (close over what you
+   * need instead).
    *
    * Prefer `outputSchema` (plain JSON Schema, tool-definition dialect):
    * output is validated every turn with automatic repair, `result.output` is
@@ -820,6 +824,12 @@ export class MindStudioAgent {
    *     'searchGoogle',
    *     'fetchUrl',
    *     { appMethod: 'saveRestaurant', description: 'Persist the researched restaurant.' },
+   *     {
+   *       name: 'checkExisting',
+   *       description: 'Look up whether we already track this restaurant.',
+   *       inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+   *       execute: async (input) => Restaurants.findByName(String(input.name)),
+   *     },
    *   ],
    *   outputSchema: {
    *     type: 'object',
@@ -1001,6 +1011,17 @@ export class MindStudioAgent {
         err instanceof MindStudioError &&
         err.code === TURN_UNAVAILABLE_CODE
       ) {
+        // The legacy loop runs server-side and cannot call back into this
+        // process — refuse rather than silently drop the function tools.
+        if (
+          options.tools.some((t) => typeof t === 'object' && 'execute' in t)
+        ) {
+          throw new MindStudioError(
+            '[task] This server does not support the per-turn task endpoint required for function tools.',
+            'task_function_tools_unsupported',
+            404,
+          );
+        }
         const body = buildTaskRequestBody(options);
         const result = options.onEvent
           ? await runTaskStream<T>(httpConfig, body, options.onEvent)

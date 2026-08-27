@@ -15,9 +15,12 @@ import type { JsonObjectSchema } from './schema.js';
  * - `{ method }`: SDK method name with default input overrides.
  * - `{ appMethod }`: one of your own app's methods, called as the invoking
  *   user with their roles.
+ * - `{ name, execute }`: an inline function tool, executed right here in your
+ *   process. No platform dispatch, no billing — just your code.
  *
  * Defaults win over whatever the model passes for the same field, including
  * nested fields — the model decides what to do, you pin how it's done.
+ * Function tools take no defaults: close over what you need instead.
  */
 export type TaskToolConfig =
   | string
@@ -32,6 +35,23 @@ export type TaskToolConfig =
        */
       description?: string;
       defaults?: Record<string, unknown>;
+    }
+  | {
+      /** Tool name the model sees. Letters, digits, `_`, `-`; max 64 chars. */
+      name: string;
+      /** What the tool does and when to reach for it — all the model gets. */
+      description: string;
+      /** JSON Schema for the input (tool-definition dialect). Omitted means
+       *  the tool takes no arguments. */
+      inputSchema?: JsonObjectSchema;
+      /**
+       * Runs in this process when the model calls the tool. A thrown error is
+       * fed back to the model as `{ error }` tool output to work around — it
+       * never fails the task. Note: calling `runTask` from inside a function
+       * tool is not depth-capped (the server cap rides the method's token,
+       * which a function tool reuses) — recursion is yours to bound.
+       */
+      execute: (input: Record<string, unknown>) => Promise<unknown> | unknown;
     };
 
 /** Options shared by both output modes of {@link MindStudioAgent.runTask}. */
@@ -40,7 +60,8 @@ interface RunTaskOptionsBase {
   prompt: string;
   /** Structured input for this task instance. Passed as the user message. */
   input: Record<string, unknown>;
-  /** SDK actions and/or app methods to make available as tools. */
+  /** SDK actions, app methods, and/or inline function tools to make
+   *  available to the model. */
   tools: TaskToolConfig[];
   /**
    * Model ID for the task agent. Must support tool use. Tuned model lines
@@ -161,6 +182,8 @@ export interface TaskRequestBody {
         description?: string;
         defaults?: Record<string, unknown>;
       }
+    // Inline function tool — definition only; `execute` stays in this process.
+    | { name: string; description: string; inputSchema: JsonObjectSchema }
   >;
   structuredOutputExample: string;
   model: string;

@@ -58,6 +58,16 @@ function resolveStepType(name: string): string {
 /** Map developer tool configs to API request format with alias resolution. */
 export function mapTools(tools: TaskToolConfig[]): TaskRequestBody['tools'] {
   return tools.map((t) => {
+    // Function tools send definition only — `execute` stays in this process.
+    // Checked before alias resolution for the same reason as appMethod below.
+    if (typeof t === 'object' && 'execute' in t) {
+      return {
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema ?? { type: 'object', properties: {} },
+      };
+    }
+
     // App methods pass through untouched. `resolveStepType` looks names up in
     // `stepMetadata`, so running an app method id through it would silently
     // rewrite any method that happens to share a name with an SDK alias.
