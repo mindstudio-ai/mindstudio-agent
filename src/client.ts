@@ -32,6 +32,7 @@ import type {
 import { createDataSources, type DataSources } from './datasources/index.js';
 import { createVoice, type Voice } from './voice/index.js';
 import { createAnalytics, type Analytics } from './analytics/index.js';
+import { createEmail, type Email } from './email/index.js';
 import {
   buildTaskRequestBody,
   runTaskPoll,
@@ -155,6 +156,7 @@ export class MindStudioAgent {
   private _dataSources: DataSources | undefined;
   private _voice: Voice | undefined;
   private _analytics: Analytics | undefined;
+  private _email: Email | undefined;
 
   /** @internal Auth type — 'internal' for CALLBACK_TOKEN (managed mode), 'apiKey' otherwise. */
   private _authType: AuthType;
@@ -1599,6 +1601,25 @@ export class MindStudioAgent {
   }
 
   /**
+   * Outbound email: the per-recipient delivery log, blast stats, and this app's
+   * unsubscribe list. Sending is the `sendEmail` action, not this namespace.
+   *
+   * @example
+   * ```ts
+   * import { email } from '@mindstudio-ai/agent';
+   *
+   * // A support lookup: did this person get their mail?
+   * const { messages } = await email.messages({ recipient: 'a@b.com' });
+   *
+   * // How did the August newsletter do?
+   * const blast = await email.batch('newsletter-2026-08');
+   * ```
+   */
+  get email(): Email {
+    return (this._email ??= createEmail(this._emailRequest.bind(this)));
+  }
+
+  /**
    * Jewel surfaces: arrival-shaped triggers (`propose`) and the app-native
    * approval queue (`queue.list` / `queue.resolve`). See {@link JewelsApi}.
    */
@@ -1757,6 +1778,19 @@ export class MindStudioAgent {
    * of surfacing as empty data. Deliberately single-shot and scoped to this
    * namespace — the other brokered transports keep their semantics.
    */
+  /**
+   * Brokered email transport. No 429 retry, unlike analytics: this namespace
+   * carries writes (suppress / unsuppress), and silently retrying a mutation is a
+   * different risk from retrying an idempotent read. A caller that wants one can
+   * retry a read itself.
+   */
+  private async _emailRequest(op: string, body: unknown): Promise<any> {
+    return this._brokeredRequest('email', op, body, {
+      fallbackMessage: 'Email API call failed',
+      fallbackCode: 'email_error',
+    });
+  }
+
   private async _analyticsRequest(op: string, body: unknown): Promise<any> {
     const call = () =>
       this._brokeredRequest('analytics', op, body, {
@@ -1834,15 +1868,17 @@ export class MindStudioAgent {
     databaseId: string,
     queries: { sql: string; params?: unknown[] }[],
   ): Promise<{ rows: unknown[]; changes: number }[]> {
-    // Prefer the persistent DB WebSocket when the sandbox injected DB_WS_URL.
-    // On a WS-transport failure fall back to the fetch below — but only when
-    // the retry is provably safe. A frame that was never sent (open failure,
-    // send throw, payload too big) never executed and always retries. A frame
-    // that WAS sent (socket dropped / reply timed out) may have executed
-    // server-side with only the response lost: re-running it is fine for
-    // reads, but for a batch containing writes it would double-apply — so
-    // that case surfaces as `db_transport_interrupted` instead of silently
-    // re-running. A real query error surfaces as before (the query ran).
+    // Prefer the persistent DB WebSocket when DB_WS_URL is set (the dev sandbox
+    // and CFES release sandboxes both inject it). On a WS-transport failure fall
+    // back to the fetch below — but only when the retry is provably safe. A
+    // request that was never fully sent (open failure, send throw, incomplete
+    // chunk upload, payload too big for a legacy server) never executed and
+    // always retries. One that WAS sent (socket dropped / reply went silent /
+    // no receipt) may have executed server-side with only the response lost:
+    // re-running is fine for reads, but for a batch containing writes it would
+    // double-apply — so that case surfaces as `db_transport_interrupted`
+    // instead of silently re-running. A real query error surfaces as before
+    // (the query ran).
     const dbWsUrl =
       typeof process !== 'undefined' ? process.env?.DB_WS_URL : undefined;
     if (dbWsUrl) {
