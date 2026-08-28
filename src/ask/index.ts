@@ -148,13 +148,16 @@ export async function runAsk(
   }
 }
 
-// ANSI helpers
+// ANSI helpers — colored only when stderr is a TTY (same convention as
+// cli.ts's log streaming). When `ask` is piped, stderr doubles as the error
+// detail consumers surface on failure (e.g. remy's runCli after a timeout),
+// so escape codes here would slip through raw into model context and
+// plain-text tool-result views.
+const color = process.stderr.isTTY;
 const ansi = {
-  dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
-  green: (s: string) => `\x1b[32m${s}\x1b[0m`,
-  red: (s: string) => `\x1b[31m${s}\x1b[0m`,
-  cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
-  bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
+  dim: (s: string) => (color ? `\x1b[2m${s}\x1b[0m` : s),
+  cyan: (s: string) => (color ? `\x1b[36m${s}\x1b[0m` : s),
+  bold: (s: string) => (color ? `\x1b[1m${s}\x1b[0m` : s),
 };
 
 /** Summarize tool input into a short string for display. */

@@ -7,6 +7,7 @@ import type { Files as _Files } from './files/index.js';
 import type { DataSources as _DataSources } from './datasources/index.js';
 import type { Voice as _Voice } from './voice/index.js';
 import type { Analytics as _Analytics } from './analytics/index.js';
+import type { Email as _Email } from './email/index.js';
 
 /** MindStudioAgent with all generated step methods. */
 export type MindStudioAgent = _MindStudioAgent & StepMethods;
@@ -333,6 +334,36 @@ export const voice: _Voice = new Proxy({} as _Voice, {
 export const analytics: _Analytics = new Proxy({} as _Analytics, {
   get(_, prop) {
     const target = mindstudio.analytics;
+    const value = Reflect.get(target, prop, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  },
+});
+
+/**
+ * Your app's outbound email — the delivery log, blast stats, and the unsubscribe
+ * list. Sending is `mindstudio.sendEmail(...)`; this is everything after it.
+ *
+ * Scoped to the executing app by its request token, so there is no appId to pass
+ * and no way to read another app's mail.
+ *
+ * @example
+ * ```ts
+ * import { email } from '@mindstudio-ai/agent';
+ *
+ * export async function emailDashboard() {
+ *   const [stats, { batches }] = await Promise.all([
+ *     email.stats({ start: '2026-08-01' }),
+ *     email.batches({ limit: 10 }),
+ *   ]);
+ *   // Only show a bounce rate once the sample supports one.
+ *   const bounceRate = stats.accepted >= 50 ? stats.rates.bounceRate : null;
+ *   return { bounceRate, batches };
+ * }
+ * ```
+ */
+export const email: _Email = new Proxy({} as _Email, {
+  get(_, prop) {
+    const target = mindstudio.email;
     const value = Reflect.get(target, prop, target);
     return typeof value === 'function' ? value.bind(target) : value;
   },
