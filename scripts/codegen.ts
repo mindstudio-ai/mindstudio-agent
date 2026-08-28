@@ -1750,7 +1750,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push('Store methods:');
   lines.push(
-    '- `put(content, { key?, contentType?, filename?, contentAddressed?, cacheControl? })` → `StoredFile`. `content` is `Buffer | Uint8Array | string`. Omit `key` for a random UUID; `contentAddressed: true` derives an immutable `<sha256>.<ext>` key. `cacheControl` sets the CDN caching of a public object (defaults: auto-minted keys immutable, named keys `public, max-age=300`).',
+    '- `put(content, { key?, contentType?, filename?, contentAddressed?, cacheControl? })` → `StoredFile`. `content` is `Buffer | Uint8Array | string` — any size up to 5 GiB (large content transparently uploads direct to storage via a presigned POST, so there is no request-body cap). Omit `key` for a random UUID; `contentAddressed: true` derives an immutable `<sha256>.<ext>` key. `cacheControl` sets the CDN caching of a public object (defaults: auto-minted keys immutable, named keys `public, max-age=300`).',
   );
   lines.push(
     '- `get(key)` → `Buffer` · `head(key)` → `StoredFile` · `exists(key)` → `boolean`',

@@ -104,6 +104,14 @@ function toBase64(content: Buffer | Uint8Array | string): string {
   ).toString('base64');
 }
 
+/**
+ * `put()` bytes at/above this size go via a presigned POST direct to storage
+ * instead of base64 inside the JSON `put` op. The JSON path dies at the API's
+ * body limit (~10 MB *after* base64's 4/3 inflation); 4 MiB keeps a wide
+ * margin while sparing small puts the extra roundtrips.
+ */
+const PRESIGN_THRESHOLD = 4 * 1024 * 1024;
+
 function extensionFor(filename?: string): string {
   if (!filename) {
     return '';
@@ -155,13 +163,91 @@ export class Store {
       (!options?.key && this._access === 'public'
         ? 'public, max-age=31536000, immutable'
         : undefined);
+
+    const bytes =
+      typeof content === 'string' ? Buffer.from(content) : content;
+    if (bytes.byteLength >= PRESIGN_THRESHOLD) {
+      return this._putPresigned(bytes, key, {
+        ...(options?.contentType ? { contentType: options.contentType } : {}),
+        ...(cacheControl ? { cacheControl } : {}),
+      });
+    }
+
     const meta = await this._call('put', {
       store: this._store,
       access: this._access,
       key,
-      body: toBase64(content),
+      body: toBase64(bytes),
       ...(options?.contentType ? { contentType: options.contentType } : {}),
       ...(cacheControl ? { cacheControl } : {}),
+    });
+    return this._toFile(key, meta);
+  }
+
+  /**
+   * Large-content half of {@link put}: mint a presigned POST scoped to exactly
+   * these bytes and send them direct to storage — the JSON transport's body
+   * limit never sees them. Same result contract as the small path; the final
+   * `head` keeps the returned metadata honest (server-observed size/type/time).
+   */
+  private async _putPresigned(
+    bytes: Buffer | Uint8Array,
+    key: string,
+    options: { contentType?: string; cacheControl?: string },
+  ): Promise<StoredFile> {
+    const res = await this._call('create-upload', {
+      store: this._store,
+      access: this._access,
+      key,
+      maxSize: bytes.byteLength,
+      ...(options.contentType ? { contentType: options.contentType } : {}),
+      ...(options.cacheControl ? { cacheControl: options.cacheControl } : {}),
+    });
+
+    const form = new FormData();
+    for (const [k, v] of Object.entries(
+      res.uploadFields as Record<string, string>,
+    )) {
+      form.append(k, v);
+    }
+    // A zero-copy view over the bytes (a pooled Buffer may sit at an offset
+    // inside a larger ArrayBuffer, so slice by view, not by .buffer).
+    const view = new Uint8Array(
+      bytes.buffer as ArrayBuffer,
+      bytes.byteOffset,
+      bytes.byteLength,
+    );
+    form.append(
+      'file',
+      new Blob([view], options.contentType ? { type: options.contentType } : undefined),
+    );
+
+    const upload = await fetch(res.uploadUrl as string, {
+      method: 'POST',
+      body: form,
+    });
+    if (!upload.ok) {
+      const errorText = await upload.text().catch(() => '');
+      throw new MindStudioError(
+        `Upload failed: ${upload.status} ${upload.statusText}${
+          errorText
+            ? ` — ${errorText
+                .replace(/<[^>]*>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 200)}`
+            : ''
+        }`,
+        'upload_error',
+        upload.status,
+        errorText || undefined,
+      );
+    }
+
+    const meta = await this._call('head', {
+      store: this._store,
+      access: this._access,
+      key,
     });
     return this._toFile(key, meta);
   }
