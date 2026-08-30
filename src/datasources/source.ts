@@ -160,7 +160,7 @@ export interface SearchRan {
  * vector, so they take effect on the next call and cost nothing. Anything that
  * would require rebuilding the corpus — chunking, the embedding model, whether
  * chunks are contextualized — is a property of the data source, configured
- * with `mindstudio-prod datasources config` rather than passed here.
+ * with `remy-admin datasources config` rather than passed here.
  *
  * The defaults come from the data source's own configuration, so most callers
  * should pass nothing.

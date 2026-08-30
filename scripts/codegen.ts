@@ -1957,7 +1957,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push(
-    'Everything in `SearchOptions` — `mode`, `filter`, `rerank`, `hybrid`, `maxPerDocument`, `highlight` — is free to change and takes effect on the next search. How documents are chunked and embedded is configured on the corpus itself with `mindstudio-prod datasources config` — not in code — and changing it on a populated source is rejected rather than silently rebuilding.',
+    'Everything in `SearchOptions` — `mode`, `filter`, `rerank`, `hybrid`, `maxPerDocument`, `highlight` — is free to change and takes effect on the next search. How documents are chunked and embedded is configured on the corpus itself with `remy-admin datasources config` — not in code — and changing it on a populated source is rejected rather than silently rebuilding.',
   );
   lines.push('');
   lines.push(

@@ -1601,12 +1601,24 @@ export class MindStudioAgent {
   }
 
   /**
-   * Outbound email: the per-recipient delivery log, blast stats, and this app's
-   * unsubscribe list. Sending is the `sendEmail` action, not this namespace.
+   * Outbound email: sending, the per-recipient delivery log, blast stats, and
+   * this app's unsubscribe list.
+   *
+   * `email.send()` is the send path — the `sendEmail` action still works and runs
+   * the same code, but `send()` returns a receipt including the `batchId` you read
+   * stats back with. Note `category` defaults to `'marketing'`; see
+   * {@link Email.send}.
    *
    * @example
    * ```ts
    * import { email } from '@mindstudio-ai/agent';
+   *
+   * await email.send({
+   *   to: 'a@b.com',
+   *   subject: 'Your receipt',
+   *   body: 'Thanks!',
+   *   category: 'transactional',
+   * });
    *
    * // A support lookup: did this person get their mail?
    * const { messages } = await email.messages({ recipient: 'a@b.com' });

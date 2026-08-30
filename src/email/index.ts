@@ -1,10 +1,14 @@
 /**
- * The `email` namespace: read and manage your app's OWN outbound email.
+ * The `email` namespace: send, read and manage your app's OWN outbound email.
  *
- * Sending is not here — that's the `sendEmail` action
- * (`mindstudio.sendEmail({...})`). This namespace is everything *after* the send:
- * what happened to each message, how a campaign performed, and who has
- * unsubscribed.
+ * `email.send()` is the send path. The older `mindstudio.sendEmail({...})` action
+ * still works and shares exactly the same implementation, so nothing breaks — but
+ * `send()` is the one to reach for: it returns a proper receipt (including the
+ * `batchId` you read stats back with) and it lives alongside everything you do
+ * with the result.
+ *
+ * The rest of the namespace is everything *after* the send: what happened to each
+ * message, how a campaign performed, and who has unsubscribed.
  *
  * The point is that you can build your own email admin screen inside your own app
  * and never open the MindStudio dashboard. So this deliberately includes the
@@ -12,7 +16,7 @@
  * unsubscribe list, this can do too.
  *
  * Every call is scoped to the executing app by its request token; there is no
- * appId parameter and no way to read another app's mail.
+ * appId parameter and no way to read or send as another app.
  */
 
 /** Where a message got to. See `EmailMessage.status`. */
@@ -160,9 +164,161 @@ export interface EmailWindowOptions {
   end?: string | Date;
 }
 
+/**
+ * How a message body is interpreted.
+ *
+ * `auto` (the default) sniffs it: something that looks like HTML is sent as HTML,
+ * anything else is rendered from Markdown. Every message goes out multipart with a
+ * plain-text alternative derived from the body, which mail providers reward.
+ */
+export type EmailBodyType = 'auto' | 'html' | 'markdown' | 'text';
+
+export interface EmailAttachmentInput {
+  url: string;
+  /** Displayed filename. Derived from the URL when omitted. */
+  filename?: string;
+  contentType?: string;
+}
+
+export interface EmailSendOptions {
+  /** Visible recipients. Optional only if you supply `cc` or `bcc`. */
+  to?: string | string[];
+  cc?: string | string[];
+  /**
+   * Hidden recipients. With no `to`/`cc`, the To: header is addressed to your
+   * app's own sender — the standard "undisclosed recipients" pattern — so
+   * recipients can't see each other.
+   */
+  bcc?: string | string[];
+
+  subject: string;
+  /** Plain text, Markdown, or HTML. See {@link EmailBodyType}. */
+  body: string;
+  bodyType?: EmailBodyType;
+  /** Your own plain-text alternative, instead of the auto-derived one. */
+  text?: string;
+  attachments?: Array<string | EmailAttachmentInput>;
+
+  /**
+   * Sender handle — only if your app has a custom domain or platform subdomain.
+   * `"support"`, `"support@your-domain.com"`, or `"Name <support@your-domain.com>"`.
+   * The domain must be one your app owns or the send fails.
+   */
+  from?: string;
+  replyTo?: string;
+
+  /** Message-ID this replies to, for threading in a shared inbox. */
+  inReplyTo?: string;
+  /** Prior Message-IDs in the thread. */
+  references?: string[];
+
+  /**
+   * **Defaults to `marketing`**, which is the consequential choice here.
+   *
+   * `marketing` attaches a one-click unsubscribe header pointing at your own
+   * domain and skips anyone who previously unsubscribed from your app. Because
+   * that link is per-recipient, a marketing send delivers one separate message per
+   * recipient and `cc`/`bcc` are folded into that list — so they come back empty.
+   *
+   * `transactional` is for receipts, alerts and password resets: no unsubscribe
+   * header, the unsubscribe list is ignored, and `cc`/`bcc` stay on one shared
+   * message. Use it whenever cc/bcc semantics actually matter.
+   */
+  category?: 'transactional' | 'marketing';
+
+  /**
+   * Groups this send's per-recipient rows into one blast. Pass your own campaign
+   * id (1–64 printable chars) to join our delivery stats onto your own tables with
+   * no mapping; one is generated when omitted, and it's always returned.
+   */
+  batchId?: string;
+}
+
+export interface EmailSendResult {
+  /** Addresses the message went to. */
+  recipients: string[];
+  /** Always empty for a marketing send — see `category`. */
+  cc: string[];
+  /** Always empty for a marketing send — see `category`. */
+  bcc: string[];
+  /** The resolved sender it went out as. */
+  from: string;
+  /**
+   * Recipients skipped because they had unsubscribed from your app. **Not an
+   * error** — the send succeeded and we honoured their opt-out. Always empty for
+   * a transactional send.
+   *
+   * Worth surfacing to whoever triggered the send: "sent to 48 of 50, 2
+   * unsubscribed" is the honest report, and silence here is what makes people
+   * think mail vanished.
+   */
+  suppressed: string[];
+  /** Read stats back with `email.batch(batchId)`. */
+  batchId: string;
+}
+
+/** Your app's sending allowance for the current window. */
+export interface EmailQuota {
+  /** What the numbers count — `recipients`. */
+  unit: string;
+  window: 'day' | 'month' | 'total';
+  /** `null` means unlimited. */
+  limit: number | null;
+  used: number;
+  /** `null` when `limit` is null. */
+  remaining: number | null;
+  /** When `used` resets. */
+  resetsAt: string | null;
+}
+
 export type EmailTransport = (op: string, body: unknown) => Promise<any>;
 
 export interface Email {
+  /**
+   * Send an email.
+   *
+   * Two things to know before your first call. **`category` defaults to
+   * `marketing`**, which fans a multi-recipient send out into one message each and
+   * empties `cc`/`bcc` — pass `'transactional'` for receipts, alerts and codes.
+   * And a non-empty `suppressed` in the result is a **success**, not a failure: it
+   * lists people who had unsubscribed and were therefore skipped.
+   *
+   * Delivery is synchronous today: this resolves once the mail has been handed to
+   * the provider, so a large marketing list takes a while. Outcomes (delivered,
+   * bounced, complained) arrive later — read them with
+   * `email.messages({ batchId })`.
+   *
+   * @example
+   * ```ts
+   * // A receipt: one message, cc preserved, no unsubscribe header.
+   * await email.send({
+   *   to: 'customer@example.com',
+   *   cc: 'billing@your-co.com',
+   *   subject: 'Your receipt',
+   *   body: '# Thanks!\n\nOrder #1234 is confirmed.',
+   *   category: 'transactional',
+   * });
+   *
+   * // A campaign: per-recipient unsubscribe, your own id for joining stats.
+   * const { suppressed, batchId } = await email.send({
+   *   to: subscribers,
+   *   subject: 'August newsletter',
+   *   body: markdown,
+   *   batchId: 'newsletter-2026-08',
+   * });
+   * console.log(`skipped ${suppressed.length} unsubscribed`);
+   * const stats = await email.batch(batchId);
+   * ```
+   */
+  send(options: EmailSendOptions): Promise<EmailSendResult>;
+  /**
+   * Your app's sending allowance and how much is left.
+   *
+   * Useful before a large send: check `remaining` and split the list rather than
+   * discovering the limit as a failure partway through. Going over throws with
+   * `outbound_daily_cap_exceeded`.
+   */
+  quota(): Promise<EmailQuota>;
   /** Counts, rates and a timeseries over a window (default: last 24h). */
   stats(
     options?: EmailWindowOptions & { buckets?: number },
@@ -220,6 +376,12 @@ const iso = (v: string | Date | undefined): string | undefined =>
  */
 export function createEmail(call: EmailTransport): Email {
   return {
+    send(options) {
+      return call('send', options);
+    },
+    quota() {
+      return call('quota', {});
+    },
     stats(options) {
       return call('stats', {
         start: iso(options?.start),
