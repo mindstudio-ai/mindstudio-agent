@@ -340,11 +340,15 @@ export const analytics: _Analytics = new Proxy({} as _Analytics, {
 });
 
 /**
- * Your app's outbound email — the delivery log, blast stats, and the unsubscribe
- * list. Sending is `mindstudio.sendEmail(...)`; this is everything after it.
+ * Your app's outbound email — sending, the delivery log, blast stats, and the
+ * unsubscribe list.
+ *
+ * `email.send()` is the send path. `mindstudio.sendEmail(...)` still works and
+ * runs the same code underneath, but `send()` returns a proper receipt and sits
+ * next to everything you do with the result.
  *
  * Scoped to the executing app by its request token, so there is no appId to pass
- * and no way to read another app's mail.
+ * and no way to read or send as another app.
  *
  * @example
  * ```ts
