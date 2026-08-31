@@ -87,6 +87,23 @@ export interface EmailStats {
 }
 
 /**
+ * Lifecycle of a QUEUED send. Large and marketing sends are accepted
+ * immediately and delivered in the background, so a blast can legitimately be
+ * observed mid-flight:
+ *
+ * `accepted` — queued, nothing delivered yet. `sending` — delivery in
+ * progress. `completed` — every recipient was handed to the provider.
+ * `partial` — finished, but some recipients were not sent to. `failed` —
+ * finished and nothing was sent.
+ */
+export type EmailBatchLifecycle =
+  | 'accepted'
+  | 'sending'
+  | 'completed'
+  | 'partial'
+  | 'failed';
+
+/**
  * One blast, aggregated.
  *
  * `recipients` counts every row including those never handed to the provider;
@@ -99,6 +116,17 @@ export interface EmailBatch {
   recipients: number;
   accepted: number;
   counts: Record<EmailMessageStatus, number>;
+  /**
+   * Delivery lifecycle, when the send was QUEUED. `null` means the send was
+   * delivered inline (small transactional sends) and already finished — treat
+   * null as done, never as unknown.
+   */
+  status: EmailBatchLifecycle | null;
+  /** Delivery-chunk progress, when queued. Null otherwise. */
+  chunksTotal: number | null;
+  chunksDone: number | null;
+  /** Recipients not yet attempted, when queued. Null otherwise. */
+  pending: number | null;
 }
 
 export interface EmailSuppression {
@@ -283,10 +311,16 @@ export interface Email {
    * And a non-empty `suppressed` in the result is a **success**, not a failure: it
    * lists people who had unsubscribed and were therefore skipped.
    *
-   * Delivery is synchronous today: this resolves once the mail has been handed to
-   * the provider, so a large marketing list takes a while. Outcomes (delivered,
-   * bounced, complained) arrive later — read them with
-   * `email.messages({ batchId })`.
+   * Delivery is split from acceptance: small transactional sends deliver before
+   * this resolves; marketing and large sends are QUEUED — this resolves once the
+   * send is accepted, and delivery continues in the background. Track progress
+   * with `email.batch(batchId)` (`status`, `pending`, chunk counts); outcomes
+   * (delivered, bounced, complained) arrive later on `email.messages({ batchId })`.
+   *
+   * Throws `outbound_daily_cap_exceeded` (429) over the app's daily recipient
+   * quota — check `email.quota()` before a big send — and `sending_paused` (409)
+   * when the app's sending is paused for reputation or by support; a 409 will
+   * not succeed on retry.
    *
    * @example
    * ```ts
@@ -337,11 +371,15 @@ export interface Email {
   ): Promise<{ messages: EmailMessage[]; nextCursor: string | null }>;
   /** One message, including bounce diagnostics. */
   message(messageId: string): Promise<EmailMessage>;
-  /** One row per blast, newest first. */
+  /** One row per blast, newest first, with delivery lifecycle where queued. */
   batches(
     options?: EmailWindowOptions & { limit?: number; offset?: number },
   ): Promise<{ batches: EmailBatch[]; total: number }>;
-  /** Stats for a single blast — the id you passed to `sendEmail`, or the one it returned. */
+  /**
+   * Stats and delivery progress for a single blast — the id you passed to
+   * `email.send()`, or the one it returned. Poll this to watch a queued send
+   * drain (`status`, `pending`, chunk counts).
+   */
   batch(batchId: string): Promise<EmailBatch>;
   /** Your app's unsubscribe list, newest first. */
   suppressions(options?: {
