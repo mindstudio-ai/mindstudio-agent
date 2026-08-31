@@ -43,6 +43,16 @@ export interface Citation {
 export type MetadataValue = string | number | boolean;
 
 /**
+ * Numeric range over a metadata value (inclusive both ends). Numbers only —
+ * to range on dates, store them as sortable integers at add time (epoch
+ * seconds or `20240315`-style YYYYMMDD) and range on those.
+ */
+export interface MetadataRange {
+  gte?: number;
+  lte?: number;
+}
+
+/**
  * Tags attached to a document when it's added — department, year, doc type,
  * a per-user scope — and matched by {@link SearchFilter.metadata} at query
  * time. Up to 16 keys per document; keys are alphanumeric with `_`/`-`.
@@ -67,10 +77,11 @@ export type SearchMode = 'hybrid' | 'semantic' | 'lexical';
 export interface SearchFilter {
   /**
    * Match document metadata set at add time. A scalar must equal; an array
-   * matches any of its values. Keys AND together:
-   * `{ department: 'legal', year: [2025, 2026] }`.
+   * matches any of its values; `{ gte?, lte? }` matches a numeric range. Keys
+   * AND together:
+   * `{ department: 'legal', year: [2025, 2026], publishedAt: { gte: 20250101 } }`.
    */
-  metadata?: Record<string, MetadataValue | MetadataValue[]>;
+  metadata?: Record<string, MetadataValue | MetadataValue[] | MetadataRange>;
   /** Exact filename, or any of several. */
   filename?: string | string[];
   /** Restrict to specific documents (ids from {@link DataSource.documents}). */
@@ -103,7 +114,16 @@ export interface SearchExplain {
 }
 
 export interface SearchHit {
-  /** Provider relevance score. Comparable within a response, not across them. */
+  /**
+   * Relevance of this hit. Comparable within a response, not across them —
+   * the scale depends on how the search ran (check {@link SearchRan}):
+   * cosine similarity in `semantic` mode, an RRF rank reciprocal in `hybrid`
+   * (small numbers that are not similarities), keyword-overlap weight in
+   * `lexical`. When reranking ran, it's the reranker's 0–1 relevance instead,
+   * with the retrieval value preserved as `retrievalScore` — so rerank-on
+   * `score` is the one scale that's stable across modes, and the right place
+   * for quality cutoffs.
+   */
   score: number;
   /** The matched chunk, prefixed with its heading path for context. */
   text: string;
@@ -168,7 +188,14 @@ export interface SearchRan {
 export interface SearchOptions {
   /** Results to return. Default 5, capped at 50. */
   topK?: number;
-  /** Drop hits below this score. Provider-specific scale — measure before using. */
+  /**
+   * Floor on the RETRIEVAL score — applied to the retrieval branch, never to
+   * the fused hybrid score or the reranker's score. In `semantic` and
+   * `hybrid` modes it's a cosine floor on the embedding branch; in `lexical`,
+   * a keyword-overlap floor. The scale depends on the embedding model, so
+   * measure before using — and with reranking on, prefer cutting on each
+   * hit's returned `score` (the reranker's 0–1 relevance) instead.
+   */
   scoreThreshold?: number;
   /**
    * Narrow the search to matching chunks before ranking — by document
@@ -476,6 +503,8 @@ export class DataSource {
    * Exposed for callers that want to check whether they already added a file.
    */
   static contentHash(content: Buffer | Uint8Array | string): string {
-    return createHash('sha256').update(Buffer.from(content as any)).digest('hex');
+    return createHash('sha256')
+      .update(Buffer.from(content as any))
+      .digest('hex');
   }
 }

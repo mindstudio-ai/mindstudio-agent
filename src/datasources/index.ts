@@ -41,6 +41,7 @@ export type {
   DataSourceDocument,
   DataSourceStats,
   DocumentMetadata,
+  MetadataRange,
   MetadataValue,
   SearchExplain,
   SearchFilter,
