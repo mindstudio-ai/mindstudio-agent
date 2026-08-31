@@ -65,10 +65,19 @@ export class AuthContext {
     this.userId = ctx.userId;
     this._roleAssignments = ctx.roleAssignments;
 
-    // Extract the current user's roles from the full assignment list
-    this.roles = ctx.roleAssignments
-      .filter((a) => a.userId === ctx.userId)
-      .map((a) => a.roleName);
+    // Extract the current user's roles from the full assignment list. An
+    // anonymous context holds none: without the userId guard a
+    // `{ userId: null }` assignment matches a null identity, so `hasRole` would
+    // report a role that `requireRole` rejects on identity a line later — the
+    // two disagreeing about the same context. A caller that means "run as this
+    // role" has to supply an identity to hold it (the platform uses a synthetic
+    // one for cron/webhook/email — see SYSTEM_USER_ID in youai-api).
+    this.roles =
+      ctx.userId == null
+        ? []
+        : ctx.roleAssignments
+            .filter((a) => a.userId === ctx.userId)
+            .map((a) => a.roleName);
   }
 
   /**

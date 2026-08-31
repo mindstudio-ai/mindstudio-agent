@@ -481,6 +481,9 @@ export const reportIssue = (input: ReportIssueInput) =>
  * on their next visit. Bound to the default singleton. Backend / managed-context
  * only. Omit `paths` (or pass an empty array) to purge every snapshot.
  *
+ * Pass this app's own route paths; snapshots of those routes cached under
+ * another app's mount prefix are purged along with them.
+ *
  * @example
  * ```ts
  * import { prerender } from '@mindstudio-ai/agent';
