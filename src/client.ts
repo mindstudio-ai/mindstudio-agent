@@ -2289,6 +2289,11 @@ export class MindStudioAgent {
    * page changes (e.g. a short URL's target). Omit `paths` (or pass an empty
    * array) to purge every snapshot for the app.
    *
+   * `paths` are this app's OWN route paths (`/u/abc`), whatever host the page is
+   * served on. If another app mounts this one under a path prefix, the copies
+   * cached at that prefix are purged too — no need to know or pass the mount
+   * path.
+   *
    * Raw hook-token call (mirrors `reportIssue`) — the appId comes from the
    * token. Backend / managed-context only.
    *
