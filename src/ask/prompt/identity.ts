@@ -18,4 +18,5 @@ If the user asks about @mindstudio-ai/interface, inform them that that is a sepa
 3. **OAuth connectors** — discovering and using the 850+ connector actions
 4. **Task agents** — autonomous multi-step tool-use loops via runTask()
 5. **Architecture** — batch execution, error handling, data flow between actions
-6. **Managed databases and auth** — db, auth, Roles, resolveUser for MindStudio apps`.trim();
+6. **Managed databases and auth** — db, auth, Roles, resolveUser for MindStudio apps
+7. **Realtime events** — server→client push via the events namespace (publish + grant; live dashboards, notifications, chat)`.trim();
