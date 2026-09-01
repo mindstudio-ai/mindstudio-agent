@@ -33,6 +33,7 @@ import { createDataSources, type DataSources } from './datasources/index.js';
 import { createVoice, type Voice } from './voice/index.js';
 import { createAnalytics, type Analytics } from './analytics/index.js';
 import { createEmail, type Email } from './email/index.js';
+import { createEvents, type Events } from './events/index.js';
 import {
   buildTaskRequestBody,
   runTaskPoll,
@@ -157,6 +158,7 @@ export class MindStudioAgent {
   private _voice: Voice | undefined;
   private _analytics: Analytics | undefined;
   private _email: Email | undefined;
+  private _events: Events | undefined;
 
   /** @internal Auth type — 'internal' for CALLBACK_TOKEN (managed mode), 'apiKey' otherwise. */
   private _authType: AuthType;
@@ -1601,6 +1603,26 @@ export class MindStudioAgent {
   }
 
   /**
+   * The `events` namespace — server→client realtime. `publish()` pushes to
+   * named channels; `grant()` mints the subscribe token a client presents to
+   * the platform-held events stream. See {@link Events} for the channel-shape
+   * and at-most-once semantics.
+   *
+   * @example
+   * ```ts
+   * import { auth, events } from '@mindstudio-ai/agent';
+   *
+   * export async function watchJobs() {
+   *   auth.requireRole('operator');
+   *   return await events.grant(`jobs:${auth.userId}`); // { token, expiresAt, ttlSeconds }
+   * }
+   * ```
+   */
+  get events(): Events {
+    return (this._events ??= createEvents(this._eventsRequest.bind(this)));
+  }
+
+  /**
    * Outbound email: sending, the per-recipient delivery log, blast stats, and
    * this app's unsubscribe list.
    *
@@ -1800,6 +1822,22 @@ export class MindStudioAgent {
     return this._brokeredRequest('email', op, body, {
       fallbackMessage: 'Email API call failed',
       fallbackCode: 'email_error',
+    });
+  }
+
+  /**
+   * @internal Transport for the `events` namespace —
+   * POST /_internal/v2/app-events/<op> with the raw hook token.
+   *
+   * No 429 retry: a retried publish is a duplicate nudge, and grants are
+   * cheap for the caller to re-request. Errors throw (unlike `stream()`) —
+   * publishing is an explicit act, and "nobody was listening" is expressed as
+   * `delivered: 0`, never as an HTTP failure.
+   */
+  private async _eventsRequest(op: string, body: unknown): Promise<any> {
+    return this._brokeredRequest('app-events', op, body, {
+      fallbackMessage: 'Events call failed',
+      fallbackCode: 'events_error',
     });
   }
 

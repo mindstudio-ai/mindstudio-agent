@@ -8,6 +8,7 @@ import type { DataSources as _DataSources } from './datasources/index.js';
 import type { Voice as _Voice } from './voice/index.js';
 import type { Analytics as _Analytics } from './analytics/index.js';
 import type { Email as _Email } from './email/index.js';
+import type { Events as _Events } from './events/index.js';
 
 /** MindStudioAgent with all generated step methods. */
 export type MindStudioAgent = _MindStudioAgent & StepMethods;
@@ -143,6 +144,11 @@ export type {
   CrawlerBucket,
   CrawlerHit,
 } from './analytics/index.js';
+export type {
+  Events,
+  EventGrantOptions,
+  EventGrantResult,
+} from './events/index.js';
 
 // Re-export all generated types
 export * from './generated/types.js';
@@ -368,6 +374,34 @@ export const analytics: _Analytics = new Proxy({} as _Analytics, {
 export const email: _Email = new Proxy({} as _Email, {
   get(_, prop) {
     const target = mindstudio.email;
+    const value = Reflect.get(target, prop, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  },
+});
+
+/**
+ * Server→client realtime — publish to named channels and mint subscribe
+ * grants. A channel is an audience, and a method decides who is in it; events
+ * are at-most-once nudges (subscribe for speed, reconcile for truth). See
+ * {@link Events}.
+ *
+ * @example
+ * ```ts
+ * import { auth, events } from '@mindstudio-ai/agent';
+ *
+ * // The subscribe door is one of your own methods:
+ * export async function watchJobs() {
+ *   auth.requireRole('operator');
+ *   return await events.grant(`jobs:${auth.userId}`); // { token, expiresAt, ttlSeconds }
+ * }
+ *
+ * // Anything can publish — a method, a cron, a webhook handler:
+ * await events.publish(`jobs:${job.operator}`, { type: 'job', id: job.id });
+ * ```
+ */
+export const events: _Events = new Proxy({} as _Events, {
+  get(_, prop) {
+    const target = mindstudio.events;
     const value = Reflect.get(target, prop, target);
     return typeof value === 'function' ? value.bind(target) : value;
   },

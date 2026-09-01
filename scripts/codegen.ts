@@ -1093,7 +1093,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
     "- **Cost estimation**: AI-powered actions (text generation, image generation, video, audio, etc.) cost money. Call `estimateStepCost(stepType, stepInput)` before running these and confirm with the user before proceeding — unless they've explicitly given permission to go ahead. Non-AI actions (data lookups, OAuth connectors, etc.) are generally free.",
   );
   lines.push(
-    '- **Task agents**: For multi-step tasks that need autonomous tool use (research, content creation, data enrichment), use `runTask()`. Provide a prompt, input, tools, an output contract, and a tool-use model id. The SDK runs a tool-use loop — calling the model, executing tools, feeding results back — until structured output is produced. Tools are SDK action names and/or your own app methods, written as `{ appMethod: "save-vendor", description: "when to use it" }`. App methods run as the user who invoked the method that started the task, with their roles, so the agent can read and write app state on their behalf. Prefer `outputSchema` for the output contract: plain JSON Schema (`type`/`properties`/`required`/`enum`/`items`; nullable via type arrays like `["string","null"]` — no `oneOf`/`$ref`/`nullable`). Output is validated every turn with automatic repair, `result.output` is fully typed from the schema (no generic argument, no `parsedSuccessfully` check), and the call throws `MindStudioError` code `task_output_schema_mismatch` if the agent cannot produce conforming output. Example: `runTask({ prompt: "Research this restaurant and save it", input: { name: "Tartine" }, tools: ["searchGoogle", "fetchUrl", { appMethod: "saveRestaurant", description: "Persist the researched restaurant." }], outputSchema: { type: "object", properties: { name: { type: "string" }, url: { type: ["string", "null"] } }, required: ["name"] }, model: yourModelId })`. The legacy `structuredOutputExample` option (an example object the model imitates) still works but is unvalidated — check `result.parsedSuccessfully` before using its output. Pass a current tool-use model id (call `listModels` or ask). Don\'t hardcode one.',
+    '- **Task agents**: For multi-step tasks that need autonomous tool use (research, content creation, data enrichment), use `runTask()`. Provide a prompt, input, tools, an output contract, and a tool-use model id. The SDK runs a tool-use loop — calling the model, executing tools, feeding results back — until structured output is produced. Tools are SDK action names, your own app methods written as `{ appMethod: "save-vendor", description: "when to use it" }`, and/or inline functions written as `{ name, description, inputSchema, execute }` — the function runs in your process when the model calls it, and a thrown error goes back to the model as tool output to work around. App methods run as the user who invoked the method that started the task, with their roles, so the agent can read and write app state on their behalf. Prefer `outputSchema` for the output contract: plain JSON Schema (`type`/`properties`/`required`/`enum`/`items`; nullable via type arrays like `["string","null"]` — no `oneOf`/`$ref`/`nullable`). Output is validated every turn with automatic repair, `result.output` is fully typed from the schema (no generic argument, no `parsedSuccessfully` check), and the call throws `MindStudioError` code `task_output_schema_mismatch` if the agent cannot produce conforming output. Example: `runTask({ prompt: "Research this restaurant and save it", input: { name: "Tartine" }, tools: ["searchGoogle", "fetchUrl", { appMethod: "saveRestaurant", description: "Persist the researched restaurant." }], outputSchema: { type: "object", properties: { name: { type: "string" }, url: { type: ["string", "null"] } }, required: ["name"] }, model: yourModelId })`. The legacy `structuredOutputExample` option (an example object the model imitates) still works but is unvalidated — check `result.parsedSuccessfully` before using its output. Pass a current tool-use model id (call `listModels` or ask). Don\'t hardcode one.',
   );
   lines.push('');
 
@@ -2015,6 +2015,52 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('');
   lines.push(
     "Specials (same `dateRange`/filter-triple grammar): `analytics.live()` → `{count, countries, sparkline}` right now; `analytics.sources(opts?)` → per-session first-source ranking (UTM > referrer > direct) classified by category/vendor incl. AI assistants; `analytics.map(opts?)` → city lat/lon points; `analytics.aiSources(opts?)` → AI-assistant referrals per vendor; `analytics.crawlers.overview()/timeseries()/recent()` → bot/AI-crawler ingestion of the app's pages.",
+  );
+  lines.push('');
+
+  // The events namespace is hand-written for the same reason as db and
+  // analytics: it is TypeScript, not step specs, so nothing generates it.
+  lines.push('#### `events` — server→client realtime (publish/subscribe)');
+  lines.push('');
+  lines.push(
+    'Publish to named channels from any backend code (a method, a cron, a webhook handler); connected clients receive the payloads instantly over a platform-held stream — live dashboards, notifications, chat, multi-tab/device sync, with no polling and no WebSocket code. Different from `stream()`, which narrates ONE invocation to the caller currently waiting on it: events reach clients that were not part of the invocation at all. Backend only (hook token).',
+  );
+  lines.push('');
+  lines.push('```typescript');
+  lines.push("import { auth, events } from '@mindstudio-ai/agent';");
+  lines.push('');
+  lines.push(
+    '// The subscribe door is one of YOUR methods — auth checks first, then mint.',
+  );
+  lines.push(
+    '// The grant is the ENTIRE subscribe-side authorization: whoever holds the',
+  );
+  lines.push("// token receives those channels' events for its lifetime.");
+  lines.push('export async function watchInbox() {');
+  lines.push("  auth.requireRole('member');");
+  lines.push(
+    '  return await events.grant(`user:${auth.userId}`);  // { token, expiresAt, ttlSeconds }; ttlSeconds? 60–3600, default 900',
+  );
+  lines.push('}');
+  lines.push('');
+  lines.push('// Anything can publish — one call, up to 500 channels:');
+  lines.push('const members = await RoomMembers.where({ roomId });');
+  lines.push('const { delivered } = await events.publish(');
+  lines.push('  members.map((m) => `user:${m.userId}`),');
+  lines.push("  { type: 'message', roomId, msgId },");
+  lines.push(');');
+  lines.push('```');
+  lines.push('');
+  lines.push(
+    'The frontend consumes with `events.connect({ getToken, onEvent, onConnect })` from `@mindstudio-ai/interface` — `getToken` calls the minting method, and the SDK handles reconnection and grant renewal.',
+  );
+  lines.push('');
+  lines.push(
+    "**A channel is an audience, and a method decides who is in it.** Never put two users' data on one channel. Default to per-user channels with publish-time fan-out (as above) for membership-gated audiences — removing someone stops their events immediately; reserve a shared channel for genuinely broadcast content (a ticker, a live blog), where revocation waits out the grant TTL. For anonymous visitors `auth.userId` is null — key their channels on `session.visitorId` instead, or `user:null` becomes one channel shared by every anonymous user.",
+  );
+  lines.push('');
+  lines.push(
+    "**Events are at-most-once nudges.** Nothing is buffered while a client is disconnected and nothing replays on connect — clients refetch state in `onConnect` (subscribe for speed, reconcile for truth). `delivered: 0` means nobody is listening right now: normal, never an error. Payloads cap at 32k serialized chars — publish ids (`{ type, id }`), let the client fetch. Channels are exact strings (letters, digits, `: _ - .` — no wildcards), ≤500 per publish, ≤100 per grant. Publishes and grants are scoped to the execution's environment (live/preview/dev) automatically, so a dev-session publish can never reach live users. Debug with `remy-admin events tail | publish | channels list`.",
   );
   lines.push('');
 
