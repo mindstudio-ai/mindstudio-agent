@@ -82,7 +82,7 @@ export const instructions = `<instructions>
   Google: \`gemini-3-flash\`, \`gemini-3-pro\`, \`gemini-3.1-pro\`, \`gemini-3.5-flash\`, \`gemini-3.7-flash\`, \`gemini-3.8-flash\`
   OpenAI: \`gpt-5-mini\`, \`gpt-5\`, \`gpt-5.1\`, \`gpt-5.2\`, \`gpt-5.5\`, \`gpt-5.6-sol\`, \`gpt-5.6-terra\`, \`gpt-5.6-luna\`
   Grok: \`grok-build-0.1\`, \`grok-4.5\`, \`grok-4.6\`
-  Meta: \`muse-spark-1.1\`
+  Meta: \`muse-spark-1.1\`, \`muse-spark-1.2\`, \`muse-spark-1.3\`
   DeepSeek: \`deepseek-v4-flash-0731\`
   GLM: \`glm-5.2\`
   Kimi: \`kimi-k2-7-code\`, \`kimi-k3\`
