@@ -2020,10 +2020,12 @@ function generateLlmsTxt(steps: StepInfo[]): string {
 
   // The events namespace is hand-written for the same reason as db and
   // analytics: it is TypeScript, not step specs, so nothing generates it.
-  lines.push('#### `events` — server→client realtime (publish/subscribe)');
+  lines.push(
+    '#### `events` — realtime over named channels (publish/subscribe)',
+  );
   lines.push('');
   lines.push(
-    'Publish to named channels from any backend code (a method, a cron, a webhook handler); connected clients receive the payloads instantly over a platform-held stream — live dashboards, notifications, chat, multi-tab/device sync, with no polling and no WebSocket code. Different from `stream()`, which narrates ONE invocation to the caller currently waiting on it: events reach clients that were not part of the invocation at all. Backend only (hook token).',
+    'Publish to named channels from any backend code (a method, a cron, a webhook handler); connected clients receive the payloads instantly over a platform-held stream — live dashboards, notifications, chat, collaborative UIs, multi-tab/device sync, with no polling and no WebSocket code. Different from `stream()`, which narrates ONE invocation to the caller currently waiting on it: events reach clients that were not part of the invocation at all. Backend only (hook token).',
   );
   lines.push('');
   lines.push('```typescript');
@@ -2056,11 +2058,15 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push(
+    '**Ephemeral client signals (cursors, typing, live strokes):** mint the grant with `publish` channels — `events.grant(channel, { publish: [channel] })` — and the frontend publishes DIRECTLY via `sub.publish(channels, data)`: no backend method runs per signal, the SDK coalesces to ~40ms batches, and failures drop (never retry). Client events cap at 8k serialized, 30 batches/sec per grant. Carry a client `seq` in the payload (delivery is unordered across batches; receivers drop stale seqs and interpolate). Durable state still commits through a method with an id-only nudge — signal ephemerally, commit through code.',
+  );
+  lines.push('');
+  lines.push(
     "**A channel is an audience, and a method decides who is in it.** Never put two users' data on one channel. Default to per-user channels with publish-time fan-out (as above) for membership-gated audiences — removing someone stops their events immediately; reserve a shared channel for genuinely broadcast content (a ticker, a live blog), where revocation waits out the grant TTL. For anonymous visitors `auth.userId` is null — key their channels on `session.visitorId` instead, or `user:null` becomes one channel shared by every anonymous user.",
   );
   lines.push('');
   lines.push(
-    "**Events are at-most-once nudges.** Nothing is buffered while a client is disconnected and nothing replays on connect — clients refetch state in `onConnect` (subscribe for speed, reconcile for truth). `delivered: 0` means nobody is listening right now: normal, never an error. Payloads cap at 32k serialized chars — publish ids (`{ type, id }`), let the client fetch. Channels are exact strings (letters, digits, `: _ - .` — no wildcards), ≤500 per publish, ≤100 per grant. Publishes and grants are scoped to the execution's environment (live/preview/dev) automatically, so a dev-session publish can never reach live users. Debug with `remy-admin events tail | publish | channels list`.",
+    "**Events are at-most-once nudges.** Nothing is buffered while a client is disconnected and nothing replays on connect — clients refetch state in `onConnect` (subscribe for speed, reconcile for truth). `delivered: 0` means nobody is listening right now: normal, never an error. Every delivered frame carries the platform-stamped publish `id` (consumer dedupe key: `id` + `channel`); `publish` returns the same id. Payloads cap at 256k serialized chars, checked in the SDK before the network so oversize throws locally — when a publish carries data, publish before committing the write it announces; high-rate paths publish ids (`{ type, id }`) and let the client fetch. Channels are exact strings (letters, digits, `: _ - .` — no wildcards), ≤500 per publish, ≤100 per grant. Publishes and grants are scoped to the execution's environment (live/preview/dev) automatically, so a dev-session publish can never reach live users. Debug with `remy-admin events tail | publish | channels list`.",
   );
   lines.push('');
 

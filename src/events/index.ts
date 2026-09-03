@@ -43,8 +43,19 @@
  * never reach a live subscriber.
  */
 
+import { MindStudioError } from '../errors.js';
+
 /** @internal Transport provided by the client (POST /_internal/v2/app-events/<op>). */
 export type EventsTransport = (op: string, body: unknown) => Promise<any>;
+
+/**
+ * Serialized payload cap per publish, mirroring the platform's (which stays
+ * authoritative). Exported so code whose publish carries data can check the
+ * size BEFORE committing the write the publish announces — an oversize
+ * payload discovered after the commit means the write landed and the
+ * broadcast didn't. A publish that carries only ids can never hit this.
+ */
+export const MAX_EVENT_PAYLOAD_CHARS = 256_000;
 
 export interface EventGrantOptions {
   /**
@@ -55,6 +66,17 @@ export interface EventGrantOptions {
    * revoke keeps receiving for at most this long.
    */
   ttlSeconds?: number;
+  /**
+   * Channels the holder may PUBLISH on (up to 20) — the client-direct
+   * ephemeral path for cursors, typing, live strokes: the frontend calls
+   * `sub.publish(...)` (or an external client `POST`s `/_/events`) and events
+   * fan out with no method invoke per signal. Treat it like the browser-held
+   * credential it is: whoever holds the token can inject events into these
+   * channels until the TTL, so grant only channels this client should speak
+   * on. Client events are capped small (8k serialized) and rate-boxed per
+   * grant — they are signals, not documents.
+   */
+  publish?: string | string[];
 }
 
 export interface EventGrantResult {
@@ -74,10 +96,18 @@ export interface Events {
    * Returns how many live subscriber connections were counted across the
    * published channels (a connection matching several of them counts once per
    * channel). `delivered: 0` is not an error — it means nobody is listening
-   * right now, which is normal for a nudge.
+   * right now, which is normal for a nudge. Also returns the platform-stamped
+   * publish `id` — the same id arrives on every delivered frame (dedupe key
+   * for consumers is id+channel), so it correlates your logs with
+   * `remy-admin events tail`.
    *
-   * Payloads are capped at 32k serialized characters: publish ids and let the
-   * client fetch, not documents.
+   * Payloads are capped at `MAX_EVENT_PAYLOAD_CHARS` serialized characters,
+   * checked here before anything touches the network — so an oversize payload
+   * throws synchronously and shows up in local testing. If a publish carries
+   * data (not just ids), publish before you commit the write it announces, or
+   * check the size against the exported cap first: an oversize failure after
+   * the commit means the write landed and no other client heard about it.
+   * High-rate paths should publish ids and let the client fetch regardless.
    *
    * @throws MindStudioError on invalid channels, an oversize payload, or a
    *   platform failure. Unlike `stream()`, publishing is an explicit act and
@@ -86,7 +116,7 @@ export interface Events {
   publish(
     channels: string | string[],
     data: unknown,
-  ): Promise<{ delivered: number }>;
+  ): Promise<{ delivered: number; id: string }>;
 
   /**
    * Mint a subscribe token for an explicit list of channels (up to 100, exact
@@ -109,10 +139,37 @@ export interface Events {
 export function createEvents(call: EventsTransport): Events {
   return {
     publish(channels, data) {
+      // Pre-flight the size check so the data-dependent failure mode is
+      // synchronous and local. The platform re-validates authoritatively.
+      let serialized: string | undefined;
+      try {
+        serialized = JSON.stringify(data);
+      } catch {
+        throw new MindStudioError(
+          'data must be JSON-serializable.',
+          'invalid_payload',
+          400,
+        );
+      }
+      if (
+        serialized !== undefined &&
+        serialized.length > MAX_EVENT_PAYLOAD_CHARS
+      ) {
+        throw new MindStudioError(
+          `data exceeds ${MAX_EVENT_PAYLOAD_CHARS} serialized characters. ` +
+            `Publish an id and let the client fetch.`,
+          'payload_too_large',
+          400,
+        );
+      }
       return call('publish', { channels, data });
     },
     grant(channels, options) {
-      return call('grant', { channels, ttlSeconds: options?.ttlSeconds });
+      return call('grant', {
+        channels,
+        ttlSeconds: options?.ttlSeconds,
+        publish: options?.publish,
+      });
     },
   };
 }

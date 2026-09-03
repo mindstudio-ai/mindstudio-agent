@@ -28,14 +28,28 @@ GET https://{app-host}/_/events
 Authorization: Bearer <token from your method>
 Accept: text/event-stream
 
-data: {"channel":"jobs:usr_1","data":{"type":"job","id":"j_9"},"ts":1756700000000}
+data: {"id":"<publish-id>","channel":"jobs:usr_1","ts":1756700000000,"data":{"type":"job","id":"j_9"}}
 data: {"type":"grant_expired"}        ← re-mint through your method and reconnect
+data: {"type":"events_dropped","count":12,"ts":…} ← you fell behind; refetch state
 : keepalive                            ← comment frames; skip them
+```
+
+If the grant was minted with `publish` channels, the same token also publishes —
+batched, no method invoke per event:
+
+```
+POST https://{app-host}/_/events
+Authorization: Bearer <token from your method>
+Content-Type: application/json
+
+{ "events": [ { "channels": "canvas:room1", "data": { "kind": "cursor", "x": 12, "y": 40, "seq": 991 } } ] }
+
+→ { "accepted": 1 }
 ```
 
 ## API
 
-### `events.publish(channels, data): Promise<{ delivered: number }>`
+### `events.publish(channels, data): Promise<{ delivered: number; id: string }>`
 
 One call, up to 500 channels — fan out to a whole audience at once:
 
@@ -47,11 +61,13 @@ await events.publish(
 );
 ```
 
-`delivered` is the live subscriber count across the published channels; `0` means nobody is listening right now, which is normal, not an error. Payloads cap at 32k serialized characters — publish ids, let the client fetch. Throws `MindStudioError` on invalid input.
+`delivered` is the live subscriber count across the published channels; `0` means nobody is listening right now, which is normal, not an error. `id` is the platform-stamped publish id — the same id arrives on every delivered frame (consumer dedupe key: `id` + `channel`), so it correlates your logs with `remy-admin events tail`. Payloads cap at `MAX_EVENT_PAYLOAD_CHARS` (256k) serialized characters, checked in the SDK before the network call, so oversize throws synchronously — if a publish carries data rather than ids, publish before you commit the write it announces (or check against the exported cap first). High-rate paths should publish ids and let the client fetch regardless. Throws `MindStudioError` on invalid input.
 
-### `events.grant(channels, { ttlSeconds? }): Promise<{ token, expiresAt, ttlSeconds }>`
+### `events.grant(channels, { ttlSeconds?, publish? }): Promise<{ token, expiresAt, ttlSeconds }>`
 
-Mints a subscribe token for an **explicit list** of channels (up to 100, exact names — letters, digits, `: _ - .`, no wildcards). The grant is the entire subscribe-side authorization: whoever holds it receives those channels. Do your checks first. For anonymous visitors `auth.userId` is null — key their channels on `session.visitorId` instead, or `user:null` becomes one channel shared by every anonymous user.
+Mints a client token for an **explicit list** of channels (up to 100, exact names — letters, digits, `: _ - .`, no wildcards). The grant is the entire client-side authorization: whoever holds it receives those channels, and may publish ephemeral events on any channels named in `publish` (up to 20). Do your checks first. For anonymous visitors `auth.userId` is null — key their channels on `session.visitorId` instead, or `user:null` becomes one channel shared by every anonymous user.
+
+`publish` is the fast path for cursors, typing, and live strokes: the frontend calls `sub.publish(...)` (from `events.connect`) and the platform fans out with no method invoke per signal. Scope it like the browser-held credential it is — the holder can inject events into those channels until the TTL. Client events cap at 8k serialized, ≤100 per batch, 30 batches/sec per grant; on any failure they are dropped, never retried. Durable state still goes through a method — signal ephemerally, commit through code.
 
 `ttlSeconds` (clamped to 60–3600, default 900) is the stream's lifetime **and** your revocation window: at expiry the stream closes and the client re-mints through your method, which re-runs your checks.
 
