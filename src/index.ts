@@ -149,6 +149,7 @@ export type {
   EventGrantOptions,
   EventGrantResult,
 } from './events/index.js';
+export { MAX_EVENT_PAYLOAD_CHARS } from './events/index.js';
 
 // Re-export all generated types
 export * from './generated/types.js';
