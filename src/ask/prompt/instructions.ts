@@ -80,7 +80,7 @@ export const instructions = `<instructions>
 
   Anthropic: \`claude-5-sonnet\`, \`claude-5-opus\`, \`claude-4-8-opus\`, \`claude-4-7-opus\`, \`claude-4-6-opus\`, \`claude-4-6-sonnet\`, \`claude-4.5-sonnet\`, \`claude-4-5-haiku\`, \`claude-4-5-opus\`, \`claude-fable-5\`, \`claude-fable-5-1\`
   Google: \`gemini-3-flash\`, \`gemini-3-pro\`, \`gemini-3.1-pro\`, \`gemini-3.5-flash\`, \`gemini-3.7-flash\`, \`gemini-3.8-flash\`
-  OpenAI: \`gpt-5-mini\`, \`gpt-5\`, \`gpt-5.1\`, \`gpt-5.2\`, \`gpt-5.5\`, \`gpt-5.6-sol\`, \`gpt-5.6-terra\`, \`gpt-5.6-luna\`
+  OpenAI: \`gpt-5-mini\`, \`gpt-5\`, \`gpt-5.1\`, \`gpt-5.2\`, \`gpt-5.5\`, \`gpt-5.6-sol\`, \`gpt-5.6-terra\`, \`gpt-5.6-luna\`, \`gpt-5.7-sol\`, \`gpt-5.7-terra\`, \`gpt-6-astra\`
   Grok: \`grok-build-0.1\`, \`grok-4.5\`, \`grok-4.6\`
   Meta: \`muse-spark-1.1\`, \`muse-spark-1.2\`, \`muse-spark-1.3\`
   DeepSeek: \`deepseek-v4-flash-0731\`, \`deepseek-v4-pro\`
