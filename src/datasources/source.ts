@@ -327,6 +327,13 @@ export interface DataSourceDocument {
   ingestedAt: string | null;
 }
 
+/** One page of a corpus. See {@link DataSource.documentsPage}. */
+export interface DataSourceDocumentPage {
+  documents: DataSourceDocument[];
+  /** Pass to the next call; null when this was the last page. */
+  nextCursor: string | null;
+}
+
 /** One chunk exactly as it was indexed. See {@link DataSource.chunks}. */
 export interface DataSourceChunk {
   index: number;
@@ -680,11 +687,11 @@ export class DataSource {
   /**
    * Documents in the corpus, with ingest status.
    *
-   * Without options this is the first thousand, newest first: enough to show
-   * a small corpus, not a way to walk a large one (a corpus of any size is
-   * loaded and inspected from the CLI). To follow what {@link add} just
-   * queued, pass the ids it returned: `documents({ ids })` answers only those,
-   * at most two hundred per call.
+   * Without options this is the first page only: the oldest thousand, enough
+   * to show a small corpus. To walk a corpus of any size use
+   * {@link allDocuments} (or {@link documentsPage} for one page at a time). To
+   * follow what {@link add} just queued, pass the ids it returned:
+   * `documents({ ids })` answers only those, at most two hundred per call.
    */
   async documents(options?: {
     /** Only these documents (at most 200). */
@@ -695,6 +702,55 @@ export class DataSource {
       ...(options?.ids?.length ? { ids: options.ids } : {}),
     });
     return documents ?? [];
+  }
+
+  /**
+   * One page of the corpus, oldest first, with the cursor for the next page.
+   * `limit` is at most 1,000 (the default).
+   */
+  async documentsPage(options?: {
+    cursor?: string | null;
+    limit?: number;
+  }): Promise<DataSourceDocumentPage> {
+    const { documents, nextCursor } = await this._call('documents', {
+      slug: this._slug,
+      ...(options?.cursor ? { cursor: options.cursor } : {}),
+      ...(options?.limit ? { limit: options.limit } : {}),
+    });
+    return { documents: documents ?? [], nextCursor: nextCursor ?? null };
+  }
+
+  /**
+   * Every document in the corpus, oldest first, a page at a time behind the
+   * scenes. This is how an app builds its own view of a large corpus (a
+   * timeline, counts by year, a table of ids) after an ingest: walk it once,
+   * then keep up with what each sync adds. Millions of documents is thousands
+   * of pages, so run it in a background task, not a request.
+   *
+   * ```ts
+   * for await (const doc of Archive.allDocuments()) {
+   *   await index.upsert({ id: doc.id, year: doc.metadata?.year });
+   * }
+   * ```
+   */
+  async *allDocuments(options?: {
+    /** Documents per page, at most 1,000 (the default). */
+    pageSize?: number;
+  }): AsyncGenerator<DataSourceDocument, void, undefined> {
+    let cursor: string | null = null;
+    while (true) {
+      const page: DataSourceDocumentPage = await this.documentsPage({
+        cursor,
+        ...(options?.pageSize ? { limit: options.pageSize } : {}),
+      });
+      for (const doc of page.documents) {
+        yield doc;
+      }
+      if (!page.nextCursor || page.documents.length === 0) {
+        return;
+      }
+      cursor = page.nextCursor;
+    }
   }
 
   /** Remove a document and its vectors. */
