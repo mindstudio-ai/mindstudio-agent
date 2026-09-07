@@ -1929,7 +1929,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('```');
   lines.push('');
   lines.push(
-    "`SearchHit`: `{ score, text, citation: { documentId, filename, pageNumber, chunkIndex, headingPath, boundingBox?, url } }`. `citation.url` is a stable on-domain link to the source document — drop it in an `<a href>`. `(documentId, chunkIndex)` is a chunk's stable identity — key an eval set on that, not on `text`.",
+    "`SearchHit`: `{ score, text, citation: { documentId, filename, pageNumber, chunkIndex, headingPath, boundingBox?, url } }`. `citation.url` is a stable on-domain link to the source document for a signed-in user — drop it in an `<a href>`. A document is a cousin of a file and shares its share verbs: for a public app or another origin, `search(q, { shareCitations: 3600 })` returns every `citation.url` as an absolute signed link that needs no session, and `Policies.shareUrl(hit.citation, { expiresIn })` signs one document on demand (default 24h). `(documentId, chunkIndex)` is a chunk's stable identity — key an eval set on that, not on `text`.",
   );
   lines.push('');
   lines.push(
@@ -1949,7 +1949,23 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push(
-    'Other methods: `stats()`, `documents()`, `chunks(documentId, {vectors?})`, `remove(documentId)`, `ensure(name?)` (rarely needed — `add` and `search` create-on-reference), and `DataSource.contentHash(bytes)` to check for an existing document before adding.',
+    "`search()` throws `index_warming` (HTTP 503) when a large corpus's index is being reloaded after an eviction — a minute or two, in the background. It means loading, not empty: tell the user the knowledge base is warming up and retry shortly. Small corpora reload inside the search and never raise it; sources on dedicated capacity are never evicted.",
+  );
+  lines.push('');
+  lines.push(
+    'Other methods: `stats()`, `documents()`, `chunks(documentId, {vectors?})`, `remove(documentId)`, `removeWhere(selector)`, `ensure(name?)` (rarely needed — `add` and `search` create-on-reference), and `DataSource.contentHash(bytes)` to check for an existing document before adding.',
+  );
+  lines.push('');
+  lines.push(
+    '`removeWhere({ metadata?, filename?, documentIds?, externalIdPrefix? })` removes every matching document (vectors, row and bytes) in pages of a thousand and returns `{ deleted, remaining }`. Chunk-level filter fields and an empty selector are refused; deleting a whole source is an owner operation (`remy-admin datasources delete`), not something app code does.',
+  );
+  lines.push('');
+  lines.push(
+    "Keeping a corpus in sync with an S3 bucket: the owner connects the bucket once with `remy-admin datasources connect --source <slug> --bucket <b> --region <r> --prefix <p> --access-key-secret <NAME> --secret-key-secret <NAME>` (the two names are app secrets set with `remy-admin secrets set`; credentials are never written in code or pasted in chat). From then on `await Source.sync()` lists the bucket, diffs it by ETag against what was ingested, and runs a job over what changed — returning `{ job }` immediately; poll `Source.job(id)` or list `Source.jobs()`. A nightly sync is an ordinary cron interface job whose method calls `sync()`; nothing is spent when nothing changed. The job auto-approves under the connector's per-sync budget; a plan over it waits in `planned` for the owner to `remy-admin datasources jobs approve <id>`.",
+  );
+  lines.push('');
+  lines.push(
+    'When the file is not the document — a JSON record that should become markdown plus metadata, a JSONL object holding many articles, a kill notice that means "remove this story" — give the source a MAPPER: `datasources/<slug>.mapper.ts` exporting `defineMapper(Source, { map })` from `@mindstudio-ai/agent`, declared in mindstudio.json as `"dataSources": [{ "slug": "<slug>", "mapper": { "path": "dist/datasources/<slug>.mapper.ts" } }]`. `map(object)` gets `{ key, size, contentType, etag, lastModified, metadata, bytes(), text(), json() }` and returns one of `documents([{ externalId, title, markdown, metadata?, replaces? }])`, `passthrough({ metadata? })` (ingest the raw object as-is), `skip(reason)`, or `deletes([externalId, ...])`; throwing is the object\'s error. Everything entering a mapped source is mapped — jobs, syncs and `add()` alike — so `add()` on a mapped source returns `documents` (possibly several) and throws `mapper_skipped` for an object the mapper refused. A mapper may call models (`runTask`) or `fetch`; every call is spend per object. The owner tests one with `remy-admin datasources map test --source <slug> --dev` before deploying, reads what a job skipped with `datasources jobs quarantine <id>`, and re-applies a fixed mapper with `datasources remap --source <slug>`. See the dataSources skill for the authoring loop.',
   );
   lines.push('');
   lines.push(

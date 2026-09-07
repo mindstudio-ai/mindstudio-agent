@@ -60,6 +60,25 @@ export type {
   JewelQueueResolution,
   JewelQueueResolveResult,
 } from './jewel/index.js';
+export {
+  defineMapper,
+  documents,
+  passthrough,
+  skip,
+  deletes,
+} from './mapper/index.js';
+export type {
+  Mapper,
+  MapperConfig,
+  MapObject,
+  MappedDocument,
+  MapOutcome,
+  MapRunObject,
+  MapRunParams,
+  MapRunOutcome,
+  MapRunResult,
+  MapRunRecord,
+} from './mapper/index.js';
 export type {
   Files,
   DefineStoreOptions,

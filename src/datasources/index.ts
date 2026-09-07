@@ -35,12 +35,17 @@ import { DataSource, type DataSourcesTransport } from './source.js';
 export { DataSource } from './source.js';
 export type {
   AddOptions,
+  AddResult,
   BranchPosition,
   Citation,
   DataSourceChunk,
   DataSourceDocument,
+  DataSourceJob,
+  DataSourceJobPlan,
+  DataSourceJobState,
   DataSourceStats,
   DocumentMetadata,
+  DocumentSelector,
   MetadataRange,
   MetadataValue,
   SearchExplain,
