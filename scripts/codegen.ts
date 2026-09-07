@@ -1918,6 +1918,13 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('const docs = await Policies.documents();');
   lines.push('');
   lines.push(
+    '// walk a large corpus (a page at a time behind the scenes) to build your own index of it',
+  );
+  lines.push(
+    'for await (const doc of Policies.allDocuments()) { /* doc.id, doc.metadata, doc.status */ }',
+  );
+  lines.push('');
+  lines.push(
     '// introspection — what is in the corpus, and how one document was split',
   );
   lines.push(
@@ -1953,7 +1960,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push(
-    'Other methods: `stats()`, `documents()`, `chunks(documentId, {vectors?})`, `remove(documentId)`, `removeWhere(selector)`, `ensure(name?)` (rarely needed — `add` and `search` create-on-reference), and `DataSource.contentHash(bytes)` to check for an existing document before adding.',
+    'Other methods: `stats()`, `documents()` (the first thousand, or `documents({ ids })` to poll what `add` returned), `documentsPage({ cursor?, limit? })` and `allDocuments()` (walk a corpus of any size, oldest first — how an app builds its own timeline or index of a big source after ingest, in a background task), `chunks(documentId, {vectors?})`, `remove(documentId)`, `removeWhere(selector)`, `ensure(name?)` (rarely needed — `add` and `search` create-on-reference), and `DataSource.contentHash(bytes)` to check for an existing document before adding.',
   );
   lines.push('');
   lines.push(
