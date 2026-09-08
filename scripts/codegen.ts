@@ -1960,6 +1960,10 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push(
+    'On dedicated capacity `search()` throws `index_building` (HTTP 503) instead, while a bulk load runs and while the index is built after one: the index is built once at the end of a load rather than behind every write, and the message carries "N of M vectors indexed". Handle it like `index_warming` — the knowledge base is being built, never empty; say so and retry later.',
+  );
+  lines.push('');
+  lines.push(
     'Other methods: `stats()`, `documents()` (the first thousand, or `documents({ ids })` to poll what `add` returned), `documentsPage({ cursor?, limit? })` and `allDocuments()` (walk a corpus of any size, oldest first — how an app builds its own timeline or index of a big source after ingest, in a background task), `chunks(documentId, {vectors?})`, `remove(documentId)`, `removeWhere(selector)`, `ensure(name?)` (rarely needed — `add` and `search` create-on-reference), and `DataSource.contentHash(bytes)` to check for an existing document before adding.',
   );
   lines.push('');

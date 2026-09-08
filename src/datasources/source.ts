@@ -555,6 +555,13 @@ export class DataSource {
    * corpora reload inside the search and never raise it. Sources on dedicated
    * capacity are never evicted, so they never raise it either; they raise
    * `capacity_hibernated` and friends instead when their capacity is parked.
+   *
+   * **Throws `index_building`** (HTTP 503) on dedicated capacity while a bulk
+   * load runs and after one finishes: the index is not built behind every
+   * write during a load, it is built once at the end, and until then a search
+   * would scan the corpus unindexed. The message carries "N of M vectors
+   * indexed". Handle it like `index_warming`: the knowledge base is being
+   * built, never empty; say so and retry later.
    */
   async search(
     query: string,
