@@ -833,12 +833,19 @@ export class DataSource {
   async sync(options?: {
     /** Override the connector's per-sync budget for this run, in dollars. */
     budgetDollars?: number;
+    /**
+     * Embed at the provider's priority tier for this run: calls are admitted
+     * ahead of the provider's queue at 1.5x the embedding price. For the sync
+     * where the clock matters more than the price; off by default.
+     */
+    priority?: boolean;
   }): Promise<{ job: DataSourceJob }> {
     return this._call('sync', {
       slug: this._slug,
       ...(options?.budgetDollars !== undefined
         ? { budgetDollars: options.budgetDollars }
         : {}),
+      ...(options?.priority ? { priority: true } : {}),
     });
   }
 
