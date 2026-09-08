@@ -712,17 +712,20 @@ export class DataSource {
   }
 
   /**
-   * One page of the corpus, oldest first, with the cursor for the next page.
-   * `limit` is at most 1,000 (the default).
+   * One page of the corpus with the cursor for the next page. Oldest first
+   * unless `order: 'newest'` — the page an app shows as "what just arrived"
+   * without walking anything. `limit` is at most 1,000 (the default).
    */
   async documentsPage(options?: {
     cursor?: string | null;
     limit?: number;
+    order?: 'oldest' | 'newest';
   }): Promise<DataSourceDocumentPage> {
     const { documents, nextCursor } = await this._call('documents', {
       slug: this._slug,
       ...(options?.cursor ? { cursor: options.cursor } : {}),
       ...(options?.limit ? { limit: options.limit } : {}),
+      ...(options?.order ? { order: options.order } : {}),
     });
     return { documents: documents ?? [], nextCursor: nextCursor ?? null };
   }
