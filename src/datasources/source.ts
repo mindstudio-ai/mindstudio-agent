@@ -555,6 +555,13 @@ export class DataSource {
    * corpora reload inside the search and never raise it. Sources on dedicated
    * capacity are never evicted, so they never raise it either; they raise
    * `capacity_hibernated` and friends instead when their capacity is parked.
+   *
+   * **Throws `index_building`** (HTTP 503) on dedicated capacity while a bulk
+   * load runs and after one finishes: the index is not built behind every
+   * write during a load, it is built once at the end, and until then a search
+   * would scan the corpus unindexed. The message carries "N of M vectors
+   * indexed". Handle it like `index_warming`: the knowledge base is being
+   * built, never empty; say so and retry later.
    */
   async search(
     query: string,
@@ -826,12 +833,19 @@ export class DataSource {
   async sync(options?: {
     /** Override the connector's per-sync budget for this run, in dollars. */
     budgetDollars?: number;
+    /**
+     * Embed at the provider's priority tier for this run: calls are admitted
+     * ahead of the provider's queue at 1.5x the embedding price. For the sync
+     * where the clock matters more than the price; off by default.
+     */
+    priority?: boolean;
   }): Promise<{ job: DataSourceJob }> {
     return this._call('sync', {
       slug: this._slug,
       ...(options?.budgetDollars !== undefined
         ? { budgetDollars: options.budgetDollars }
         : {}),
+      ...(options?.priority ? { priority: true } : {}),
     });
   }
 

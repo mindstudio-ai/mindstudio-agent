@@ -118,6 +118,13 @@ export interface MapRunObject {
   metadata: DocumentMetadata | null;
   /** Short-lived read URL for the object's bytes. */
   url: string;
+  /**
+   * The object's bytes, base64, when the platform already held them (it
+   * hashes and lands every object before mapping, and small objects ride
+   * along). Present, it is the bytes; `url` is the fallback for large objects
+   * and for frames from a platform that predates it.
+   */
+  content?: string;
 }
 
 export interface MapRunParams {
@@ -200,20 +207,25 @@ function errorInfo(e: unknown): { message: string; stack?: string } {
   return { message: String(e) };
 }
 
-/** Lazy, read-once object over a presigned URL. */
+/** Lazy, read-once object: inline bytes when the frame carried them, else the presigned URL. */
 function objectFor(input: MapRunObject): MapObject {
   let cached: Promise<Uint8Array> | null = null;
   const bytes = () => {
     if (!cached) {
-      cached = (async () => {
-        const response = await fetch(input.url);
-        if (!response.ok) {
-          throw new Error(
-            `Could not read ${input.key}: HTTP ${response.status}`,
-          );
-        }
-        return new Uint8Array(await response.arrayBuffer());
-      })();
+      cached =
+        input.content !== undefined
+          ? Promise.resolve(
+              new Uint8Array(Buffer.from(input.content, 'base64')),
+            )
+          : (async () => {
+              const response = await fetch(input.url);
+              if (!response.ok) {
+                throw new Error(
+                  `Could not read ${input.key}: HTTP ${response.status}`,
+                );
+              }
+              return new Uint8Array(await response.arrayBuffer());
+            })();
     }
     return cached;
   };
