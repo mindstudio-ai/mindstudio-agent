@@ -629,6 +629,38 @@ export class DataSource {
   }
 
   /**
+   * How many passages (chunks) match a filter — exact, over the whole corpus.
+   *
+   * The honest number to show beside a search's hits: `count({ contains:
+   * query })` is how many passages contain **all** the query's words, so a UI
+   * can say "8 of 3,891 passages mention these words" and mean it. Same
+   * grammar as {@link SearchOptions.filter}, so it also answers "how many
+   * passages are tagged `department: 'legal'`" or contain an exact `phrase`.
+   * No filter counts the whole corpus.
+   *
+   * What it is not: a relevance count. Similarity is a continuous score over
+   * every chunk and no such total exists, so do not label this "relevant
+   * results" or "matches for your query". It is also not the set `search`
+   * returns: the semantic branch surfaces passages without the words, and the
+   * lexical branch scores partial overlap. Chunks, not documents — a long
+   * document contributes several.
+   *
+   * Counts share the search rate limit (300/minute per app); a count paired
+   * with every search spends two. Cheap otherwise: one index lookup, no model
+   * call. Shows the same `index_warming` / `index_building` as search while a
+   * corpus is loading or building, never a false `0`.
+   */
+  async count(
+    filter?: SearchFilter,
+  ): Promise<{ chunks: number; latencyMs: number }> {
+    const { chunks, latencyMs } = await this._call('count', {
+      slug: this._slug,
+      ...(filter !== undefined ? { filter } : {}),
+    });
+    return { chunks: chunks ?? 0, latencyMs: latencyMs ?? 0 };
+  }
+
+  /**
    * Every chunk of one document, exactly as it was indexed.
    *
    * The direct answer to "why isn't this document coming back?" — search only
@@ -712,17 +744,20 @@ export class DataSource {
   }
 
   /**
-   * One page of the corpus, oldest first, with the cursor for the next page.
-   * `limit` is at most 1,000 (the default).
+   * One page of the corpus with the cursor for the next page. Oldest first
+   * unless `order: 'newest'` — the page an app shows as "what just arrived"
+   * without walking anything. `limit` is at most 1,000 (the default).
    */
   async documentsPage(options?: {
     cursor?: string | null;
     limit?: number;
+    order?: 'oldest' | 'newest';
   }): Promise<DataSourceDocumentPage> {
     const { documents, nextCursor } = await this._call('documents', {
       slug: this._slug,
       ...(options?.cursor ? { cursor: options.cursor } : {}),
       ...(options?.limit ? { limit: options.limit } : {}),
+      ...(options?.order ? { order: options.order } : {}),
     });
     return { documents: documents ?? [], nextCursor: nextCursor ?? null };
   }

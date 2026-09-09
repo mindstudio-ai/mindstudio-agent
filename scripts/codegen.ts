@@ -1933,6 +1933,19 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push(
     "const chunks = await Policies.chunks(docs[0].id);       // why a document does or doesn't match",
   );
+  lines.push('');
+  lines.push(
+    '// how many passages contain the words — exact, same filter grammar as search. Say',
+  );
+  lines.push(
+    '// "N passages mention these words", never "N relevant results": no such total exists,',
+  );
+  lines.push(
+    "// and search's hits are not this set (semantic hits need not contain the words).",
+  );
+  lines.push(
+    "const { chunks: mentions } = await Policies.count({ contains: 'client secret rotation' });",
+  );
   lines.push('```');
   lines.push('');
   lines.push(
@@ -1964,7 +1977,7 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   );
   lines.push('');
   lines.push(
-    'Other methods: `stats()`, `documents()` (the first thousand, or `documents({ ids })` to poll what `add` returned), `documentsPage({ cursor?, limit? })` and `allDocuments()` (walk a corpus of any size, oldest first — how an app builds its own timeline or index of a big source after ingest, in a background task), `chunks(documentId, {vectors?})`, `remove(documentId)`, `removeWhere(selector)`, `ensure(name?)` (rarely needed — `add` and `search` create-on-reference), and `DataSource.contentHash(bytes)` to check for an existing document before adding.',
+    'Other methods: `stats()`, `documents()` (the first thousand, or `documents({ ids })` to poll what `add` returned), `documentsPage({ cursor?, limit?, order? })` (one page; `order: "newest"` is what just arrived) and `allDocuments()` (walk a corpus of any size, oldest first — how an app builds its own timeline or index of a big source after ingest, in a background task), `chunks(documentId, {vectors?})`, `remove(documentId)`, `removeWhere(selector)`, `ensure(name?)` (rarely needed — `add` and `search` create-on-reference), and `DataSource.contentHash(bytes)` to check for an existing document before adding.',
   );
   lines.push('');
   lines.push(
