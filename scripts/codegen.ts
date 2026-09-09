@@ -1933,6 +1933,19 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push(
     "const chunks = await Policies.chunks(docs[0].id);       // why a document does or doesn't match",
   );
+  lines.push('');
+  lines.push(
+    '// how many passages contain the words — exact, same filter grammar as search. Say',
+  );
+  lines.push(
+    '// "N passages mention these words", never "N relevant results": no such total exists,',
+  );
+  lines.push(
+    "// and search's hits are not this set (semantic hits need not contain the words).",
+  );
+  lines.push(
+    "const { chunks: mentions } = await Policies.count({ contains: 'client secret rotation' });",
+  );
   lines.push('```');
   lines.push('');
   lines.push(
