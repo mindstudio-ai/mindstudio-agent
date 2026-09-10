@@ -47,6 +47,11 @@
  * is spend per object. The mapper's `map` runs under a per-object timeout
  * (declared in `mindstudio.json`, default 30 s); the executor never throws.
  *
+ * On a job, mapping is its own stage: the mapper turns each object into
+ * documents, and the platform ingests those documents in parallel batches of
+ * fifty across its workers, whatever one object became. An object's size does
+ * not set the pace; the number of objects sets how wide the mapping runs.
+ *
  * Declared in `mindstudio.json`:
  * ```json
  * "dataSources": [{ "slug": "archive", "mapper": { "path": "dist/datasources/archive.mapper.ts" } }]
