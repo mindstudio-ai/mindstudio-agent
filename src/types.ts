@@ -328,6 +328,8 @@ export interface MindStudioModelSummary {
   type?: ModelType;
   /** Comma-separated tags for the model. */
   tags?: string;
+  /** True when this model is on the Remy text-surface / runTask() allow-list. */
+  remyText?: boolean;
 }
 
 /**

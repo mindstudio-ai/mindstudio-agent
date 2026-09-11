@@ -76,19 +76,7 @@ export const instructions = `<instructions>
     - Prefer using a text generation model from the recommendations above - they all support image inputs
 
   ## Task agent models
-  When recommending models for \`runTask()\`, ONLY use models with strong tool-use support. The model must be one of:
-
-  Anthropic: \`claude-5-sonnet\`, \`claude-5-opus\`, \`claude-4-8-opus\`, \`claude-4-7-opus\`, \`claude-4-6-opus\`, \`claude-4-6-sonnet\`, \`claude-4.5-sonnet\`, \`claude-4-5-haiku\`, \`claude-4-5-opus\`, \`claude-fable-5\`, \`claude-fable-5-1\`
-  Google: \`gemini-3-flash\`, \`gemini-3-pro\`, \`gemini-3.1-pro\`, \`gemini-3.5-flash\`, \`gemini-3.7-flash\`, \`gemini-3.8-flash\`
-  OpenAI: \`gpt-5-mini\`, \`gpt-5\`, \`gpt-5.1\`, \`gpt-5.2\`, \`gpt-5.5\`, \`gpt-5.6-sol\`, \`gpt-5.6-terra\`, \`gpt-5.6-luna\`, \`gpt-5.7-sol\`, \`gpt-5.7-terra\`, \`gpt-6-astra\`
-  Grok: \`grok-build-0.1\`, \`grok-4.5\`, \`grok-4.6\`
-  Meta: \`muse-spark-1.1\`, \`muse-spark-1.2\`, \`muse-spark-1.3\`
-  DeepSeek: \`deepseek-v4-flash-0731\`, \`deepseek-v4-pro\`, \`deepseek-v4.1-flash\`
-  GLM: \`glm-5.2\`, \`glm-5.3\`, \`glm-5.3-flash\`
-  Kimi: \`kimi-k2-7-code\`, \`kimi-k3\`
-  Qwen: \`qwen3.8-27b-deepinfra\`, \`qwen3.8-2.4t-a95b-deepinfra\`
-  MiniMax: \`minimax-m3\`
- 
+  When recommending models for \`runTask()\`, ONLY use models whose summary line includes \`remyText\`. That flag is the platform's live tool-use allow-list — do not hardcode or invent ids, and do not recommend an llm_chat model that lacks it. If the models reference failed to load, call listModels to verify before recommending.
 
   Default to \`claude-5-sonnet\` unless the user has a preference. Do NOT recommend o-series reasoning models (o3, o4) for tasks — they are optimized for reasoning, not tool-use loops. Do NOT recommend Gemini 2.x when 3.x is available.
   </model_guidance>

@@ -37,7 +37,7 @@ export async function buildSystemPrompt(
       ? modelsResult.value.models
           .map(
             (m: any) =>
-              `- ${m.id} (${m.name}, type: ${m.type}${m.popularity != null ? ', popularity: ' + m.popularity : ''}${m.tags ? ', tags: ' + m.tags : ''})`,
+              `- ${m.id} (${m.name}, type: ${m.type}${m.popularity != null ? ', popularity: ' + m.popularity : ''}${m.tags ? ', tags: ' + m.tags : ''}${m.remyText ? ', remyText' : ''})`,
           )
           .join('\n')
       : '(Could not load models — use the listModels tool to look them up)';
