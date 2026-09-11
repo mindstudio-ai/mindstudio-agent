@@ -7,6 +7,13 @@
 
 export interface ReferenceData {
   modelsSummary: string;
+  /**
+   * The models valid for `runTask()`, rendered from the platform's declared
+   * `supportsToolUse` capability. Replaces a hardcoded list in instructions.ts
+   * that had to be edited on every model launch — and had drifted far enough
+   * to recommend two model ids that did not exist.
+   */
+  taskModels: string;
   connections: string;
   connectorServices: string;
   llmsContent: string;
@@ -124,6 +131,12 @@ export function buildReferenceDocs(data: ReferenceData): string {
   <models>
   ${data.modelsSummary}
   </models>
+
+  <task_agent_models>
+  Models with tool-use support — the ONLY models valid for \`runTask()\`. Live from the platform catalog, so this list is always current; if a model is not here it cannot drive a tool-use loop, whatever else it is good at.
+
+  ${data.taskModels}
+  </task_agent_models>
 
   <oauth_connections>
   ${data.connections}
