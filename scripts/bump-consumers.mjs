@@ -5,15 +5,19 @@
  * After publishing @mindstudio-ai/agent, bumps the dependency in the
  * downstream repos:
  *
- *   1. ../mindstudio-sandbox (package.json + package-lock.json)
+ *   1. ../youai-custom-function-execution-service (worker/package.json + lock)
  *        → new branch off origin/main in a temp worktree, push, open PR
- *   2. ../youai-custom-function-execution-service (worker/package.json + lock)
- *        → same PR flow (different org, still works — plain git + gh)
- *   3. ../mindstudio-sandbox/empty-mindstudio-app (dist/methods/package.json)
- *        → separate repo (empty-mindstudio-app-scaffold), gitignored by the
- *          sandbox repo. Bumped in place and pushed directly to main,
- *          matching the existing "bump" commit history. npm install runs so
- *          the local node_modules stays in sync too.
+ *          (different org, still works — plain git + gh)
+ *   2. ../empty-mindstudio-app-scaffold (dist/methods/package.json)
+ *        → bumped in place and pushed directly to main, matching the existing
+ *          "bump" commit history. npm install runs so the local node_modules
+ *          stays in sync too.
+ *
+ * ../mindstudio-sandbox is deliberately NOT a target: it declared the agent as
+ * a dependency and never imported it (every reference there is a string literal
+ * in an install/uninstall/version-read against the box's GLOBAL copy), so the
+ * bump was pure ceremony. It also became a real cost once that repo started
+ * publishing as @madewithremy/sandbox — an unused dep ships to every consumer.
  *
  * After pushing each branch, opens the prefilled GitHub compare page in the
  * browser — one click to create the PR.
@@ -156,10 +160,9 @@ function bumpViaPr({ name, repoDir, pkgJsonRel, npmDirRel, githubRepo }) {
 }
 
 // ---------------------------------------------------------------------------
-// Scaffold flow — the local clone at mindstudio-sandbox/empty-mindstudio-app
-// is the working copy for empty-mindstudio-app-scaffold. Bumps go straight
-// to main (matching existing history), and npm install keeps the local
-// node_modules current for sandbox dev.
+// Scaffold flow — ../empty-mindstudio-app-scaffold is the working copy. Bumps
+// go straight to main (matching existing history), and npm install keeps the
+// local node_modules current for sandbox dev.
 // ---------------------------------------------------------------------------
 
 function bumpScaffold({ name, repoDir, methodsDirRel }) {
@@ -204,14 +207,6 @@ function bumpScaffold({ name, repoDir, methodsDirRel }) {
 // ---------------------------------------------------------------------------
 
 bumpViaPr({
-  name: 'mindstudio-sandbox',
-  repoDir: path.join(projectsRoot, 'mindstudio-sandbox'),
-  pkgJsonRel: 'package.json',
-  npmDirRel: '.',
-  githubRepo: 'mindstudio-ai/mindstudio-sandbox',
-});
-
-bumpViaPr({
   name: 'youai-custom-function-execution-service',
   repoDir: path.join(projectsRoot, 'youai-custom-function-execution-service'),
   pkgJsonRel: 'worker/package.json',
@@ -221,7 +216,7 @@ bumpViaPr({
 
 bumpScaffold({
   name: 'empty-mindstudio-app-scaffold',
-  repoDir: path.join(projectsRoot, 'mindstudio-sandbox', 'empty-mindstudio-app'),
+  repoDir: path.join(projectsRoot, 'empty-mindstudio-app-scaffold'),
   methodsDirRel: 'dist/methods',
 });
 

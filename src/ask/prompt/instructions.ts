@@ -16,7 +16,7 @@ export const instructions = `<instructions>
 
   - **Manual JSON parsing from LLM output** — if they're calling generateText and then parsing the response, they probably want structured output / response format controls instead of \`JSON.parse(content)\`.
   - **Sequential calls that should be batched** — multiple independent action calls (generate image + text-to-speech + search) should use \`executeStepBatch()\`. Three round trips become one.
-  - **Building custom HTTP integrations when a connector exists** — if they're asking how to call the Slack API, Airtable API, HubSpot API, etc. via \`httpRequest\`, the answer is \`runFromConnectorRegistry\` with an existing OAuth connector. 850+ connector actions exist for this. If the user's has not configured the specific connectio in MindStudio yet, that should be step one. Direct them to https://app.mindstudio.ai/services/integrations
+  - **Building custom HTTP integrations when a connector exists** — if they're asking how to call the Slack API, Airtable API, HubSpot API, etc. via \`httpRequest\`, the answer is \`runFromConnectorRegistry\` with an existing OAuth connector. 850+ connector actions exist for this. If the user hasn't configured the specific connection yet, that's step one — tell them to connect it on the platform's integrations settings page (don't guess or hardcode a URL).
   - **Missing MindStudioError handling** — the SDK has structured errors with \`code\`, \`status\`, \`details\`. Catching generic \`Error\` loses actionable information. Always include \`MindStudioError\` handling in code examples.
   - **One-at-a-time db writes when batch exists** — N sequential \`update()\` or \`push()\` calls should be a single \`db.batch()\` call. One round trip instead of N.
   - **Closure variables in filter predicates** — \`Table.filter(o => o.x === input.x)\` cannot compile to SQL (JS closures aren't introspectable from outside the function), so it scans every row in the table in JS. For filters comparing to outer-scope values, use the explicit bindings form: \`Table.filter((o, $) => o.x === $.x, { x: input.x })\`. Recommend this whenever the predicate references a value from the enclosing function and the table might have more than a few hundred rows.
@@ -76,19 +76,7 @@ export const instructions = `<instructions>
     - Prefer using a text generation model from the recommendations above - they all support image inputs
 
   ## Task agent models
-  When recommending models for \`runTask()\`, ONLY use models with strong tool-use support. The model must be one of:
-
-  Anthropic: \`claude-5-sonnet\`, \`claude-5-opus\`, \`claude-4-8-opus\`, \`claude-4-7-opus\`, \`claude-4-6-opus\`, \`claude-4-6-sonnet\`, \`claude-4.5-sonnet\`, \`claude-4-5-haiku\`, \`claude-4-5-opus\`, \`claude-fable-5\`, \`claude-fable-5-1\`
-  Google: \`gemini-3-flash\`, \`gemini-3-pro\`, \`gemini-3.1-pro\`, \`gemini-3.5-flash\`, \`gemini-3.7-flash\`, \`gemini-3.8-flash\`
-  OpenAI: \`gpt-5-mini\`, \`gpt-5\`, \`gpt-5.1\`, \`gpt-5.2\`, \`gpt-5.5\`, \`gpt-5.6-sol\`, \`gpt-5.6-terra\`, \`gpt-5.6-luna\`, \`gpt-5.7-sol\`, \`gpt-5.7-terra\`, \`gpt-6-astra\`
-  Grok: \`grok-build-0.1\`, \`grok-4.5\`, \`grok-4.6\`
-  Meta: \`muse-spark-1.1\`, \`muse-spark-1.2\`, \`muse-spark-1.3\`
-  DeepSeek: \`deepseek-v4-flash-0731\`, \`deepseek-v4-pro\`, \`deepseek-v4.1-flash\`
-  GLM: \`glm-5.2\`, \`glm-5.3\`, \`glm-5.3-flash\`
-  Kimi: \`kimi-k2-7-code\`, \`kimi-k3\`
-  Qwen: \`qwen3.8-27b-deepinfra\`, \`qwen3.8-2.4t-a95b-deepinfra\`
-  MiniMax: \`minimax-m3\`
- 
+  When recommending models for \`runTask()\`, ONLY use a model from the \`<task_agent_models>\` list in the reference above. That list is the platform's own tool-use capability data, loaded fresh each time you run — so it is never out of date, and a model missing from it cannot drive a tool-use loop no matter how capable it is otherwise. Do NOT recommend a model for \`runTask()\` from memory or from the general \`<models>\` list.
 
   Default to \`claude-5-sonnet\` unless the user has a preference. Do NOT recommend o-series reasoning models (o3, o4) for tasks — they are optimized for reasoning, not tool-use loops. Do NOT recommend Gemini 2.x when 3.x is available.
   </model_guidance>

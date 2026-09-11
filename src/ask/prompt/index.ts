@@ -42,6 +42,23 @@ export async function buildSystemPrompt(
           .join('\n')
       : '(Could not load models — use the listModels tool to look them up)';
 
+  // The `runTask()` allow-list, from the platform's declared `supportsToolUse`
+  // capability rather than from a list maintained in the prompt.
+  //
+  // The `llm_chat` filter is load-bearing, not tidiness: realtime speech models
+  // (gpt-realtime-*, gemini-*-live-*, grok-voice-*) legitimately carry tool
+  // support for their own purposes, and recommending one for `runTask()` would
+  // be wrong. Tags are NOT usable for this — they are picker chrome, capped at
+  // three per model, which is what the instructions below already say.
+  const taskModels =
+    modelsResult.status === 'fulfilled'
+      ? modelsResult.value.models
+          .filter((m: any) => m.supportsToolUse && m.type === 'llm_chat')
+          .map((m: any) => `- ${m.id} (${m.name})`)
+          .join('\n') ||
+        '(The platform reported no tool-use models — use the listModels tool.)'
+      : '(Could not load models — use the listModels tool and check supportsToolUse)';
+
   const connections =
     connectionsResult.status === 'fulfilled' &&
     connectionsResult.value.connections.length > 0
@@ -66,6 +83,7 @@ export async function buildSystemPrompt(
 
   const referenceDocs = buildReferenceDocs({
     modelsSummary,
+    taskModels,
     connections,
     connectorServices,
     llmsContent,
