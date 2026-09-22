@@ -251,7 +251,7 @@ Model types: `llm_chat`, `image_generation`, `video_generation`, `video_analysis
 
 ## 1,000+ integrations
 
-850+ connector actions from the open-source [MindStudio Connector Registry (MSCR)](https://github.com/mindstudio-ai/mscr) — across services like ActiveCampaign, Airtable, Apollo, Canva, ElevenLabs, MailChimp, Notion, and more — alongside 140+ built-in actions for AI, media, web, and data processing.
+850+ connector actions from the open-source [MindStudio Connector Registry (MSCR)](https://github.com/mindstudio-ai/mscr) — across services like ActiveCampaign, Airtable, Apollo, Canva, ElevenLabs, MailChimp, Notion, QuickBooks and more — alongside 140+ built-in actions for AI, media, web, and data processing.
 
 ```typescript
 // Browse connectors and their actions
@@ -394,11 +394,18 @@ const result = await agent.runTask({
   tools: [
     'searchGoogle',
     'fetchUrl',
-    { appMethod: 'saveRestaurant', description: 'Persist the researched restaurant.' },
+    {
+      appMethod: 'saveRestaurant',
+      description: 'Persist the researched restaurant.',
+    },
     {
       name: 'checkExisting',
       description: 'Look up whether we already track this restaurant.',
-      inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+      inputSchema: {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+      },
       execute: async (input) => Restaurants.findByName(String(input.name)),
     },
   ],
@@ -455,14 +462,22 @@ For decision moments the app detects itself (an ingest branch that lands a row i
 pending state), hand the moment to the jewels from backend code:
 
 ```ts
-mindstudio.waitUntil((async () => {
-  const merge = await mindstudio.jewels.propose(
-    'merge-issues', { sourceId: issue.id }, { idempotencyKey: issue.id });
-  if (merge.outcome !== 'committed') {
-    await mindstudio.jewels.propose(
-      'triage-issue', { issueId: issue.id }, { idempotencyKey: issue.id });
-  }
-})());
+mindstudio.waitUntil(
+  (async () => {
+    const merge = await mindstudio.jewels.propose(
+      'merge-issues',
+      { sourceId: issue.id },
+      { idempotencyKey: issue.id },
+    );
+    if (merge.outcome !== 'committed') {
+      await mindstudio.jewels.propose(
+        'triage-issue',
+        { issueId: issue.id },
+        { idempotencyKey: issue.id },
+      );
+    }
+  })(),
+);
 ```
 
 The platform routes each proposal by the method's autonomy — `recorded` (shadow),
