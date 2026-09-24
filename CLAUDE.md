@@ -55,7 +55,7 @@ examples/
 - `npm run dev` — tsup watch mode (does NOT re-run codegen)
 - `npm run codegen` — regenerate types only (defaults to prod)
 - `npm run codegen -- --file path/to/openapi.json` — codegen from a local file
-- `npm run typecheck` — tsc --noEmit
+- `npm run typecheck` — native TS7, no emit. Goes through `npm run tsc`; `node_modules/.bin/tsc` is unreliable because the TS6 compiler API tsup needs for `.d.ts` declares the same bin (see the `//tsc` note in package.json)
 
 `prepare` and `prepublishOnly` both run `build:local`.
 

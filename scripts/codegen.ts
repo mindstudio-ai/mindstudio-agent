@@ -1788,7 +1788,13 @@ function generateLlmsTxt(steps: StepInfo[]): string {
   lines.push('```');
   lines.push('');
   lines.push(
-    'Generated assets: any action that produces a file (`generateImage`, `generateVideo`, `generateSpeech`, `generatePdf`, `upscaleImage`, …) can put its output straight into one of these stores — pass the store handle as `store` in the OPTIONS object (second argument). Optional: omit it and the asset goes to the shared MindStudio CDN as before. Reach for it when the asset belongs to the app — private to a user, or listed alongside its other files.',
+    // Deliberately states the RULE and no list of examples. The previous
+    // wording named five actions followed by an ellipsis, which reads as an
+    // allowlist: a customer concluded `convertPdfToImages` was not covered and
+    // worked around it, when in fact every asset-producing action honours
+    // `store`. Each action's own entry above carries its own note, so an
+    // example list here can only go stale.
+    'Generated assets: EVERY action that produces a file can put its output straight into one of these stores — pass the store handle as `store` in the OPTIONS object (second argument). There is no allowlist; if an action returns a file URL, it takes `store`. Optional: omit it and the asset goes to the shared MindStudio CDN as before. Reach for it when the asset belongs to the app — private to a user, or listed alongside its other files. Inputs are never published either way: a file you hand an action is read where it sits, and any intermediate the platform needs is written to private storage and dropped when the call finishes.',
   );
   lines.push('');
   lines.push('```typescript');
