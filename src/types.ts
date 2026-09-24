@@ -108,6 +108,16 @@ export interface StepExecutionOptions {
    * `/_/files/private/...` link that only an authorized session can load,
    * rather than a permanent public one.
    *
+   * **For confidential material, pass a private store.** A public CDN URL is
+   * unlisted rather than protected: anyone holding it can read the object, and
+   * it does not expire.
+   *
+   * This governs the step's OUTPUT. Inputs are never published either way — a
+   * private file or a `shareUrl` you hand an action is read where it sits, and
+   * any intermediate the platform needs (transcoding a video, rasterizing a
+   * PDF's pages, staging a document for an extraction model) is written to
+   * private platform storage and dropped when the call finishes.
+   *
    * v2 apps only.
    *
    * @example

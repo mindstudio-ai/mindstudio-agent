@@ -11,7 +11,14 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "resolveJsonModule": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    // TypeScript 6 stopped auto-including every package under node_modules/@types,
+    // so the globals this CLI uses (process, Buffer, node: imports) are asked for
+    // by name. Without this the native compiler reports ~180 missing-name errors.
+    "types": ["node"],
+    // tsup's dts step hardcodes `baseUrl: "."`, which the TS6 compiler API it
+    // generates declarations with treats as a hard error. Nothing here sets it.
+    "ignoreDeprecations": "6.0"
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "scripts"]

@@ -24,11 +24,13 @@
     "build:local": "MINDSTUDIO_BASE_URL=http://localhost:3129 npm run build",
     "dev": "tsup --watch",
     "codegen": "tsx scripts/codegen.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "npm run tsc -- --noEmit",
     "postinstall": "node dist/postinstall.js || true",
     "bump-consumers": "node scripts/bump-consumers.mjs",
     "prepare": "npm run build",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "tsc": "node node_modules/@typescript/native/bin/tsc",
+    "//tsc": "The native TypeScript 7 compiler by explicit path. It (typescript@7 under the @typescript/native alias) and the JS compiler API behind the `typescript` alias — which tsup's dts step needs — both declare a `tsc` bin, so node_modules/.bin/tsc is whichever npm linked last."
   },
   "engines": {
     "node": ">=18.0.0"
@@ -65,9 +67,10 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.3.2",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "prettier": "^3.8.1",
     "tsup": "^8",
     "tsx": "^4",
-    "typescript": "^5.5"
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
   }
 }
